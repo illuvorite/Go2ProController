@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Unitree Go2 无线连接 CycloneDDS 配置
+  
+  使用方法:
+    export CYCLONEDDS_URI=file:///path/to/cyclonedds_wifi.xml
+    
+  注意事项:
+    1. 修改 NetworkInterfaceAddress 为你的无线网卡名称
+    2. 修改 Peer address 为机器狗的实际 IP
+-->
+<CycloneDDS xmlns="https://cdds.io/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <Domain id="any">
+        <General>
+            <!-- PC 无线网卡名称，使用 ip link 或 ifconfig 查看 -->
+            <NetworkInterfaceAddress>wlo1</NetworkInterfaceAddress>
+            
+            <!-- 跨网段通讯必须禁用多播 -->
+            <AllowMulticast>false</AllowMulticast>
+            
+            <!-- 可选：禁用共享内存（跨机器通讯时） -->
+            <!-- <EnableShm>false</EnableShm> -->
+        </General>
+        
+        <Discovery>
+            <!-- 显式指定对端地址 -->
+            <Peers>
+                <!-- 机器狗 WiFi 接口 IP -->
+                <Peer address="192.168.1.211"/>
+                
+                <!-- 可选：如果配置了路由，也可以直接指向内部 IP -->
+                <!-- <Peer address="192.168.123.161"/> -->
+            </Peers>
+            
+            <!-- 参与者索引，auto 表示自动分配 -->
+            <ParticipantIndex>auto</ParticipantIndex>
+        </Discovery>
+        
+        <Tracing>
+            <!-- 调试时可以启用详细日志 -->
+            <!-- <Verbosity>finest</Verbosity> -->
+            <!-- <OutputFile>cyclonedds.log</OutputFile> -->
+        </Tracing>
+        
+        <!-- 可选的内部配置 -->
+        <!--
+        <Internal>
+            <MaxMessageSize>65500</MaxMessageSize>
+            <FragmentSize>1344</FragmentSize>
+        </Internal>
+        -->
+    </Domain>
+</CycloneDDS>

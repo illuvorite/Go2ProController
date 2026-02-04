@@ -1,0 +1,86 @@
+# Unitree Go2 网络诊断工具配置文件
+# 复制此文件并根据实际情况修改
+
+# 网络配置
+network:
+  # PC 端无线网卡名称（使用 ip link 查看）
+  pc_interface: wlo1
+  
+  # PC 端 IP 地址
+  pc_ip: 192.168.1.106
+  
+  # 机器狗无线接口 IP
+  robot_wifi_ip: 192.168.1.211
+  robot_wifi_interface: wlan0
+  
+  # 机器狗内部有线接口 IP（运控 PC）
+  robot_eth_ip: 192.168.123.161
+  robot_eth_interface: eth0
+  
+  # 子网配置
+  wifi_subnet: 192.168.1.0/24
+  eth_subnet: 192.168.123.0/24
+
+# DDS 配置
+dds:
+  # DDS Discovery 端口
+  discovery_port: 7400
+  
+  # 用户数据端口基准
+  user_data_port_base: 7410
+  
+  # 端口扫描范围
+  port_range: [7400, 7500]
+  
+  # 多播地址
+  multicast_address: 239.255.0.1
+  
+  # 常用端口列表
+  common_ports:
+    - 7400
+    - 7401
+    - 7410
+    - 7411
+    - 7412
+    - 7413
+    - 7414
+    - 7415
+    - 7416
+    - 7417
+
+# 抓包配置
+capture:
+  # 默认抓包时长（秒）
+  capture_duration: 30
+  
+  # 最大包数量
+  packet_limit: 10000
+  
+  # 缓冲区大小
+  buffer_size: 65536
+  
+  # 默认 BPF 过滤器
+  bpf_filter: udp
+  
+  # 是否保存 PCAP 文件
+  save_pcap: true
+  
+  # PCAP 保存目录
+  pcap_dir: ./captures
+
+# 报告配置
+report_dir: ./reports
+report_format: html  # html, json, txt
+
+# 日志配置
+log_level: INFO
+# log_file: ./diag.log
+
+# SSH 配置（用于远程诊断机器狗）
+robot_ssh_user: root
+robot_ssh_port: 22
+# robot_ssh_key: ~/.ssh/id_rsa
+
+# 超时配置
+ping_timeout: 2.0
+connect_timeout: 5.0
