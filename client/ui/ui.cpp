@@ -320,6 +320,74 @@ void startScan(RobotManager& mgr, UiState& ui) {
     }).detach();
 }
 
+// ---------------------------------------------------------------- 操作提示
+// 鼠标：悬停即弹 tooltip（和原来一样）。
+// 触摸：手指按住控件时正好把 tooltip 挡住（真机上基本看不到），所以改成
+//      **按住 0.6 秒**才弹，并且弹在控件上方。
+// ★ 关键：看过说明的那一下**不再算点击** —— 否则"想看说明"就变成"执行操作"了
+//   （对急停/阻尼这类安全项尤其不能忍）。用法：
+//       const bool hit = ImGui::Button(...);
+//       helpTip("说明");
+//       if (hit && !takeTipShown()) { ...真正执行... }
+bool g_touchUi = false;          ///< 本帧的输入方式，由 drawUi 每帧写入
+double g_tipHoldStart = 0.0;     ///< 本次按住的起点
+bool g_tipShownInPress = false;  ///< 本次按住期间是否弹过说明
+
+/// 取走"本次按住弹过说明"的标记（取走后清空，每次只生效一次）
+bool takeTipShown() {
+    const bool v = g_tipShownInPress;
+    g_tipShownInPress = false;
+    return v;
+}
+
+/// 把提示画在控件**上方**（手指在控件上，上方才看得见）；上方不够就改画下方
+void showTipNearItem(const char* text) {
+    const ImVec2 mn = ImGui::GetItemRectMin();
+    const ImVec2 mx = ImGui::GetItemRectMax();
+    const ImVec2 ds = ImGui::GetIO().DisplaySize;
+    const float fs = ImGui::GetFontSize();
+    float y = mn.y - 10.0f;
+    ImVec2 pivot(0.0f, 1.0f);                  // pivot 在左下 → 窗口长在控件上方
+    if (y < fs * 5.0f) {                       // 上方放不下 → 改画到控件下方
+        y = mx.y + 10.0f;
+        pivot = ImVec2(0.0f, 0.0f);
+    }
+    const float maxW = fs * 26.0f;
+    const float x = std::min(mn.x, std::max(0.0f, ds.x - maxW - fs * 2.0f));
+    ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always, pivot);
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(maxW);
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
+
+/// 统一的操作提示：鼠标悬停显示；触摸下长按 0.6 秒显示
+void helpTip(const char* text) {
+    if (!ImGui::IsItemHovered()) {
+        g_tipHoldStart = 0.0;
+        g_tipShownInPress = false;  // 指针移开 → 标记作废，避免影响下一次点击
+        return;
+    }
+    if (!g_touchUi) {
+        ImGui::SetTooltip("%s", text);
+        return;
+    }
+    if (ImGui::IsItemActive()) {
+        const double now = ImGui::GetTime();
+        if (g_tipHoldStart <= 0.0) {  // 新一次按住：重新计时并清掉上次的标记
+            g_tipHoldStart = now;
+            g_tipShownInPress = false;
+        }
+        if (now - g_tipHoldStart >= 0.6) {
+            showTipNearItem(text);
+            g_tipShownInPress = true;
+        }
+    } else {
+        g_tipHoldStart = 0.0;
+    }
+}
+
 /// 对勾选的机器狗执行操作，返回实际执行的台数
 int forEachSelected(RobotManager& mgr, UiState& ui,
                     const std::function<bool(RobotClient&)>& fn) {
@@ -696,15 +764,15 @@ void drawActionLibrary(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
 // ---- 宇树动作库（全量指令，见 sport_library.cpp）----
 sectionTitle("宇树动作库");
 ImGui::SameLine();
-ImGui::Checkbox("MCF 固件", &ui.mcfMode);
-if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("Go2 Pro 等 MCF 固件使用另一套 api_id（如后空翻 2043 vs 1044）；\n"
-                      "选错也没关系：被拒后会用另一套 id 自动重试一次");
+if (ImGui::Checkbox("MCF 固件", &ui.mcfMode) && takeTipShown())
+    ui.mcfMode = !ui.mcfMode;  // 长按看说明 → 撤销这次切换
+helpTip("Go2 Pro 等 MCF 固件使用另一套 api_id（如后空翻 2043 vs 1044）；\n"
+        "选错也没关系：被拒后会用另一套 id 自动重试一次");
 ImGui::SameLine();
-ImGui::Checkbox("隐藏不支持的", &ui.hideUnsupported);
-if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("隐藏「试过且被该固件拒绝（code=3203）」的动作，\n"
-                      "避免反复点到不存在的指令；取消勾选即可重新显示");
+if (ImGui::Checkbox("隐藏不支持的", &ui.hideUnsupported) && takeTipShown())
+    ui.hideUnsupported = !ui.hideUnsupported;  // 长按看说明 → 撤销这次切换
+helpTip("隐藏「试过且被该固件拒绝（code=3203）」的动作，\n"
+        "避免反复点到不存在的指令；取消勾选即可重新显示");
 
 // 当前指令集没有这条（如 MCF 专属指令）时，用另一套 id 兜底，避免"整条动作根本点不到"
 auto resolveId = [&ui](const SportAction& a, bool* fellBack) {
@@ -735,14 +803,17 @@ auto actionLabel = [&ui](const SportAction& a, int id, bool fellBack) {
 auto actionTip = [&ui](int id) {
     int code = 0;
     std::string note;
-    if (!ui.apiResult(id, &code, &note) || !ImGui::IsItemHovered()) return;
+    if (!ui.apiResult(id, &code, &note)) return;
+    char buf[512];
     if (code == 0) {
-        ImGui::SetTooltip("上次执行：成功（api %d）", id);
+        std::snprintf(buf, sizeof(buf), "上次执行：成功（api %d）", id);
     } else {
-        ImGui::SetTooltip("上次执行失败（api %d，code=%d）\n%s\n\n"
-                          "再点一次可重试；指令集不匹配会自动换另一套 api_id",
-                          id, code, note.empty() ? "（无更多信息）" : note.c_str());
+        std::snprintf(buf, sizeof(buf),
+                      "上次执行失败（api %d，code=%d）\n%s\n\n"
+                      "再点一次可重试；指令集不匹配会自动换另一套 api_id",
+                      id, code, note.empty() ? "（无更多信息）" : note.c_str());
     }
+    helpTip(buf);
 };
 
 // 可用性一览：点过的动作会累计成功/失败，方便"哪些动作能用"一眼看清
@@ -769,6 +840,8 @@ ImGui::BeginDisabled(ui.selectedCount() == 0);
 // 发送一条动作：解析指令集 id + 组装参数 + 群控分发
 // flagValue 只对 Flag 类生效（开关型指令传 false 就是"关闭"）
 auto sendAction = [&](const SportAction& a, bool flagValue = true) {
+    // 触摸下"长按看说明"的那一下不算执行 —— 否则想看说明就变成了真的下发动作
+    if (takeTipShown()) return;
     bool fellBack = false;
     const int id = resolveId(a, &fellBack);
     const std::string key = a.key;
@@ -834,7 +907,7 @@ for (const auto& gd : kGroups) {
             if (on)
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.55f, 0.28f, 1.0f));
             const std::string t = label + (on ? "  [开]" : "  [关]");
-            if (ImGui::Button((t + "##b").c_str(), ImVec2(actW1, actH))) {
+            if (ImGui::Button((t + "##b").c_str(), ImVec2(actW1, actH)) && !takeTipShown()) {
                 on = !on;
                 sendAction(a, on);
                 // 记录"真正开过的开关"（含另一套指令集的 id），急停时只关这些
@@ -846,9 +919,8 @@ for (const auto& gd : kGroups) {
                 }
             }
             actionTip(id);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("持续模式开关（开启后会一直生效，StopMove 停不掉）\n"
-                                  "点一下切换开/关；急停会自动把所有开关关掉");
+            helpTip("持续模式开关（开启后会一直生效，StopMove 停不掉）\n"
+                    "点一下切换开/关；急停会自动把所有开关关掉");
             if (on) ImGui::PopStyleColor();
             col = 0;
             ImGui::PopID();
@@ -922,6 +994,7 @@ ImGui::Spacing();
 ImGui::Separator();
 {  // 官方 App 快捷：同样平铺，不折叠
     auto sendJson = [&](int apiId, const nlohmann::json& p, const char* what) {
+        if (takeTipShown()) return;  // 同上：长按看说明不算执行
         const int n = forEachSelected(
             mgr, ui, [&](RobotClient& c) { return c.sendSportCommand(apiId, p); });
         ui.addLog(std::string("[App] ") + what + " (api " + std::to_string(apiId) + ") → " +
@@ -942,9 +1015,8 @@ ImGui::Separator();
     if (ImGui::Button("机身最高 0.33")) sendJson(1013, jsonData(0.33f), "机身最高");
     ImGui::SameLine();
     ImGui::TextDisabled("(MCF 固件无 1013，会回复 3203)");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("机身高度 = BodyHeight(1013)，MCF 固件的指令表里没有它\n"
-                          "→ 会被拒（3203）。等 id 确定后再补 MCF 的高度指令。");
+    helpTip("机身高度 = BodyHeight(1013)，MCF 固件的指令表里没有它\n"
+            "→ 会被拒（3203）。等 id 确定后再补 MCF 的高度指令。");
 
     // 姿态（Euler 1007；x=roll 左正, y=pitch 低头为负）
     // 实测要点：左倾/低头这类姿态操作**只在"摆姿势(Pose 1028)"模式下生效**
@@ -952,6 +1024,7 @@ ImGui::Separator();
     // 紧跟着发 Euler 会被丢掉 → 所以「进模式 → 等 0.7s → 下发姿态角」放进后台线程。
     ImGui::TextDisabled("姿态（自动进入摆姿势模式后下发，幅度 0.25）");
     auto euler = [&](float roll, float pitch, const char* what, bool exitPose = false) {
+        if (takeTipShown()) return;  // 同上：长按看说明不算执行
         const auto ips = ui.selectedIps();
         ui.addLog(std::string("[App] ") + what + "：进入摆姿势 → 0.7s 后下发姿态角");
         std::thread([&mgr, ips, roll, pitch, exitPose] {
@@ -983,10 +1056,9 @@ ImGui::Separator();
     if (ImGui::Button("抬头")) euler(0.0f, 0.25f, "抬头");
     ImGui::SameLine();
     if (ImGui::Button("方向回正")) euler(0.0f, 0.0f, "方向回正", true);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("姿态角 = Euler(1007)，只在「摆姿势」模式下生效（已自动进入）。\n"
-                          "若回 code=0 但狗没动 = 该固件忽略姿态角；\n"
-                          "符号方向若相反（点左倾往右倒）告诉我，对调即可");
+    helpTip("姿态角 = Euler(1007)，只在「摆姿势」模式下生效（已自动进入）。\n"
+            "若回 code=0 但狗没动 = 该固件忽略姿态角；\n"
+            "符号方向若相反（点左倾往右倒）告诉我，对调即可");
 
     // 侧移（官方 App 的"左移 / 右移"）：**按住不放持续横移，松开立即停**
     // 与左摇杆的横向轴是同一个功能，但这里保留 App 同款按住式按钮，手感更直观
@@ -1189,11 +1261,10 @@ if (estopClicked || estopHotkey) {
 // 阻尼与急停保持 ≥12dp 间距（靠 ItemSpacing 缩放后天然满足），避免误触
 {
     if (!ui.dampArmed) {
-        if (ImGui::Button("强制阻尼 (Damp)…", ImVec2(-1, L.dampH)))
+        if (ImGui::Button("强制阻尼 (Damp)…", ImVec2(-1, L.dampH)) && !takeTipShown())
             ui.dampArmed = true;
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("兜底手段：切断电机力矩，狗会立刻软腿趴下\n"
-                              "（地面上安全；在桌上/台阶边别用）");
+        helpTip("兜底手段：切断电机力矩，狗会立刻软腿趴下\n"
+                "（地面上安全；在桌上/台阶边别用）");
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.35f, 0.10f, 1.0f));
         if (ImGui::Button("确认：立即阻尼（狗会趴下）", ImVec2(-1, L.dampH))) {
@@ -1538,6 +1609,7 @@ void drawUi(RobotManager& mgr, UiState& ui) {
         applyUiScale(ui.layout.styleScale);  // 内部从基线重算，不会累乘
     }
     const LayoutSpec& L = ui.layout;
+    g_touchUi = L.touch;  // 提示文案：鼠标悬停显示 / 触摸长按显示
 
     drawTopBar(mgr, ui, L);       // 顶栏：品牌 + 状态 + 四个入口按钮
     drawRemotePanel(mgr, ui, L);  // 主界面：遥控（居中 + 宽度上限）
