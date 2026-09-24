@@ -143,6 +143,7 @@ target_compile_definitions(go2_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT=1)
 # ---------------------------------------------------------------- ui（与桌面共享）
 add_library(go2_ui STATIC
     "${CLIENT_DIR}/ui/ui.cpp"
+    "${CLIENT_DIR}/ui/layout.cpp"
     "${CLIENT_DIR}/ui/theme.cpp"
 )
 target_include_directories(go2_ui PUBLIC "${CLIENT_DIR}/ui")

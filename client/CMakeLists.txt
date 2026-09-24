@@ -103,6 +103,7 @@ target_compile_definitions(go2_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT=1)
 add_executable(go2_remote
     apps/desktop/main.cpp
     ui/theme.cpp
+    ui/layout.cpp
     ui/ui.cpp
 )
 target_include_directories(go2_remote PRIVATE ui)
@@ -152,3 +153,10 @@ endif()
 # 双摇杆 / 急停决策的自测（纯逻辑，不需要机器狗与图形环境）
 add_executable(motion_test tests/motion_test.cpp)
 target_include_directories(motion_test PRIVATE core)
+
+# 断点布局的**编译期**自测：makeLayout 是 constexpr 纯函数，各机型档位的预期值
+# 用 static_assert 钉死 —— 改了断点常量忘了同步预期，编译就会失败。
+# 注意：layout_test.cpp 直接 #include 了 ../ui/layout.cpp（constexpr 求值需要函数体可见），
+# 所以这里**不能**再链 go2_ui，否则符号重复。它只依赖 ImGui 之外的东西，也不需要图形环境。
+add_executable(layout_test tests/layout_test.cpp)
+target_include_directories(layout_test PRIVATE ui)

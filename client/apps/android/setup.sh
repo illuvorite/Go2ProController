@@ -146,12 +146,12 @@ if os.path.isfile(mani):
         print("   [OK] Manifest 已加权限")
     else:
         print("   [已改] Manifest 权限已存在")
-    # 横屏更适合双摇杆
+    # 方向：fullSensor = 四个方向都允许（界面已做断点布局，竖屏走「单栏 + 底部页签」）
     t = io.open(mani, encoding="utf-8").read()
     if "screenOrientation" not in t:
-        t = t.replace("<activity ", '<activity android:screenOrientation="sensorLandscape" ', 1)
+        t = t.replace("<activity ", '<activity android:screenOrientation="fullSensor" ', 1)
         io.open(mani, "w", encoding="utf-8", newline="\n").write(t)
-        print("   [OK] Manifest 已设为横屏")
+        print("   [OK] Manifest 已设为 fullSensor（横竖屏自适应）")
 else:
     warn("找不到 AndroidManifest.xml，请手工加网络/组播权限")
 

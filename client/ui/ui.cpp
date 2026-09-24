@@ -177,13 +177,13 @@ void sectionTitle(const char* text) {
                       ImGui::GetColorU32(col::kAccent), 2.0f);
     ImGui::Dummy(ImVec2(3.0f, 0.0f));
     ImGui::SameLine(0.0f, 9.0f);
-    FontScope fs(uiFonts().title);
+    FontScope fs = fontTitle();
     ImGui::TextUnformatted(text);
 }
 
 /// 小标题（正文字号 + 次要色）
 void subTitle(const char* text) {
-    FontScope fs(uiFonts().small);
+    FontScope fs = fontSmall();
     ImGui::TextColored(col::kDim, "%s", text);
 }
 
@@ -202,7 +202,7 @@ void statusDot(ImVec4 color, float r = 4.5f) {
 void chip(const char* text, ImVec4 color) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    FontScope fs(uiFonts().small);
+    FontScope fs = fontSmall();
     const ImVec2 ts = ImGui::CalcTextSize(text);
     const ImVec2 pad(9.0f, 3.0f);
     const ImVec2 sz(ts.x + pad.x * 2.0f, ts.y + pad.y * 2.0f);
@@ -267,7 +267,7 @@ void readout(const char* label, const char* value, ImVec4 valueColor) {
     dl->AddRect(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(ImVec4(1, 1, 1, 0.07f)), 7.0f, 0,
                 1.0f);
     {
-        FontScope fs(uiFonts().small);
+        FontScope fs = fontSmall();
         dl->AddText(ImVec2(p.x + 11.0f, p.y + 7.0f), ImGui::GetColorU32(col::kDim), label);
     }
     {
@@ -434,7 +434,7 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
     sectionTitle("设备");
     ImGui::SameLine();
     {
-        FontScope fs(uiFonts().small);
+        FontScope fs = fontSmall();
         ImGui::TextDisabled("已选 %d 台（%s）", ui.selectedCount(),
                             ui.selectedCount() > 1 ? "群控" : "单控");
     }
@@ -448,7 +448,7 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
     }
 
     if (snapshot.empty()) {
-        FontScope fs(uiFonts().small);
+        FontScope fs = fontSmall();
         ImGui::TextDisabled("（列表为空）");
         ImGui::TextDisabled("· 点上方「扫描局域网」自动发现");
         ImGui::TextDisabled("· 或输入 IP 后点「添加」");
@@ -472,7 +472,7 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
             statusDot(stc);
             ImGui::SameLine(0, 2);
             {
-                FontScope fs(uiFonts().body);
+                FontScope fs = fontBody();
                 ImGui::TextColored(stc, "%s", maskIps(e.ip, ui.privacyMode).c_str());
             }
             ImGui::SameLine(0, 8);
@@ -500,7 +500,7 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
             batteryBar(e.battery);
             ImGui::SameLine(0, 8);
             {
-                FontScope fs(uiFonts().small);
+                FontScope fs = fontSmall();
                 const std::string batt =
                     e.battery >= 0 ? (std::to_string(int(e.battery)) + "%") : "电量 -";
                 ImGui::TextDisabled("%s", batt.c_str());
@@ -524,7 +524,7 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
                         info += "   稳定 " + std::to_string(ls.readySeconds) + "s";
                     if (ls.reconnects > 0) info += "   重连 " + std::to_string(ls.reconnects);
                 }
-                FontScope fs(uiFonts().small);
+                FontScope fs = fontSmall();
                 ImGui::TextDisabled("%s", info.c_str());
 
                 if (st == ConnState::Failed) {
@@ -558,13 +558,6 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
 void drawUi(RobotManager& mgr, UiState& ui) {
     ui.sideHold = 0;  // 每帧重置：只有"按住侧移按钮"的那一帧会被置位
 
-    // ---- 手机端：按钮加大 ----
-    // 手指点击的可靠下限大约 48px，这里给到 54；宽度也放宽，避免字号放大后挤成两行
-    const bool mob = ui.mobileLayout;
-    const float actW1 = mob ? 214.0f : 150.0f;
-    const float actW2 = mob ? 178.0f : 120.0f;
-    const float actW3 = mob ? 162.0f : 110.0f;
-    const float actH = mob ? 54.0f : 0.0f;  // 0 = 沿用默认高度
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
     ImGui::SetNextWindowSize(vp->WorkSize);
@@ -573,51 +566,33 @@ void drawUi(RobotManager& mgr, UiState& ui) {
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-    // ============================================================ 顶栏
-    ImGui::BeginChild("top", ImVec2(0, mob ? 176.0f : 124.0f), ImGuiChildFlags_Borders);
-
-    // ---- 第一行：品牌 + 受控数量 + 隐私开关 ----
+    // ============================================================ 断点布局
+    // 每帧按「视口尺寸 + 输入方式 + 安全区」重算一次（纯函数，带 8dp 滞回，幂等）。
+    // 注意：这里拿到的 DisplaySize 必须是**已按设备密度归一**的逻辑尺寸（dp），
+    // 否则 3x 屏上按钮实际只有 18dp，48dp 的触摸下限就成了摆设
+    // —— 归一由平台入口负责，见 apps/android/native/main_android.cpp。
     {
-        FontScope fs(uiFonts().title);
-        ImGui::TextUnformatted("Unitree Go2");
+        const ImVec2 ds = ImGui::GetIO().DisplaySize;
+        ui.layout = makeLayout(ds.x, ds.y, ui.touchInput, ui.safe,
+                               ui.layout.viewW > 0.0f ? &ui.layout : nullptr);
+        setUiFontSizes(ui.layout.fontTitle, ui.layout.fontBody, ui.layout.fontSmall);
+        applyUiScale(ui.layout.styleScale);  // 内部从基线重算，不会累乘
     }
-    ImGui::SameLine();
-    {
-        FontScope fs(uiFonts().small);
-        ImGui::TextColored(col::kDim, "控制管理台  ·  局域网发现 / 单控·群控 / 双摇杆 / 动作库");
-    }
-    ImGui::SameLine();
-    {
-        const int sel = ui.selectedCount();
-        const int total = static_cast<int>(ui.robots.size());
-        const std::string s = std::to_string(sel) + " / " + std::to_string(total) + " 台受控";
-        const float need = 320.0f;
-        const float avail = ImGui::GetContentRegionAvail().x;
-        if (avail > need) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - need);
-        chip(s.c_str(), sel > 0 ? col::kAccent : col::kIdle);
-        ImGui::SameLine();
-        ImGui::Checkbox("隐私模式", &ui.privacyMode);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("勾选后界面把 IP 等敏感信息打码（仅显示层，不影响功能）");
-    }
+    const LayoutSpec& L = ui.layout;
+    const bool single = (L.mode == LayoutMode::SingleColumn);
+    const bool twoCol = (L.mode == LayoutMode::TwoColumn);
 
-    ImGui::Spacing();
+    // 单栏模式：遥控 / 控制台 / 日志 变成"一页一屏"，由底部页签或侧滑抽屉切换。
+    // 「控制台」这一页内部仍用 TabBar 分 设备 / 动作库 / 设置 —— 这样不用把三块内容拆散，
+    // 也不会出现"底部页签和页内 TabBar 显示同一组项"的重复导航。
+    const bool showLeft = !single || (ui.mobilePage == 1);
+    const bool showCtrl = !single || (ui.mobilePage == 0);
+    const bool showLog = single ? (ui.mobilePage == 2) : L.logInline;
+    // 单栏 + 底部页签：内容区高度要让出页签（负值 = 可用高度减去该值）
+    const float singleRowH = (single && L.nav == NavKind::BottomTab) ? -L.tabH : 0.0f;
 
-    // ---- 第二行：发现与连接 ----
-    if (ui.scanning.load()) {
-        ImGui::BeginDisabled();
-        bigButton("扫描中...", ImVec2(126, 34));
-        ImGui::EndDisabled();
-    } else if (accentButton("扫描局域网", ImVec2(126, 34))) {
-        startScan(mgr, ui);
-    }
-
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(250);
-    ImGui::InputTextWithHint("##manual", "手动添加 IP（可逗号分隔多台）",
-                             ui.manualIp, sizeof(ui.manualIp));
-    ImGui::SameLine();
-    if (bigButton("添加", ImVec2(64, 34))) {
+    // ---- 发现 / 连接：顶栏与「设备」页共用（顶栏压成 1 行时这些按钮挪到设备页）----
+    const auto doAddManual = [&mgr, &ui] {
         // 支持一次粘贴多台（逗号 / 分号 / 空格分隔）
         std::vector<std::string> ips;
         std::string cur;
@@ -634,26 +609,24 @@ void drawUi(RobotManager& mgr, UiState& ui) {
 
         if (ips.empty()) {
             ui.addLog("[UI] 请先输入至少一个 IP 地址");
-        } else {
-            std::vector<std::string> toConnect;
-            for (const auto& ip : ips) {
-                if (ui.addOrUpdate(ip, true)) {
-                    ui.addLog("[UI] 手动添加 " + ip);
-                    toConnect.push_back(ip);
-                } else {
-                    ui.addLog("[UI] " + ip + " 已在列表中");
-                }
-            }
-            if (!toConnect.empty()) {
-                ui.addLog("[UI] 开始错峰连接 " + std::to_string(toConnect.size()) +
-                          " 台（机器狗信令服务单线程，避免同时握手）");
-                mgr.connectAll(toConnect, 600);
+            return;
+        }
+        std::vector<std::string> toConnect;
+        for (const auto& ip : ips) {
+            if (ui.addOrUpdate(ip, true)) {
+                ui.addLog("[UI] 手动添加 " + ip);
+                toConnect.push_back(ip);
+            } else {
+                ui.addLog("[UI] " + ip + " 已在列表中");
             }
         }
-    }
-
-    ImGui::SameLine();
-    if (bigButton("全部连接", ImVec2(96, 34))) {
+        if (!toConnect.empty()) {
+            ui.addLog("[UI] 开始错峰连接 " + std::to_string(toConnect.size()) +
+                      " 台（机器狗信令服务单线程，避免同时握手）");
+            mgr.connectAll(toConnect, 600);
+        }
+    };
+    const auto doConnectAll = [&mgr, &ui] {
         std::vector<RobotEntry> snapshot;
         {
             std::lock_guard<std::mutex> lock(ui.robotsMutex);
@@ -667,24 +640,110 @@ void drawUi(RobotManager& mgr, UiState& ui) {
             ui.addLog("[UI] 全部连接 " + std::to_string(ips.size()) + " 台（错峰 600ms）");
             mgr.connectAll(ips, 600);
         }
-    }
-
-    ImGui::SameLine();
-    if (bigButton("全部断开", ImVec2(96, 34))) {
+    };
+    const auto doDisconnectAll = [&mgr, &ui] {
         mgr.disconnectAll();
         ui.addLog("[UI] 已断开全部连接");
+    };
+    // 动作库按钮宽/高/列数全部来自断点（改造前写死 150/214，栏一窄就溢出）
+    const float actW1 = L.actW1;
+    const float actW2 = L.actW2;
+    const float actW3 = L.actW3;
+    const float actH = L.actH;  // 0 = 沿用默认高度
+
+    // ============================================================ 顶栏
+    ImGui::BeginChild("top", ImVec2(0, L.topBarH), ImGuiChildFlags_Borders);
+
+    // ---- 第一行：品牌 + 受控数量 + 隐私开关 ----
+    // 窄屏（1 行顶栏）只留最必要的：品牌缩写 + 状态 + 隐私 + 日志入口；
+    // 发现/连接那几个按钮挪到「设备」页里，避免顶栏第二行在手机上被挤出屏幕。
+    if (L.topRows == 1 && single && L.nav == NavKind::Drawer) {
+        if (ImGui::Button("≡", ImVec2(L.btnH > 0.0f ? 46.0f : 0.0f, L.btnH)))
+            ui.drawerOpen = !ui.drawerOpen;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("设备 / 动作库 / 设置");
+        ImGui::SameLine();
+    }
+    {
+        FontScope fs = fontTitle();
+        ImGui::TextUnformatted(L.topRows == 1 ? "Go2 控制台" : "Unitree Go2");
+    }
+    if (L.topRows >= 2) {
+        ImGui::SameLine();
+        FontScope fs = fontSmall();
+        ImGui::TextColored(col::kDim, "控制管理台  ·  局域网发现 / 单控·群控 / 双摇杆 / 动作库");
+    }
+    ImGui::SameLine();
+    {
+        const int sel = ui.selectedCount();
+        const int total = static_cast<int>(ui.robots.size());
+        const std::string s = std::to_string(sel) + " / " + std::to_string(total) + " 台受控";
+        // 右侧这组（受控数 / 隐私 / 日志入口）统一靠右
+        const float need = single ? 230.0f : 320.0f;
+        const float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > need) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - need);
+        chip(s.c_str(), sel > 0 ? col::kAccent : col::kIdle);
+        ImGui::SameLine();
+        if (single) {
+            // 窄屏省字：勾选框只留「隐私」，并给一个日志入口（单栏模式下日志是一整页）
+            ImGui::Checkbox("隐私", &ui.privacyMode);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("勾选后界面把 IP 等敏感信息打码（仅显示层，不影响功能）");
+            ImGui::SameLine();
+            if (ImGui::Button("日志", ImVec2(0, L.btnH))) ui.mobilePage = 2;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("运行日志（失败=红 · 成功=绿 · 急停=橙）");
+        } else {
+            ImGui::Checkbox("隐私模式", &ui.privacyMode);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("勾选后界面把 IP 等敏感信息打码（仅显示层，不影响功能）");
+        }
+    }
+
+    ImGui::Spacing();
+
+    // ---- 第二行：发现与连接（顶栏只有 1 行时，这些按钮在「设备」页里）----
+    if (L.topRows >= 2) {
+    if (ui.scanning.load()) {
+        ImGui::BeginDisabled();
+        bigButton("扫描中...", ImVec2(126, 34));
+        ImGui::EndDisabled();
+    } else if (accentButton("扫描局域网", ImVec2(126, 34))) {
+        startScan(mgr, ui);
     }
 
     ImGui::SameLine();
     {
-        FontScope fs(uiFonts().small);
-        ImGui::TextDisabled("勾选 = 受控（1 台单控 / 多台群控）");
+        // 输入框宽度自适应：先给后面 3 个按钮（64+96+96+间距）与尾部提示留够位置，
+        // 免得「全部断开」被挤出屏幕 —— 改造前写死 250，屏宽 < 700dp 就点不到它。
+        const float avail = ImGui::GetContentRegionAvail().x;
+        const float w = avail - (64.0f + 96.0f + 96.0f + 48.0f) - 190.0f;
+        ImGui::SetNextItemWidth(std::max(130.0f, std::min(250.0f, w)));
     }
+    ImGui::InputTextWithHint("##manual", "手动添加 IP（可逗号分隔多台）",
+                             ui.manualIp, sizeof(ui.manualIp));
+    ImGui::SameLine();
+    if (bigButton("添加", ImVec2(64, 34))) doAddManual();
+
+    ImGui::SameLine();
+    if (bigButton("全部连接", ImVec2(96, 34))) doConnectAll();
+
+    ImGui::SameLine();
+    if (bigButton("全部断开", ImVec2(96, 34))) doDisconnectAll();
+
+    ImGui::SameLine();
+    {
+        FontScope fs = fontSmall();
+        if (ImGui::GetContentRegionAvail().x > 210.0f)
+            ImGui::TextDisabled("勾选 = 受控（1 台单控 / 多台群控）");
+    }
+    }  // ← if (L.topRows >= 2)：顶栏只有 1 行时，发现/连接按钮在「设备」页里
 
     // ---- 第三行：本地钥匙（data2=3 新固件的每设备 AES key；纯本地、不联网）----
+    // 顶栏压成 1~2 行时这一行整体移到「设置」页（那边本来就有钥匙库）
+    if (L.topRows >= 3) {
     ImGui::Separator();
     {
-        FontScope fs(uiFonts().small);
+        FontScope fs = fontSmall();
         chip(("本地钥匙 " + std::to_string(ui.localKeyCount) + " 把").c_str(),
              ui.localKeyCount > 0 ? col::kOk : col::kWarn);
         ImGui::SameLine();
@@ -712,14 +771,40 @@ void drawUi(RobotManager& mgr, UiState& ui) {
     ImGui::SameLine();
     ImGui::TextDisabled(
         "|  keys.json: {\"IP\":\"32位hex\"} 或 [\"key1\",\"key2\"]；换 WiFi / 换网段无需改动");
+    }  // ← if (L.topRows >= 3)
     ImGui::EndChild();
 
     // ============================================================ 左：设备 / 动作库 / 设置（分页，避免堆成一条长列表）
-    ImGui::BeginChild("left", ImVec2(mob ? 452.0f : 392.0f, 0), ImGuiChildFlags_Borders);
+    // 单栏模式下只有在「设备/动作库/设置」页才显示，且铺满整屏
+    if (showLeft) {
+    ImGui::BeginChild("left", ImVec2(single ? 0.0f : L.leftW, singleRowH),
+                      ImGuiChildFlags_Borders);
     if (ImGui::BeginTabBar("##leftTabs", ImGuiTabBarFlags_None)) {
         // ---------------- 设备 ----------------
         if (ImGui::BeginTabItem("设备")) {
             ImGui::Spacing();
+            // 顶栏压成 1 行时（手机竖屏 / 横屏矮屏），发现与连接按钮放在这里 ——
+            // 顶栏一行放不下 126+输入框+64+96+96 这一串
+            if (L.topRows == 1) {
+                const float bh = L.btnH > 0.0f ? L.btnH : 0.0f;
+                if (ui.scanning.load()) {
+                    ImGui::BeginDisabled();
+                    bigButton("扫描中...", ImVec2(-1, bh));
+                    ImGui::EndDisabled();
+                } else if (accentButton("扫描局域网", ImVec2(-1, bh))) {
+                    startScan(mgr, ui);
+                }
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputTextWithHint("##manualM", "手动添加 IP（可逗号分隔多台）",
+                                         ui.manualIp, sizeof(ui.manualIp));
+                const float third = (ImGui::GetContentRegionAvail().x - 16.0f) / 3.0f;
+                if (bigButton("添加", ImVec2(third, bh))) doAddManual();
+                ImGui::SameLine();
+                if (bigButton("全部连接", ImVec2(third, bh))) doConnectAll();
+                ImGui::SameLine();
+                if (bigButton("全部断开", ImVec2(third, bh))) doDisconnectAll();
+                ImGui::Separator();
+            }
             drawDeviceList(mgr, ui);
             ImGui::EndTabItem();
         }
@@ -934,7 +1019,7 @@ void drawUi(RobotManager& mgr, UiState& ui) {
                 continue;
             }
 
-            if (col % 2 != 0) ImGui::SameLine();
+            if (L.actCols > 1 && (col % L.actCols) != 0) ImGui::SameLine();
             ++col;
             if (a.risky)
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.20f, 0.15f, 1.0f));
@@ -1125,7 +1210,7 @@ void drawUi(RobotManager& mgr, UiState& ui) {
                 }
             }
             {
-                FontScope fs(uiFonts().small);
+                FontScope fs = fontSmall();
                 ImGui::TextDisabled("每台新固件狗提取一次，永久保存；当前已加载 %d 把",
                                     ui.localKeyCount);
             }
@@ -1134,7 +1219,7 @@ void drawUi(RobotManager& mgr, UiState& ui) {
             ImGui::Separator();
             sectionTitle("说明");
             {
-                FontScope fs(uiFonts().small);
+                FontScope fs = fontSmall();
                 ImGui::TextDisabled("· 空格键 = 急停（锁定式；双杆回中后可解除）");
                 ImGui::TextDisabled("· 动作被拒会给出原因；指令集不匹配会自动换另一套 id 重试");
                 ImGui::TextDisabled("· 「隐藏不支持的」可过滤掉该固件没有的动作");
@@ -1146,17 +1231,27 @@ void drawUi(RobotManager& mgr, UiState& ui) {
     }
 
     ImGui::EndChild();
+    }  // ← if (showLeft)
 
     // ============================================================ 中：遥控
-    ImGui::SameLine();
-    // 手游布局隐藏了日志 → 遥控列占满剩下的宽度
-    ImGui::BeginChild("ctrl", ImVec2(ui.mobileLayout ? 0.0f : 468.0f, 0),
+    // 三栏 → 遥控栏按断点定宽；双栏 → 遥控在上、日志在下（同一列，不换行）；
+    // 单栏 → 遥控铺满整屏（日志变成独立一页 / 浮层）
+    if (showCtrl) {
+    if (showLeft) ImGui::SameLine();
+    float ctrlH = 0.0f;
+    if (twoCol) {
+        // 平板竖屏：右栏上下分，遥控占上方（最少 420dp），日志占下方剩余
+        const float availH = ImGui::GetContentRegionAvail().y;
+        ctrlH = std::max(420.0f, (availH - 16.0f) * 0.62f);
+    }
+    ImGui::BeginChild("ctrl", ImVec2(single ? 0.0f : (twoCol ? 0.0f : L.ctrlW),
+                                      single ? singleRowH : ctrlH),
                       ImGuiChildFlags_Borders);
 
     sectionTitle("遥控");
     ImGui::SameLine();
     {
-        FontScope fs(uiFonts().small);
+        FontScope fs = fontSmall();
         ImGui::TextDisabled("左杆移动 · 右杆转向 · 松手即停");
     }
     ImGui::Spacing();
@@ -1167,8 +1262,15 @@ void drawUi(RobotManager& mgr, UiState& ui) {
     ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.78f, 0.16f, 0.16f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.22f, 0.22f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1.00f, 0.32f, 0.32f, 1.0f));
+    // 急停是安全关键操作：**永远全宽、永远在视口内**，高度按断点给（矮屏 72 / 竖屏 88 / 多栏 56~64）。
+    // 断线状态下也要能按 —— 所以这里不依赖任何连接状态。
     const bool estopClicked =
-        bigButton("■  急停（全部停车 / 空格键）", ImVec2(-1, mob ? 82.0f : 52.0f));
+        bigButton(single ? "■  急停" : "■  急停（全部停车 / 空格键）", ImVec2(-1, L.estopH));
+    // 记下安全操作区的屏幕矩形：触屏入口拿它做摇杆抓取互斥（手指落在急停上不能被摇杆吃掉）
+    ui.safetyMinX = ImGui::GetItemRectMin().x;
+    ui.safetyMinY = ImGui::GetItemRectMin().y;
+    ui.safetyMaxX = ImGui::GetItemRectMax().x;
+    ui.safetyMaxY = ImGui::GetItemRectMax().y;
     ImGui::PopStyleColor(3);
     ImGui::PopStyleVar();
     // 键盘急停：空格（正在输入框里打字时不触发）
@@ -1213,16 +1315,17 @@ void drawUi(RobotManager& mgr, UiState& ui) {
     }
 
     // 兜底：狗仍在自走时，阻尼是唯一能"立即停住"的手段 —— 狗会软腿趴下，需二次确认
+    // 阻尼与急停保持 ≥12dp 间距（靠 ItemSpacing 缩放后天然满足），避免误触
     {
         if (!ui.dampArmed) {
-            if (ImGui::Button("强制阻尼 (Damp)…", ImVec2(-1, mob ? 58.0f : 0.0f)))
+            if (ImGui::Button("强制阻尼 (Damp)…", ImVec2(-1, L.dampH)))
                 ui.dampArmed = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("兜底手段：切断电机力矩，狗会立刻软腿趴下\n"
                                   "（地面上安全；在桌上/台阶边别用）");
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.35f, 0.10f, 1.0f));
-            if (ImGui::Button("确认：立即阻尼（狗会趴下）", ImVec2(-1, mob ? 58.0f : 0.0f))) {
+            if (ImGui::Button("确认：立即阻尼（狗会趴下）", ImVec2(-1, L.dampH))) {
                 int m = 0;
                 std::vector<RobotEntry> snap;
                 {
@@ -1238,17 +1341,23 @@ void drawUi(RobotManager& mgr, UiState& ui) {
             ImGui::SameLine();
             if (ImGui::SmallButton("取消")) ui.dampArmed = false;
         }
+        // 阻尼按钮也算安全操作区（它是"狗仍在自走"时唯一能立即停住的手段）
+        ui.safetyMaxY = std::max(ui.safetyMaxY, ImGui::GetItemRectMax().y);
     }
 
     if (ui.estop) {
         const bool centered = std::fabs(ui.joyLx) < 0.02f && std::fabs(ui.joyLy) < 0.02f &&
                               std::fabs(ui.joyRx) < 0.02f;
         ImGui::TextColored(kRed, "⛔ 急停锁定中");
+        // 窄屏软换行：这行字不换行会横向溢出（改造前手机上直接看不到后半句）
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
         ImGui::TextColored(kYellow,
                            "　一次性动作（舞蹈/空翻/拜年）固件不接受打断；"
                            "狗仍在动就点上面「强制阻尼」立即停住");
+        ImGui::PopTextWrapPos();
         ImGui::BeginDisabled(!centered);
-        if (bigButton("解除急停（需双杆回中）", ImVec2(-1, mob ? 62.0f : 34.0f))) {
+        if (bigButton(single ? "解除急停" : "解除急停（需双杆回中）",
+                      ImVec2(-1, L.btnH > 0.0f ? L.btnH + 18.0f : 34.0f))) {
             ui.estop = false;
             ui.movingSent = false;
             ui.addLog("[急停] 已解除，可以继续遥控");
@@ -1261,14 +1370,15 @@ void drawUi(RobotManager& mgr, UiState& ui) {
     ImGui::Spacing();
 
     // ---- 双摇杆：左杆 = 平移，右杆 = 转向（可同时操作，松手即停）----
-    // 手游布局下**不在这里画**：改由触屏入口画到屏幕左右两侧当浮层（见 drawJoystickAt），
-    // 数值也由它写入 —— 这里连赋值都跳过，否则会把触屏算好的值覆盖成 0。
+    // 摇杆内嵌在遥控栏（宽屏 / 平板）；单栏模式改为**悬浮在屏幕两下角**，
+    // 由触屏入口画到前景层（见 drawJoystickAt），数值也由它写入 ——
+    // 这里必须跳过赋值，否则会把触屏算好的值覆盖成 0。
     float lx = 0.0f, ly = 0.0f, rx = 0.0f, ry = 0.0f;
     const bool canMove = ui.selectedCount() > 0;
-    if (!ui.mobileLayout) {
+    if (L.joyInline) {
     ImGui::BeginDisabled(!canMove);
     {
-        const float radius = 74.0f;
+        const float radius = L.joyRadius;
         const float gap = 24.0f;
         const float totalW = radius * 4.0f + gap;
         const float avail = ImGui::GetContentRegionAvail().x;
@@ -1298,13 +1408,24 @@ void drawUi(RobotManager& mgr, UiState& ui) {
         ui.joyRy = ry;
     }
     ImGui::EndDisabled();
-    }  // ← if (!ui.mobileLayout)
+    }  // ← if (L.joyInline)
 
     ImGui::Spacing();
-    ImGui::SetNextItemWidth(250);
-    ImGui::SliderFloat("线速度上限", &ui.maxLinSpeed, 0.05f, 1.5f, "%.2f m/s");
-    ImGui::SetNextItemWidth(250);
-    ImGui::SliderFloat("转向角速度", &ui.yawRate, 0.2f, 2.0f, "%.2f rad/s");
+    // ---- 参数：宽屏常显；矮屏 / 单栏收进「参数」折叠区，把纵向空间让给急停和摇杆 ----
+    // （「步速」滑条在下面的快捷区里，那里本来就要跟方向键放一起，所以不重复）
+    const auto drawParamSliders = [&] {
+        ImGui::BeginDisabled(!canMove);
+        ImGui::SetNextItemWidth(L.sliderW);
+        ImGui::SliderFloat("线速度上限", &ui.maxLinSpeed, 0.05f, 1.5f, "%.2f m/s");
+        ImGui::SetNextItemWidth(L.sliderW);
+        ImGui::SliderFloat("转向角速度", &ui.yawRate, 0.2f, 2.0f, "%.2f rad/s");
+        ImGui::EndDisabled();
+    };
+    if (L.paramInline) {
+        drawParamSliders();
+    } else if (ImGui::CollapsingHeader("参数（线速度 / 角速度）")) {
+        drawParamSliders();
+    }
 
     // ---- 快捷单步（急停锁定期间不可用）----
     ImGui::Spacing();
@@ -1312,7 +1433,8 @@ void drawUi(RobotManager& mgr, UiState& ui) {
     ImGui::BeginDisabled(!canMove || ui.estop);
     {
         const float halfW = (ImGui::GetContentRegionAvail().x - 9.0f) * 0.5f;
-        const ImVec2 bs(halfW, 38);
+        // 触摸时按钮高按断点给（≥48dp）；鼠标保持原来的 38
+        const ImVec2 bs(halfW, L.btnH > 0.0f ? L.btnH + 6.0f : 38.0f);
         if (ImGui::Button("▲  前进", bs)) {
             const int n = forEachSelected(mgr, ui,
                 [v = ui.speedScale](RobotClient& c) { return c.move(v, 0, 0); });
@@ -1335,7 +1457,7 @@ void drawUi(RobotManager& mgr, UiState& ui) {
                 [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, -v); });
             ui.addLog("[群控] 右转 → " + std::to_string(n) + " 台");
         }
-        ImGui::SetNextItemWidth(150);
+        ImGui::SetNextItemWidth(std::min(150.0f, L.sliderW * 0.6f));
         ImGui::SliderFloat("步速", &ui.speedScale, 0.05f, 1.5f, "%.2f");
     }
     ImGui::EndDisabled();
@@ -1388,20 +1510,25 @@ void drawUi(RobotManager& mgr, UiState& ui) {
         ui.activeMask = 0;
     }
 
-    // 手机端：底部给两个摇杆浮层留出空间，免得面板内容被它们压住看不见
-    if (mob) ImGui::Dummy(ImVec2(0, 250));
+    // 单栏模式：底部给两个**悬浮**摇杆留出空间，免得面板内容被它们压住看不见。
+    // 预留高度来自 layout（与摇杆圆心同一个公式算出来），不再是写死的 250 ——
+    // 改造前这两处是两套算法，屏幕一变就错位（矮屏上摇杆压住「快捷」按钮）。
+    if (!L.joyInline) ImGui::Dummy(ImVec2(0, L.joyReserve));
 
     ImGui::EndChild();
+    }  // ← if (showCtrl)
 
     // ============================================================ 右：日志
-    // 手游布局下隐藏 —— 界面只留操作区，更简洁（日志仍在内存里，桌面端照常显示）
-    if (!ui.mobileLayout) {
-    ImGui::SameLine();
-    ImGui::BeginChild("log", ImVec2(0, 0), ImGuiChildFlags_Borders);
+    // 三栏 → 常驻右栏；双栏 → 在遥控下方同一列；单栏 → 独立一页
+    if (showLog) {
+    if (L.mode == LayoutMode::ThreeColumn) ImGui::SameLine();
+    // 双栏：EndChild 后光标回到左边界，要手动挪回右栏
+    if (twoCol) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + L.leftW + 16.0f);
+    ImGui::BeginChild("log", ImVec2(0, single ? singleRowH : 0.0f), ImGuiChildFlags_Borders);
     sectionTitle("运行日志");
     ImGui::SameLine();
     {
-        FontScope fs(uiFonts().small);
+        FontScope fs = fontSmall();
         ImGui::Checkbox("自动滚动", &ui.autoScroll);
         ImGui::SameLine();
         ImGui::Checkbox("只看异常", &ui.logErrorsOnly);
@@ -1410,20 +1537,25 @@ void drawUi(RobotManager& mgr, UiState& ui) {
             std::lock_guard<std::mutex> lock(ui.logMutex);
             ui.logs.clear();
         }
-        ImGui::SameLine();
-        ImGui::TextDisabled("| 失败=红 · 成功=绿 · 急停=橙 · 指令=灰");
+        if (!single) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("| 失败=红 · 成功=绿 · 急停=橙 · 指令=灰");
+        }
     }
     ImGui::Spacing();
+    // 窄栏/单栏不再用横向滚动条（滚来滚去根本没法读），改成软换行
+    const bool wrapLog = single || twoCol || L.logW < 420.0f;
     ImGui::BeginChild("logscroll", ImVec2(0, 0), ImGuiChildFlags_None,
-                      ImGuiWindowFlags_HorizontalScrollbar);
+                      wrapLog ? ImGuiWindowFlags_None : ImGuiWindowFlags_HorizontalScrollbar);
     {
         std::lock_guard<std::mutex> lock(ui.logMutex);
-        FontScope fs(uiFonts().small);
+        FontScope fs = fontSmall();
         for (const auto& rawLine : ui.logs) {
             const std::string line = maskIps(rawLine, ui.privacyMode);
             if (ui.logErrorsOnly && !isProblemLine(line)) continue;
             ImGui::PushStyleColor(ImGuiCol_Text, logColor(line));
-            ImGui::TextUnformatted(line.c_str());
+            if (wrapLog) ImGui::TextWrapped("%s", line.c_str());
+            else ImGui::TextUnformatted(line.c_str());
             ImGui::PopStyleColor();
         }
     }
@@ -1431,7 +1563,51 @@ void drawUi(RobotManager& mgr, UiState& ui) {
         ImGui::SetScrollHereY(1.0f);
     ImGui::EndChild();
     ImGui::EndChild();
-    }  // ← if (!ui.mobileLayout)：手游布局不显示日志
+    }  // ← if (showLog)
+
+    // ============================================================ 单栏模式：底部页签 / 侧滑抽屉
+    // 竖屏有纵向空间 → 底部页签；横屏矮屏 → 侧滑抽屉，把纵向空间全留给遥控
+    if (single) {
+        if (L.nav == NavKind::BottomTab) {
+            // 底部页签：遥控 / 控制台 / 日志。三个项足够，避免和页内 TabBar 重复导航。
+            ImGui::BeginChild("mobileTabBar", ImVec2(0, L.tabBarH), ImGuiChildFlags_Borders);
+            static const char* kNames[3] = {"遥控", "控制台", "日志"};
+            const float w = (ImGui::GetContentRegionAvail().x - 16.0f) / 3.0f;
+            for (int i = 0; i < 3; ++i) {
+                if (i > 0) ImGui::SameLine();
+                const bool on = (ui.mobilePage == i);
+                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.29f, 0.56f, 0.99f, 0.85f));
+                if (ImGui::Button(kNames[i], ImVec2(w, L.btnH > 0.0f ? L.btnH : 40.0f)))
+                    ui.mobilePage = i;
+                if (on) ImGui::PopStyleColor();
+            }
+            ImGui::EndChild();
+        } else if (ui.drawerOpen) {
+            // 侧滑抽屉：设备 / 动作库 / 设置（复用左栏内容），铺在内容之上
+            const ImVec2 ds = ImGui::GetIO().DisplaySize;
+            ImGui::SetNextWindowPos(ImVec2(0.0f, L.safe.top));
+            ImGui::SetNextWindowSize(ImVec2(L.drawerW, ds.y - L.safe.top - L.safe.bottom));
+            ImGui::Begin("##drawer", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+            if (ImGui::Button("关闭", ImVec2(-1, L.btnH))) ui.drawerOpen = false;
+            ImGui::Spacing();
+            if (ImGui::BeginTabBar("##drawerTabs", ImGuiTabBarFlags_None)) {
+                if (ImGui::BeginTabItem("设备")) {
+                    ImGui::Spacing();
+                    drawDeviceList(mgr, ui);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("设置")) {
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("钥匙 / 参数等设置请看「控制台」页");
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
+            }
+            ImGui::End();
+        }
+    }
 
     ImGui::End();
 }

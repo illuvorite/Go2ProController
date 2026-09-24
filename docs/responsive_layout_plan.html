@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Go2 控制台 · 平板 / 手机 响应式适配方案</title>
+<style>
+  :root{
+    --bg:#f4f6f8; --card:#fff; --line:#e4e7ec; --line2:#eef0f3;
+    --text:#161a1f; --dim:#5f6b7a; --dim2:#8b95a3;
+    --accent:#2f6fed; --accent-bg:#eef4ff;
+    --ok:#0f9d58; --ok-bg:#eaf7ef;
+    --warn:#c2740a; --warn-bg:#fdf5e6;
+    --err:#d92d20; --err-bg:#fdeceb;
+    --code-bg:#f2f4f7; --code-fg:#334155;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+    font-size:15px; line-height:1.75; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 80px}
+  header.hero{
+    background:linear-gradient(135deg,#1e3a8a 0%,#2f6fed 55%,#3b82f6 100%);
+    border-radius:18px;padding:34px 34px 30px;color:#fff;margin-bottom:28px;
+    box-shadow:0 10px 30px rgba(47,111,237,.22);
+  }
+  header.hero h1{margin:0 0 10px;font-size:27px;line-height:1.35;letter-spacing:.2px}
+  header.hero p{margin:0;color:#d8e5ff;font-size:14.5px}
+  .hero-tags{margin-top:18px;display:flex;flex-wrap:wrap;gap:8px}
+  .hero-tags span{
+    background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.28);
+    padding:4px 11px;border-radius:999px;font-size:12.5px;color:#eaf1ff;
+  }
+  section{margin-bottom:34px}
+  h2{
+    font-size:20px;margin:0 0 6px;display:flex;align-items:center;gap:10px;
+    padding-bottom:10px;border-bottom:1px solid var(--line);
+  }
+  h2 .n{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;
+    font-size:13px;font-weight:700;flex:none;
+  }
+  h3{font-size:16px;margin:24px 0 8px}
+  h4{font-size:14.5px;margin:18px 0 6px;color:#2c3540}
+  p{margin:8px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px 22px}
+  .muted{color:var(--dim)}
+  .small{font-size:13px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:760px){.grid2,.grid3{grid-template-columns:1fr}}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px}
+  .kpi .t{font-size:12.5px;color:var(--dim);letter-spacing:.4px;margin-bottom:6px}
+  .kpi .v{font-size:15px;font-weight:600;line-height:1.5}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:12px 0;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:#f7f9fb;font-weight:600;color:#2c3540;white-space:nowrap}
+  td code,th code{background:var(--code-bg);padding:1px 5px;border-radius:4px;font-size:12.5px;color:var(--code-fg)}
+  code{font-family:"Cascadia Code",Consolas,"Courier New",monospace}
+  .tag{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap}
+  .tag.p0{background:var(--err-bg);color:var(--err)}
+  .tag.p1{background:var(--warn-bg);color:var(--warn)}
+  .tag.p2{background:var(--accent-bg);color:var(--accent)}
+  .tag.ok{background:var(--ok-bg);color:var(--ok)}
+  .tag.n{background:#eef1f5;color:#5f6b7a}
+  .callout{border-left:3px solid var(--accent);background:var(--accent-bg);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;font-size:14px}
+  .callout.warn{border-color:var(--warn);background:var(--warn-bg)}
+  .callout.err{border-color:var(--err);background:var(--err-bg)}
+  ul,ol{margin:8px 0;padding-left:22px}
+  li{margin:5px 0}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;font-size:12.8px;line-height:1.6;color:#26313d}
+  /* 演示器 */
+  .sim{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px 22px}
+  .sim-ctrl{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-end;margin-bottom:18px}
+  .sim-ctrl label{display:block;font-size:12.5px;color:var(--dim);margin-bottom:6px;font-weight:600}
+  input[type=range]{width:220px;accent-color:var(--accent)}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .seg button{
+    border:0;background:#fff;padding:7px 14px;font-size:13px;cursor:pointer;color:var(--dim);
+    font-family:inherit;
+  }
+  .seg button+button{border-left:1px solid var(--line)}
+  .seg button.on{background:var(--accent);color:#fff;font-weight:600}
+  .sim-body{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(240px,.65fr);gap:20px;align-items:start}
+  @media(max-width:820px){.sim-body{grid-template-columns:1fr}}
+  .frame-wrap{background:#eaeef3;border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;justify-content:center;align-items:center;min-height:300px}
+  .frame{position:relative;background:#141a21;border-radius:10px;overflow:hidden;box-shadow:0 6px 18px rgba(15,25,40,.18)}
+  .blk{position:absolute;border-radius:4px;font-size:9.5px;color:#cfe0ff;display:flex;align-items:center;justify-content:center;overflow:hidden;text-align:center;line-height:1.25}
+  .blk.top{background:#2b3a52;border:1px solid #3d5170}
+  .blk.left{background:#22303f;border:1px solid #34485c}
+  .blk.ctrl{background:#1d2a3a;border:1px solid #31465c}
+  .blk.log{background:#1a2430;border:1px solid #2c3d4f}
+  .blk.tab{background:#26364a;border:1px solid #3a4f68}
+  .blk.estop{background:#8c1f1f;border:1px solid #c0392b;color:#ffd9d9}
+  .blk.drawer{background:#2a3d2f;border:1px solid #3f6b46;color:#d6f0da}
+  .joy{position:absolute;border-radius:50%;border:1.5px solid rgba(180,205,255,.55);background:rgba(120,160,255,.10)}
+  .joy::after{content:'';position:absolute;left:50%;top:50%;width:34%;height:34%;transform:translate(-50%,-50%);border-radius:50%;background:#4a8ffc}
+  .safe{position:absolute;border:1px dashed rgba(255,190,90,.65);border-radius:6px;pointer-events:none}
+  .metrics{font-size:13px}
+  .metrics .row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px dashed var(--line2)}
+  .metrics .row:last-child{border-bottom:0}
+  .metrics .row b{font-weight:600;font-variant-numeric:tabular-nums}
+  .badge{display:inline-block;background:var(--accent);color:#fff;border-radius:7px;padding:3px 10px;font-size:12.5px;font-weight:700}
+  .badge.b{background:#7c3aed}
+  .badge.c{background:#0f9d58}
+  .badge.warn{background:var(--warn)}
+  .modecard{border:1px solid var(--line);border-radius:var(--radius);background:var(--card);padding:18px 20px;margin-bottom:14px}
+  .modecard h3{margin-top:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .modecard .cond{font-size:12.5px;color:var(--dim);font-weight:400}
+  .chk{list-style:none;padding-left:0}
+  .chk li{position:relative;padding-left:26px;margin:7px 0}
+  .chk li::before{
+    content:'';position:absolute;left:0;top:6px;width:15px;height:15px;
+    border:1.5px solid #c3cbd6;border-radius:4px;background:#fff;
+  }
+  .footnote{font-size:12.5px;color:var(--dim2);border-top:1px solid var(--line);padding-top:14px;margin-top:34px}
+  .nowrap{white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>Unitree Go2 控制台 · 平板 / 手机 响应式适配方案</h1>
+  <p>基于当前 <code style="background:rgba(255,255,255,.16);color:#fff;padding:1px 6px;border-radius:5px">client/ui/ui.cpp</code> 的真实代码结构与 1920×1200 界面截图制定 —— 断点体系、各尺寸下的排版与交互调整、必须处理的适配细节、预期效果。</p>
+  <div class="hero-tags">
+    <span>4 个宽度断点 × 3 个高度断点</span>
+    <span>3 种布局模式</span>
+    <span>2 条叠加修正规则</span>
+    <span>仅改 UI 层，core 不动</span>
+  </div>
+</header>
+
+<!-- ============================================ 0 -->
+<section>
+  <h2><span class="n">0</span>落地状态（已实现，附验证方式）</h2>
+  <div class="callout" style="margin-top:14px">
+    <b>这份方案已经落到代码里了。</b>下面按「做了什么 / 落在哪个文件 / 怎么验证的」列清楚，方便你对照检查。
+  </div>
+  <table>
+    <thead><tr><th style="width:9%">项</th><th style="width:28%">内容</th><th>落地位置与验证方式</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag p0">P0-1</span></td><td>坐标单位归一（ImGui 单位 = dp）</td><td><code>apps/android/native/main_android.cpp</code>：新增 <code>detectPixelScale()</code>，每帧把 <code>DisplaySize</code> 折成逻辑尺寸、把 <code>DisplayFramebufferScale</code> 设成密度。真机首次运行请核对日志里 <code>像素密度：…</code> 那一行。</td></tr>
+      <tr><td><span class="tag p0">P0-2</span></td><td>动态字号（不再烘焙）</td><td><code>ui/theme.cpp</code>：只加载**一份**字体，字号用 <code>PushFont(font, size)</code> 运行时给；新增 <code>setUiFontSizes()</code> 由断点调用，<code>kMobileFontScale</code> 已删除。</td></tr>
+      <tr><td><span class="tag p0">P0-3</span></td><td>样式快照（不累乘）</td><td><code>ui/theme.cpp</code>：<code>applyTheme()</code> 存基线样式，新增 <code>applyUiScale()</code> 每次都从基线重算 —— 绕开 <code>ScaleAllSizes</code> 就地相乘的累乘问题。</td></tr>
+      <tr><td><span class="tag p0">P0-4</span></td><td>LayoutSpec 取代 <code>mobileLayout</code></td><td>新增 <code>ui/layout.{hpp,cpp}</code>（4 宽度档 × 3 高度档 + 高度/触摸两条修正 + 8dp 滞回）；<code>ui/ui.cpp</code> 里原来的 <code>mob ? a : b</code> 与写死像素全部改成从 spec 取值。</td></tr>
+      <tr><td><span class="tag p0">P0-5</span></td><td>触摸判定按输入方式</td><td><code>main_android.cpp</code>：<code>SDL_FINGERDOWN</code> → 手指优先；真鼠标（<code>which != SDL_TOUCH_MOUSEID</code>）→ 鼠标优先。触屏笔记本 / 平板接鼠标都能自动切换。</td></tr>
+      <tr><td><span class="tag p1">P1</span></td><td>三种布局模式 + 自适应组件</td><td><code>ui/ui.cpp</code>：<b>A 三栏</b>（日志按剩余宽自动折叠）/ <b>B 双栏</b>（右栏遥控上、日志下）/ <b>C 单栏</b>（竖屏底部页签、矮屏侧滑抽屉）；顶栏按行数折叠、动作库按栏宽动态分列、滑条与 IP 输入框宽度自适应、窄栏日志改软换行。</td></tr>
+      <tr><td><span class="tag p1">P1-5</span></td><td>摇杆几何同源 + 触摸互斥</td><td><code>ui/layout.cpp::computeFloatingJoysticks()</code> 一处算出圆心与内容预留高度；<code>main_android.cpp</code> 的 <code>TouchSticks</code> 先查安全操作区矩形，落在急停 / 阻尼上的手指不再被摇杆吃掉。</td></tr>
+      <tr><td><span class="tag p1">P1-8</span></td><td>开放竖屏</td><td><code>AndroidManifest.xml</code>：<code>sensorLandscape</code> → <code>fullSensor</code>（<code>setup.sh</code> 的注入默认值同步改掉）；布局每帧按 <code>DisplaySize</code> 重算，旋转不重建 Activity。</td></tr>
+      <tr><td><span class="tag ok">验证</span></td><td>编译 + 编译期断言</td><td>4 个改动文件用 <b>NDK clang 17</b> 编到目标文件全部通过（只剩 2 条既有的"未使用函数"警告）；新增 <code>client/tests/layout_test.cpp</code>，用 <b>60+ 条 static_assert</b> 把各机型档位数值钉死 —— 手机竖屏 / 横屏、平板竖屏 / 横屏、桌面 1440、大屏 1920、窄窗 900、断点滞回、触摸修正、安全区。<br><span class="small muted">已反向验证过断言是"活的"：故意改错一个预期值会编译失败。</span></td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <b>还没做 / 需要真机确认的：</b>
+    <br>① <b>像素密度实测</b>：<code>detectPixelScale()</code> 有两条探测路径（SDL 已给逻辑尺寸 / 用 DPI 反推），首次在真机上跑请核对日志那一行是否符合预期。
+    <br>② <b>安全区</b>：目前用保守常量（左右 20dp、底部 24dp）。要精确值需在 <code>MainActivity</code> 里读 <code>WindowInsets</code> 再经 JNI 传进来。
+    <br>③ <b>Android 打包验证</b>：本机没有可用的 C++ 宿主工具链（WSL 被安全策略禁用），APK 需要你按 <code>client/apps/android/README.md</code> 构建一次做真机验收。
+    <br>④ 属 P2 未做：触屏下的 <b>tooltip 改长按</b>、遥控时 <b>保持屏幕常亮</b>、日志浮层入口的 <b>错误数角标</b>、摇杆左右手可交换。
+  </div>
+</section>
+
+<!-- ============================================ 1 -->
+<section>
+  <h2><span class="n">1</span>结论先行</h2>
+  <div class="grid2" style="margin-top:14px">
+    <div class="kpi">
+      <div class="t">问题根子</div>
+      <div class="v">现在是「一个布尔开关 + 一堆写死的像素」<br><span class="small muted">不是没有适配，而是只有"桌面/手机"两档，中间全空</span></div>
+    </div>
+    <div class="kpi">
+      <div class="t">最该先做的一件事</div>
+      <div class="v">把 ImGui 的坐标单位归一成 dp<br><span class="small muted">否则所有断点数值都没有意义（见第 6 节 P0-1）</span></div>
+    </div>
+    <div class="kpi">
+      <div class="t">断点怎么切</div>
+      <div class="v">按宽度 4 档：<b>&lt;600 / 600–899 / 900–1279 / ≥1280</b> dp<br><span class="small muted">再用「高度」和「触摸」两条规则做叠加修正</span></div>
+    </div>
+    <div class="kpi">
+      <div class="t">布局怎么变</div>
+      <div class="v">三栏 → 双栏 → 单栏+抽屉/底部页签<br><span class="small muted">栏宽全部改为「按比例算 + 上下限夹取」，不再写死</span></div>
+    </div>
+    <div class="kpi">
+      <div class="t">摇杆怎么放</div>
+      <div class="v">宽屏内嵌在遥控栏，窄屏改为悬浮在屏幕两下角<br><span class="small muted">位置由公式推导 + 让开安全区，且内容预留高度用同一个公式算</span></div>
+    </div>
+    <div class="kpi">
+      <div class="t">预期效果</div>
+      <div class="v">手机竖屏能用、平板不再被当手机、桌面 1440×880 完全不回归<br><span class="small muted">安全操作（急停）在任何尺寸下都常驻可见</span></div>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top:18px">
+    <b>打个比方：</b>现在的做法像给房子装了一扇"固定尺寸的门"——门框钉死了，房子变大变小它都不管，只好在旁边再开一个"手机专用门"，而且只能二选一。响应式要的是"推拉门 + 折叠门"：门框跟着墙走，宽了就三开间、窄了就一开间。
+  </div>
+</section>
+
+<!-- ============================================ 2 -->
+<section>
+  <h2><span class="n">2</span>现状体检：为什么必须改</h2>
+  <p>下面这些值都是当前代码里<b>真实写死</b>的常量。左边是现状，右边是它在真实设备上会怎样崩。</p>
+
+  <table>
+    <thead><tr><th style="width:22%">位置</th><th style="width:36%">现状（写死的值）</th><th>在什么设备上出问题</th></tr></thead>
+    <tbody>
+      <tr><td>顶栏高度</td><td><code>124</code> / 手机 <code>176</code></td><td>手机横屏高度约 390dp 时，顶栏吃掉 <b>45%</b> 屏高，遥控区被压扁</td></tr>
+      <tr><td>顶栏第二行</td><td>扫描 126 + 输入 250 + 添加 64 + 全部连接 96 + 全部断开 96 ≈ <b>660dp 且不换行</b></td><td>屏宽 &lt; 700dp 时按钮被挤出屏幕，<span class="nowrap">「全部断开」直接点不到</span></td></tr>
+      <tr><td>左栏宽度</td><td><code>392</code> / 手机 <code>452</code></td><td>手机竖屏宽 360–430dp：452 &gt; 屏宽，整栏溢出；390dp 竖屏基本不可用</td></tr>
+      <tr><td>遥控栏宽度</td><td>写死 <code>468</code>，手机才改成"占满剩余"</td><td>窗口拖窄到 ~1000px 时 392+468=860，日志栏只剩不到 150px</td></tr>
+      <tr><td>动作库按钮</td><td><code>actW1=150</code> / 手机 <code>214</code>，两列排布</td><td>左栏收窄到 300dp 时两列 300+ 直接溢出、折行错乱</td></tr>
+      <tr><td>滑条宽度</td><td><code>250</code> / <code>90</code> / <code>62</code> 写死</td><td>窄栏里溢出、标签被裁</td></tr>
+      <tr><td>悬浮摇杆</td><td>半径 <code>min(128, max(74, h*0.22))</code>，左内缩 <code>radius*0.95+44</code>，底距 <code>h-radius-90</code>；内容预留 <code>Dummy(0,250)</code></td><td>矮屏上摇杆会<b>压住「快捷」按钮</b>；刘海 / 手势条机型摇杆被系统条盖住；预留高度 250 与摇杆真实位置两套算法，尺寸一变就错位</td></tr>
+      <tr><td>日志栏</td><td>桌面常驻、手机整栏隐藏</td><td>手机上出故障时看不到日志；反过来说，1920 宽的大屏也把日志砍掉了——<b>一刀切两头都不对</b></td></tr>
+      <tr><td>字号</td><td>桌面烘焙 23/18/15；手机再烘焙一份 ×1.55</td><td>字号被"烤"进字体图集，运行时改不了；横竖屏切换要重载图集</td></tr>
+      <tr><td>样式缩放</td><td><code>ScaleAllSizes(1.35)</code> 只在启动调一次</td><td>它内部是<b>就地相乘</b>（<code>_MainScale *= f</code> 只是记录，各字段直接乘），所以现在"只能调一次"，做动态断点必须先从快照还原</td></tr>
+      <tr><td>屏幕方向</td><td>清单里锁 <code>sensorLandscape</code></td><td>竖屏被彻底放弃——而竖屏恰恰是手机最常用的姿势</td></tr>
+      <tr><td>DPI / 密度</td><td>没有任何 density 处理</td><td>SDL2 在 Android 上返回物理分辨率，ImGui 单位即物理像素 → 3x 屏上 54 单位按钮只有约 18dp，远低于 48dp 触摸下限。现在的 1.55 字号倍率其实是在"糊着补偿"这件事</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <b>截图实测（像素级测量 _tab6.png）：</b>画布 1920×1200；左栏固定 391px（≈代码里的 392）；遥控栏从 x=415 一直拉到 x=1905，即<b>吃掉全部剩余 1490px</b>；日志栏整栏不可见；两个摇杆浮在屏幕两下角（圆心约 x=127 / x=1796，距底约 108px）。
+    <br>这张图正好说明了问题：<b>在 1920 宽的大屏上，代码依然走的是"手机那套"——把日志整栏砍掉、摇杆浮到两个角上。</b>因为它只有"桌面/手机"两档可选，没有中间档。
+  </div>
+</section>
+
+<!-- ============================================ 3 -->
+<section>
+  <h2><span class="n">3</span>断点体系：4 档宽度 × 3 档高度</h2>
+  <p>这个界面的瓶颈<b>不只是宽度</b>。遥控页是"安全关键操作区"：急停、阻尼、参数、快捷键、双摇杆都要能一眼看到、手指够得着——所以<b>高度和宽度一样重要</b>。因此用二维断点。</p>
+
+  <h3>3.1 宽度档（按逻辑 dp，不是物理像素）</h3>
+  <table>
+    <thead><tr><th>代号</th><th>逻辑宽度</th><th>典型设备</th></tr></thead>
+    <tbody>
+      <tr><td><b>C</b> 紧凑</td><td>&lt; 600dp</td><td>手机竖屏 360–430、折叠屏外屏</td></tr>
+      <tr><td><b>M</b> 中等</td><td>600–899dp</td><td>手机横屏 720–915、平板竖屏 768、折叠屏展开</td></tr>
+      <tr><td><b>E</b> 扩展</td><td>900–1279dp</td><td>平板横屏 1024–1194、小笔记本、桌面分屏半屏</td></tr>
+      <tr><td><b>L</b> 宽大</td><td>≥ 1280dp</td><td>桌面 1440 / 1920 / 2560</td></tr>
+    </tbody>
+  </table>
+
+  <h3>3.2 高度档</h3>
+  <table>
+    <thead><tr><th>代号</th><th>逻辑高度</th><th>典型</th></tr></thead>
+    <tbody>
+      <tr><td><b>S</b> 矮</td><td>&lt; 480dp</td><td>手机横屏 360–430、平板横屏分屏、桌面窄窗</td></tr>
+      <tr><td><b>R</b> 常规</td><td>480–799dp</td><td>平板竖屏 1024、桌面 720 / 768</td></tr>
+      <tr><td><b>T</b> 高</td><td>≥ 800dp</td><td>平板竖屏 1366、桌面 1080 / 1440</td></tr>
+    </tbody>
+  </table>
+
+  <h3>3.3 断点矩阵 → 落到 3 种布局模式</h3>
+  <table>
+    <thead><tr><th></th><th>C &lt;600</th><th>M 600–899</th><th>E 900–1279</th><th>L ≥1280</th></tr></thead>
+    <tbody>
+      <tr>
+        <th>S &lt;480</th>
+        <td><span class="badge c">C 单栏+抽屉</span><br><span class="small muted">手机横屏</span></td>
+        <td><span class="badge c">C 单栏+抽屉</span><br><span class="small muted">大屏手机横屏</span></td>
+        <td><span class="badge">A 三栏</span><br><span class="small muted">日志折叠为浮层</span></td>
+        <td><span class="badge">A 三栏</span><br><span class="small muted">日志折叠为浮层</span></td>
+      </tr>
+      <tr>
+        <th>R 480–799</th>
+        <td><span class="badge c">C 单栏+底部页签</span><br><span class="small muted">手机竖屏</span></td>
+        <td><span class="badge b">B 双栏</span><br><span class="small muted">平板竖屏 / 小平板横屏</span></td>
+        <td><span class="badge">A 三栏</span><br><span class="small muted">平板横屏</span></td>
+        <td><span class="badge">A 三栏</span><br><span class="small muted">桌面（现状）</span></td>
+      </tr>
+      <tr>
+        <th>T ≥800</th>
+        <td><span class="badge c">C 单栏+底部页签</span><br><span class="small muted">手机竖屏（长屏）</span></td>
+        <td><span class="badge b">B 双栏</span><br><span class="small muted">平板竖屏（左栏常驻）</span></td>
+        <td><span class="badge">A 三栏</span><br><span class="small muted">竖屏大平板</span></td>
+        <td><span class="badge">A 三栏</span><br><span class="small muted">桌面大屏</span></td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="small muted">注意 M 宽这一列：<b>同样的宽度，矮屏走单栏、高屏走双栏</b>——这就是"二维断点"的价值。手机横屏（M×S）没有纵向空间放双栏，而平板竖屏（M×R/T）有，应该把左栏常驻出来。</p>
+
+  <h3>3.4 两条叠加修正规则</h3>
+  <table>
+    <thead><tr><th style="width:16%">规则</th><th style="width:30%">触发</th><th>修正内容</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>高度修正</b></td>
+        <td>高度 &lt; 480dp</td>
+        <td>① 顶栏压成 1 行；② 日志改为浮层抽屉（不占常驻宽度）；③ 左栏降级为侧滑抽屉；④ 摇杆取小档半径；⑤ 参数滑条收进「参数」折叠区；⑥ 动作库改 1 列</td>
+      </tr>
+      <tr>
+        <td><b>触摸修正</b></td>
+        <td>最近一次输入是手指（SDL_FINGERDOWN）</td>
+        <td>所有按钮最小高度 34dp → <b>48dp</b>，主操作 56–64dp，控件间距 ≥12dp；滑条抓手加大；<b>注意是按输入方式判定，不是按平台</b>——触屏笔记本、平板接鼠标都能自动适配</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <b>断点要加滞回（防抖动）：</b>窗口/分屏被拖到 900dp 附近来回晃时，布局会反复横跳。做法是判定时留 8dp 滞回——已经处于 A 模式时，要掉到 &lt;892dp 才降级；处于 B 模式时，要涨到 &gt;908dp 才升级。
+  </div>
+
+  <h3>3.5 断点演示器（拖一下看布局怎么变）</h3>
+  <div class="sim">
+    <div class="sim-ctrl">
+      <div>
+        <label>逻辑宽度 <span id="lw">1080</span> dp</label>
+        <input type="range" id="rw" min="320" max="1920" value="1080" step="1">
+      </div>
+      <div>
+        <label>逻辑高度 <span id="lh">675</span> dp</label>
+        <input type="range" id="rh" min="320" max="1200" value="675" step="1">
+      </div>
+      <div>
+        <label>输入方式</label>
+        <div class="seg" id="touchSeg">
+          <button data-v="1" class="on">手指</button>
+          <button data-v="0">鼠标</button>
+        </div>
+      </div>
+      <div>
+        <label>快速切到典型设备</label>
+        <div class="seg" id="presetSeg">
+          <button data-w="390" data-h="844">手机竖屏</button>
+          <button data-w="844" data-h="390">手机横屏</button>
+          <button data-w="768" data-h="1024">平板竖屏</button>
+          <button data-w="1024" data-h="768">平板横屏</button>
+          <button data-w="1440" data-h="880">桌面</button>
+        </div>
+      </div>
+    </div>
+    <div class="sim-body">
+      <div class="frame-wrap"><div class="frame" id="frame"></div></div>
+      <div class="metrics" id="metrics"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================ 4 -->
+<section>
+  <h2><span class="n">4</span>三种布局模式详解</h2>
+
+  <div class="modecard">
+    <h3><span class="badge">A</span> 三栏工作台 <span class="cond">E / L 宽 × R / T 高（≥900 × ≥480dp）· 平板横屏、桌面</span></h3>
+    <p class="small muted">就是现在桌面的样子，但所有宽度从"写死"改成"算出来"，并保证日志栏有下限。</p>
+    <table>
+      <thead><tr><th style="width:24%">区域</th><th>规则</th></tr></thead>
+      <tbody>
+        <tr><td>顶栏</td><td>≥1280dp 保持 3 行（124dp）；900–1279dp 压成 2 行（92dp）：把「本地钥匙 / 重载钥匙」这一行移到「设置」页，IP 输入框收到 160dp，长提示文字转成图标 + 长按提示</td></tr>
+        <tr><td>左栏</td><td><code>clamp(宽×0.27, 280, 420)</code> → 1440 时约 389dp（<b>与现状 392 几乎一致，不回归</b>）；下限 280dp 是为了 900–1110dp 这一档（平板横屏）仍能凑出三栏</td></tr>
+        <tr><td>遥控栏</td><td><code>clamp(宽×0.33, 360, 520)</code> → 1440 时约 475dp（现状 468）；下限 360dp 同上</td></tr>
+        <tr><td>日志栏</td><td>占剩余；<b>算出来 ≥ 280dp 才常驻</b>，否则自动折叠为「日志 ▾」浮层。这样 900–1100dp 时不会出现 150px 宽的鸡肋日志栏</td></tr>
+        <tr><td>摇杆</td><td>内嵌在遥控栏，半径 74dp，双杆间距 24dp（与现状一致）</td></tr>
+        <tr><td>高度修正</td><td>高度 &lt; 480dp 时：日志折叠为浮层、参数滑条进折叠区、动作库按钮单列</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="modecard">
+    <h3><span class="badge b">B</span> 双栏 <span class="cond">M 宽 × R / T 高（600–899 × ≥480dp）· 平板竖屏、小平板横屏</span></h3>
+    <p class="small muted">平板竖屏是最容易被忽略、但实际最好用的一档：左边常驻设备/动作库，右边纵向分成"遥控上、日志下"。</p>
+    <table>
+      <thead><tr><th style="width:24%">区域</th><th>规则</th></tr></thead>
+      <tbody>
+        <tr><td>顶栏</td><td>压成 1 行 56dp：<code>[≡] 1/4 台 · 运行中 ｜ [扫描][＋][连接] ｜ [🔒][⋮]</code>，其余进 <code>⋮</code> 菜单</td></tr>
+        <tr><td>左栏</td><td>常驻，<code>clamp(宽×0.40, 280, 340)</code> → 768 时约 307dp</td></tr>
+        <tr><td>右栏</td><td>纵向两段：遥控区占上方（内容自适应，最少 420dp），日志占下方剩余；日志可一键收起，收起后遥控区吃掉全部高度</td></tr>
+        <tr><td>摇杆</td><td>内嵌在遥控栏底部（平板竖屏时双手持握、拇指正好落在右栏下角），半径 <code>clamp(右栏宽×0.17, 56, 84)</code></td></tr>
+        <tr><td>动作库</td><td>按钮按右栏/左栏宽度自适应 2 列；滑条宽 = <code>min(220, 栏宽−80)</code></td></tr>
+        <tr><td>高度修正</td><td>高度 &lt; 480dp（小平板横屏 800×600）时：左栏降级为抽屉、日志折叠，只剩单栏</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="modecard">
+    <h3><span class="badge c">C</span> 单栏 + 悬浮双摇杆 <span class="cond">C 宽任意高，或 M 宽 × S 高（&lt;600dp 任意，或矮屏）· 手机横竖屏</span></h3>
+    <p class="small muted">这是改动最大的一档，也是现在完全不可用的一档（竖屏锁死了）。内容单栏铺满，摇杆脱离文档流浮到屏幕下两角，导航按高度二选一。</p>
+    <table>
+      <thead><tr><th style="width:24%">区域</th><th>规则</th></tr></thead>
+      <tbody>
+        <tr><td>导航</td><td><b>高度 ≥480dp（竖屏）</b>：底部页签 5 项（遥控 / 设备 / 动作 / 设置 / 日志），高 56dp + 底部安全区<br><b>高度 &lt;480dp（横屏）</b>：顶栏左侧 <code>[≡]</code> 侧滑抽屉（宽 <code>min(420, 宽×0.62)</code>），省下纵向空间给遥控</td></tr>
+        <tr><td>顶栏</td><td>1 行 52–56dp：品牌缩写 + 状态灯 + 受控台数 + <code>[🔒 隐私]</code> + <code>[⋮]</code>；<b>右侧常驻速度读数</b> <code>vx/vy/vz + 下发状态</code>（小字），避免被摇杆挡住</td></tr>
+        <tr><td>遥控页<br><span class="small muted">竖屏（高 ≥480dp）</span></td><td>纵向空间充裕，全部常显：状态卡（连接/电量/模式）→ 急停（全宽 88dp）→ 阻尼（全宽 ≥48dp，与急停间距 ≥12dp 防误触）→ 快捷 4 键（2×2，每键 ≥64dp）→ 「参数」折叠区（线速度/角速度/步速）</td></tr>
+        <tr><td>遥控页<br><span class="small muted">横屏矮屏（高 &lt;480dp）</span></td><td><b>纵向只有约 338dp，塞不下全部内容，必须做取舍。</b>算一下：摇杆占底部 156dp + 留白 24dp，只剩约 158dp。<br>所以首屏只留：状态条（一行 38dp）+ 急停（72dp）+ 阻尼（48dp）；<br><b>「快捷 4 键」和「参数」收进「更多 ▾」半屏浮层</b>（点开覆盖下半屏，关掉还原）。<br>理由：有双摇杆时方向快捷键本来就不是主力操作，而急停和阻尼是安全项，任何时候都不能藏。</td></tr>
+        <tr><td>摇杆</td><td><b>悬浮</b>，半径 <code>clamp(min(宽,高)×0.20, 60, 128)</code>；左内缩 <code>radius×0.95 + 安全区左 + 16</code>；圆心高度 <code>高 − 安全区底 − radius − 24</code>；竖屏时再往上让开底部页签</td></tr>
+        <tr><td>内容预留</td><td>遥控页底部预留高度 = <b>与摇杆同一个公式算出的值</b>（替换写死的 <code>Dummy(0,250)</code>），保证摇杆永远不压住「快捷」按钮</td></tr>
+        <tr><td>设备页</td><td>卡片式；去掉第三行链路详情（窄屏会折行），改成点卡片展开；「连接/断开/移除」改为 ≥48dp 的图标按钮</td></tr>
+        <tr><td>动作库页</td><td>1 列大按钮（高 ≥56dp），分组手风琴，默认展开「基础姿态」+ 默认开启「隐藏不支持的」</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================ 5 -->
+<section>
+  <h2><span class="n">5</span>排版与交互调整规格</h2>
+
+  <h3>5.1 字号与控件密度（按模式取档）</h3>
+  <table>
+    <thead><tr><th>模式</th><th>标题 / 正文 / 小字</th><th>按钮最小高</th><th>控件间距</th><th>圆角</th></tr></thead>
+    <tbody>
+      <tr><td>A（鼠标）</td><td>23 / 18 / 15</td><td>34</td><td>8</td><td>6</td></tr>
+      <tr><td>A（触摸）</td><td>23 / 18 / 15</td><td>44</td><td>10</td><td>8</td></tr>
+      <tr><td>B</td><td>21 / 17 / 14</td><td>48</td><td>12</td><td>10</td></tr>
+      <tr><td>C（竖屏）</td><td>19 / 16 / 13</td><td>48–56</td><td>12</td><td>12</td></tr>
+      <tr><td>C（横屏矮）</td><td>19 / 16 / 13</td><td>48</td><td>10</td><td>10</td></tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <b>好消息：字号终于可以运行时改了。</b>项目用的 ImGui 是 <code>1.92.9b</code>，而 <code>imgui_impl_opengl3</code> 已经声明了 <code>ImGuiBackendFlags_RendererHasTextures</code>——这意味着支持<b>动态字体</b>：用 <code>ImGui::PushFont(font, 字号)</code> 就能随时换字号，字形按需栅格化。
+    <br>所以现在 <code>kMobileFontScale = 1.55</code> 这种"启动时烘焙一次"的做法可以彻底去掉：换断点、转屏幕都不用重载图集，字还更清晰。
+  </div>
+
+  <h3>5.2 摇杆几何（全部改为推导式）</h3>
+  <pre>// 现在（写死 + 魔法数）
+radius = min(128, max(74, h * 0.22));
+inset  = radius * 0.95 + 44;          // 44 是什么？没人知道
+cy     = h - radius - 90;             // 90 是硬编码的"底部留白"
+if (mob) ImGui::Dummy(ImVec2(0, 250)); // 预留高度又是另一个数
+
+// 改为
+radius = clamp(min(w, h) * 0.20f, 60.0f, 128.0f);
+insetX = radius * 0.95f + safe.left + 16.0f;
+cy     = h - safe.bottom - radius - 24.0f - (底部页签 ? 56.0f : 0.0f);
+预留高 = (h - cy) + radius + 24.0f;   // ← 与摇杆同一个来源，永不脱节</pre>
+  <p class="small muted">关键点：<b>摇杆位置和内容预留高度必须来自同一个函数</b>。现在这两个值是分开写的（一个算 <code>h-radius-90</code>，一个写 <code>250</code>），屏幕一变就错位——这正是矮屏上摇杆压住按钮的根因。</p>
+
+  <h3>5.3 交互对照表（桌面 ↔ 触摸）</h3>
+  <table>
+    <thead><tr><th style="width:20%">功能</th><th style="width:38%">鼠标 / 键盘</th><th>触摸</th></tr></thead>
+    <tbody>
+      <tr><td>移动 / 转向</td><td>拖动摇杆（一次只能拖一个）</td><td>双指同时，左右杆独立（SDL 层已接管 <code>SDL_FingerDown/Motion/Up</code>，逻辑保留）</td></tr>
+      <tr><td>急停</td><td>空格键 / 点红色按钮</td><td>常驻吸底大红按钮（不随内容滚动）+ 三指同时按下（可选兜底）</td></tr>
+      <tr><td>强制阻尼</td><td>点击 → 二次确认按钮</td><td><b>长按 0.6s</b> 触发（替代"点两次"，避免误触，且给震动反馈）</td></tr>
+      <tr><td>侧移按住</td><td>鼠标按住不放</td><td>按住按钮（保留），按钮加宽到 ≥120dp</td></tr>
+      <tr><td>危险动作提示</td><td>悬停显示 tooltip</td><td><b>触屏没有真正的 hover</b>：改为长按 0.5s 弹出，或点击后内联展开一行说明（现在十几处 <code>SetTooltip</code> 在手机上基本看不到）</td></tr>
+      <tr><td>日志</td><td>常驻右栏</td><td>顶栏按钮唤起浮层 / 独立页签，按钮带<b>错误数角标</b>（错误信息必须可达）</td></tr>
+      <tr><td>参数滑条</td><td>直接拖</td><td>拖 + 点数值直接输入（手指拖不准，要能精确设）</td></tr>
+      <tr><td>手动加 IP</td><td>输入框直接打字</td><td>软键盘会遮挡半屏 → 输入框放进居中弹窗，并 <code>SetKeyboardFocusHere</code> + 自动滚动到可见</td></tr>
+      <tr><td>页面切换</td><td>左侧 Tab 栏</td><td>底部页签（竖屏）/ 侧滑抽屉（横屏）</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================ 6 -->
+<section>
+  <h2><span class="n">6</span>重点适配细节（按优先级）</h2>
+  <p class="small muted">每条都给了"现象 → 原因 → 改法（文件位置）"，可以直接照单施工。</p>
+
+  <h3>P0 · 不做这些，断点就是白做</h3>
+  <table>
+    <thead><tr><th style="width:5%">#</th><th style="width:22%">事项</th><th>做法</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="tag p0">P0-1</span></td>
+        <td><b>坐标单位归一（DPI）</b><br><span class="small muted">最关键的一条</span></td>
+        <td>SDL2 在 Android 上返回的是物理分辨率，ImGui 单位 = 物理像素，所以 3x 屏上 54 单位按钮实际只有约 18dp。做法：取设备密度（JNI 读 <code>displayMetrics.density</code>，或 <code>SDL_GetDisplayDPI()/160</code>；桌面用 <code>glfwGetWindowContentScale</code>），然后在 <code>ImGui_ImplSDL2_NewFrame()</code> 之后覆盖：<br><code>io.DisplaySize = ImVec2(物理宽/density, 物理高/density);</code><br><code>io.DisplayFramebufferScale = ImVec2(density, density);</code><br>这样 ImGui 单位 = dp，<b>断点数值才有意义</b>，字也按物理分辨率栅格化（不糊）。<br><span class="small muted">落地前先实测确认一次：在目标机型上打印 <code>SDL_GetWindowSize</code> / <code>SDL_GL_GetDrawableSize</code> / density 三个值。</span></td>
+      </tr>
+      <tr>
+        <td><span class="tag p0">P0-2</span></td>
+        <td><b>改用动态字号</b></td>
+        <td>删掉 <code>kMobileFontScale</code> 烘焙逻辑（<code>theme.cpp</code> 的 <code>loadUiFontsFromMemory</code>），改为只加载一次字体，字号用 <code>ImGui::PushFont(font, 21.0f)</code> 按断点给。横竖屏切换、跨断点都不用重载图集。</td>
+      </tr>
+      <tr>
+        <td><span class="tag p0">P0-3</span></td>
+        <td><b>样式缩放不能累乘</b></td>
+        <td><code>ScaleAllSizes</code> 是就地相乘（已核对 <code>imgui.cpp</code> 实现：<code>_MainScale *= f</code> 仅作记录，各字段直接乘）。所以切断点前必须还原：<br><code>static ImGuiStyle base = ImGui::GetStyle(); // 启动时存快照</code><br><code>ImGui::GetStyle() = base; ImGui::GetStyle().ScaleAllSizes(k);</code></td>
+      </tr>
+      <tr>
+        <td><span class="tag p0">P0-4</span></td>
+        <td><b>用 LayoutSpec 取代 <code>mobileLayout</code></b></td>
+        <td>现在 <code>ui.mobileLayout</code> 是一个 bool，散落着 <code>mob ? 452 : 392</code> 这类三元表达式（<code>ui.cpp</code> 里至少 10 处）。改成：<br><code>struct LayoutSpec { Mode mode; float leftW, ctrlW, logW, btnH, fontT, fontB, fontS, joyR; bool logInline, touch; };</code><br>由 <code>makeLayout(w, h, touch)</code> 算出来，所有面板尺寸/字号只从 spec 取值。这是让后面三种模式可维护的前提。</td>
+      </tr>
+      <tr>
+        <td><span class="tag p0">P0-5</span></td>
+        <td><b>触摸判定按输入方式，不按平台</b></td>
+        <td>收到 <code>SDL_FINGERDOWN</code> 置 <code>touch=true</code>，收到鼠标/键盘事件置 <code>false</code>，2 秒无触摸回落。触屏笔记本、平板外接鼠标都能自动切换按钮尺寸。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>P1 · 布局与交互本体</h3>
+  <table>
+    <thead><tr><th style="width:5%">#</th><th style="width:22%">事项</th><th>做法</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag p1">P1-1</span></td><td>顶栏自适应 + 溢出折叠</td><td>顶栏高度由"行数 × 控件高 + 间距"算出来，不再写死 124/176。第二行加溢出处理：宽度不够时依次缩短 IP 输入框 → 隐藏长提示文字（转长按提示）→ 次要按钮收进 <code>⋮</code> 菜单。保证「全部断开」在任何宽度下都点得到。</td></tr>
+      <tr><td><span class="tag p1">P1-2</span></td><td>左栏宽度与降级</td><td><code>leftW = clamp(w×0.27, 280, 420)</code>；若 <code>w − leftW − ctrlMin &lt; 280</code>（放不下日志），则左栏降级为侧滑抽屉（宽 <code>min(420, w×0.62)</code>）。</td></tr>
+      <tr><td><span class="tag p1">P1-3</span></td><td>动作库按栏宽分列</td><td><code>列数 = max(1, floor((栏宽 − padding) / 最小按钮宽))</code>，<code>按钮宽 = (栏宽 − padding − (列数−1)×间距) / 列数</code>。替换写死的 <code>actW1/actW2/actW3</code>；滑条宽 <code>= min(250, 栏宽 − 标签宽 − 间距)</code>。</td></tr>
+      <tr><td><span class="tag p1">P1-4</span></td><td><b>急停的安全属性</b></td><td>急停永远全宽、永远在视口内、单栏模式下<b>吸底固定不随内容滚动</b>；高度按高度档取 72/88dp（单栏）或 56/64dp（多栏）；阻尼按钮与急停间距 ≥12dp 防误触；急停可用性<b>不依赖连接状态</b>（断线时也要能按）。</td></tr>
+      <tr><td><span class="tag p1">P1-5</span></td><td>摇杆几何 + 预留高度同源</td><td>见 5.2。另外要修一个真实的交互隐患：现在 <code>sticks.down()</code> 在 ImGui 之前抢事件，抓取半径是 <code>radius×1.9</code>，<b>落在急停/阻尼按钮上的手指可能被摇杆吃掉</b>。改法：先判断是否命中安全操作区（急停/阻尼），命中则直接放给 ImGui，摇杆不得消费。</td></tr>
+      <tr><td><span class="tag p1">P1-6</span></td><td>安全区（刘海 / 圆角 / 手势条）</td><td>Java 侧读 <code>WindowInsets</code> 传给 native（或先保守用 top/bottom 24dp、left/right 40dp）。用于顶栏内边距、底部页签高度、摇杆落点。<b>左右边缘 20dp 是系统手势区</b>，摇杆必须内缩避开——现在那个 <code>+44</code> 就是在做这件事，要保留并参数化。</td></tr>
+      <tr><td><span class="tag p1">P1-7</span></td><td>日志分级展示</td><td>≥1200dp 常驻（≥380dp）；900–1200dp 常驻窄栏 + <b>软换行（去掉横向滚动条）</b>；&lt;900dp 改浮层抽屉，入口按钮带错误数角标；手机竖屏作为独立页签。长日志用 <code>ImGuiListClipper</code> 降开销。</td></tr>
+      <tr><td><span class="tag p1">P1-8</span></td><td>开放竖屏 + 旋转重算</td><td>清单里 <code>sensorLandscape</code> → <code>fullSensor</code>；因为 <code>configChanges</code> 已包含 <code>orientation|screenSize</code>，Activity 不会重建，<b>所以必须自己在每帧检测 <code>DisplaySize</code> 变化时重算 LayoutSpec</b>（并把样式从快照重新 Scale）。建议：遥控中（有手指按在摇杆上）忽略方向变化，松手后再切，避免操作中摇杆位置跳变。</td></tr>
+      <tr><td><span class="tag p1">P1-9</span></td><td>遥控时保持屏幕常亮</td><td>机器人遥控场景里息屏会断连，属于安全问题。加 <code>FLAG_KEEP_SCREEN_ON</code>（或 SDL 的对应 hint），仅在"已连接且遥控页在前台"时生效。</td></tr>
+      <tr><td><span class="tag p1">P1-10</span></td><td>软键盘遮挡</td><td>手动加 IP / 输入钥匙时键盘会盖住半屏：输入框改为居中弹窗 + <code>SetKeyboardFocusHere()</code>，并在键盘弹出时把弹窗上移。</td></tr>
+    </tbody>
+  </table>
+
+  <h3>P2 · 体验打磨</h3>
+  <table>
+    <thead><tr><th style="width:5%">#</th><th style="width:22%">事项</th><th>做法</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag p2">P2-1</span></td><td>手势与震动</td><td>三指同按 = 急停（可选安全兜底）；急停 / 阻尼 / 连接成功给短震动反馈（触屏"按不准"，震动是重要的确认感）。</td></tr>
+      <tr><td><span class="tag p2">P2-2</span></td><td>左右手习惯</td><td>设置项：摇杆左右手可交换（左手模式把"移动杆"放右侧），平板横屏双手持握时很有用。</td></tr>
+      <tr><td><span class="tag p2">P2-3</span></td><td>分屏 / 自由窗口</td><td>Android 12+ 平板分屏、Windows 半屏会自动命中 E 或 M 档，无需特殊处理——但要确保 <code>onConfigurationChanged</code> 时重算 LayoutSpec 且不丢状态。</td></tr>
+      <tr><td><span class="tag p2">P2-4</span></td><td>键盘可达性</td><td>平板接键盘 / 桌面窄窗：保留空格急停；Tab 焦点顺序按"安全优先"排（急停 → 阻尼 → 摇杆 → 快捷 → 动作）。</td></tr>
+      <tr><td><span class="tag p2">P2-5</span></td><td>性能与发热</td><td>窄屏下日志刷新降频；渲染限帧（移动 60fps / 低电 30fps）；动作库长列表用 clipper。</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================ 7 -->
+<section>
+  <h2><span class="n">7</span>预期效果</h2>
+  <table>
+    <thead><tr><th style="width:22%">设备</th><th style="width:12%">命中档位</th><th>预期表现</th></tr></thead>
+    <tbody>
+      <tr><td>手机竖屏 390×844</td><td>C × T</td><td>单栏 + 底部 5 页签；急停吸底常驻；双摇杆悬浮在下两角、高于页签；动作库 1 列大按钮；日志独立页签。<b>从"完全不可用"变成主力形态</b></td></tr>
+      <tr><td>手机横屏 844×390</td><td>M × S</td><td>顶栏 1 行；<code>[≡]</code> 侧滑抽屉放设备/动作库；遥控页首屏只留「状态 + 急停 + 阻尼」，快捷与参数进「更多 ▾」浮层；摇杆小档半径、不与任何按钮重叠；日志从顶栏一键唤起</td></tr>
+      <tr><td>平板竖屏 768×1024</td><td>M × R</td><td>左栏 307dp 常驻 + 右栏"遥控上 / 日志下"；摇杆内嵌右栏底部；动作按钮 2 列。<b>不再被当成手机</b></td></tr>
+      <tr><td>平板横屏 1024×768</td><td>E × R</td><td>三栏收窄（左 280 / 遥控 360 / 日志 312）；顶栏 2 行；无横向滚动</td></tr>
+      <tr><td>桌面 1440×880</td><td>L × R</td><td>左 389 / 遥控 475 / 日志 560 —— 与现状 392/468/580 几乎一致，<b>零回归</b></td></tr>
+      <tr><td>大屏平板横屏 1920×1200</td><td>L × R</td><td>三栏 + 日志常驻（不再是"砍掉日志 + 摇杆浮两角"）</td></tr>
+    </tbody>
+  </table>
+
+  <h3>验收清单</h3>
+  <ul class="chk">
+    <li>390×844 竖屏：无横向溢出、无元素重叠；急停按钮始终可见且可点；摇杆不压任何按钮</li>
+    <li>844×390 横屏：顶栏 1 行内放得下所有按钮；「全部断开」可见；日志 1 次点击可达</li>
+    <li>768×1024 平板竖屏：左栏常驻；右栏遥控 + 日志都可用；50+ 动作按钮全部点得到</li>
+    <li>1024×768 平板横屏：三栏并存，日志栏宽 ≥300dp，无横向滚动条</li>
+    <li>1440×880 桌面：与改造前逐像素级一致（截图对比）</li>
+    <li>窗口从 1600 拖到 700 再拖回：布局按断点平滑切换，无闪白、无残留、无抖动（滞回生效）</li>
+    <li>125% / 150% DPI：文字清晰不糊、控件不被裁切</li>
+    <li>横竖屏旋转：不重建 Activity、不闪、1 帧内布局正确、摇杆位置正确</li>
+    <li>触摸/鼠标混合：插鼠标后按钮回落到紧凑尺寸，拔掉恢复大按钮</li>
+    <li>安全项：断线状态下急停仍可点；急停 / 阻尼按钮区域不会被摇杆抢走触摸</li>
+    <li>回归：核心单测（<code>motion_test</code> 17 项、<code>crypto_test</code>）全绿，协议与指令表零改动</li>
+  </ul>
+</section>
+
+<!-- ============================================ 8 -->
+<section>
+  <h2><span class="n">8</span>落地顺序</h2>
+  <p class="small muted">顺序很重要：先做单位归一，否则后面所有断点数值都要返工。</p>
+  <table>
+    <thead><tr><th style="width:6%">步骤</th><th style="width:30%">内容</th><th style="width:26%">主要改动文件</th><th>产出</th></tr></thead>
+    <tbody>
+      <tr><td><b>1</b></td><td>坐标单位归一 + 动态字号 + 样式快照</td><td><code>apps/android/native/main_android.cpp</code><br><code>ui/theme.{hpp,cpp}</code></td><td>ImGui 单位 = dp；字号可运行时改；解决 3x 屏按钮过小</td></tr>
+      <tr><td><b>2</b></td><td>抽出 <code>LayoutSpec</code> + <code>makeLayout()</code>，替换所有 <code>mob ? a : b</code> 与写死像素</td><td><code>ui/ui.cpp</code>（新增 <code>ui/layout.{hpp,cpp}</code>）</td><td>布局参数集中一处，后面加档只改一个函数</td></tr>
+      <tr><td><b>3</b></td><td>三种布局模式：A 三栏收窄 / B 双栏 / C 单栏（抽屉 + 底部页签）</td><td><code>ui/ui.cpp</code>、<code>ui/layout.*</code></td><td>平板竖屏、手机横竖屏全部可用</td></tr>
+      <tr><td><b>4</b></td><td>悬浮摇杆推导式 + 安全区 + 触摸抢占互斥</td><td><code>main_android.cpp</code>（<code>TouchSticks</code>）、<code>ui/ui.cpp</code></td><td>摇杆不压按钮、不被系统手势抢、不吃急停的触摸</td></tr>
+      <tr><td><b>5</b></td><td>开放竖屏 + 旋转/尺寸变化重算</td><td><code>AndroidManifest.xml</code>、<code>main_android.cpp</code></td><td>竖屏可用；旋转不重建、不闪</td></tr>
+      <tr><td><b>6</b></td><td>逐机型验收（对照第 7 节清单）</td><td>—</td><td>截图存档 + 回归报告</td></tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <b>范围说明：</b>本方案只动 UI 层与平台入口，<b>不碰 <code>core/</code>（协议、加密、发现、指令表、遥控决策）</b>——这与仓库既有的分层约定一致（见 <code>docs/cross_platform_plan.md</code> 的"分层铁律"）。所以各端行为仍然天然一致，回归面很小：核心单测不受影响，UI 逻辑靠截图对比 + 交互清单验收。
+  </div>
+</section>
+
+<div class="footnote">
+  数据来源：<code>client/ui/ui.cpp</code>（布局与写死尺寸）、<code>client/ui/theme.{hpp,cpp}</code>（字号 23/18/15 与主题）、<code>client/apps/android/native/main_android.cpp</code>（字体倍率 1.55、样式倍率 1.35、触屏双摇杆）、<code>client/apps/android/app/src/main/AndroidManifest.xml</code>（<code>sensorLandscape</code>）、<code>third_party/imgui</code>（1.92.9b，含 <code>IMGUI_HAS_TEXTURES</code> / <code>RendererHasTextures</code>）、<code>_tab6.png</code> 像素级测量（1920×1200）。<br>
+  其中"设备密度（density）具体取值"需在目标机型上实测一次确认，其余结论均来自代码与截图直接测量。
+</div>
+
+</div>
+
+<script>
+(function(){
+  var W_MAX = 1920, H_MAX = 1200;
+
+  function clamp(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
+  function r(v){ return Math.round(v); }
+
+  // 动作库按钮：按栏宽自适应分列（与 ui/layout.cpp::computeActionButtons 一致）
+  function actionButtons(s, columnW){
+    const gap = 8, avail = Math.max(120, columnW - 24);
+    const idealW = s.touch ? 190 : 150;
+    const minW = s.touch ? 124 : 104;
+    const twoCol = (avail - gap) / 2;
+    if (twoCol >= minW) { s.cols = 2; s.actW1 = Math.min(twoCol, idealW); }
+    else { s.cols = 1; s.actW1 = Math.min(avail, idealW); }
+  }
+
+  function spec(w, h, touch){
+    var wc = w >= 1280 ? 'L' : (w >= 900 ? 'E' : (w >= 600 ? 'M' : 'C'));
+    var hc = h >= 800 ? 'T' : (h >= 480 ? 'R' : 'S');
+    var mode = (wc === 'L' || wc === 'E') ? 'A' : ((wc === 'M' && hc !== 'S') ? 'B' : 'C');
+
+    var s = { w:w, h:h, wc:wc, hc:hc, mode:mode, touch:touch, safe:{t:24,b:24,l:40,r:40} };
+
+    if (mode === 'A'){
+      s.topRows = (wc === 'L') ? 3 : 2;
+      s.topH = s.topRows === 3 ? 124 : 92;
+      s.leftW = r(clamp(w*0.27, 280, 420));
+      s.ctrlW = r(clamp(w*0.33, 360, 520));
+      var rest = w - s.leftW - s.ctrlW - 32;
+      s.logInline = rest >= 280;
+      s.logW = s.logInline ? rest : 0;
+      s.joyR = 74; s.joyFloat = false;
+      s.fontT = 23; s.fontB = 18; s.fontS = 15;
+      s.btnH = touch ? 44 : 34;
+      s.estopH = hc === 'S' ? 56 : 64;
+      actionButtons(s, s.leftW);
+      s.paramInline = hc !== 'S';
+      s.modeName = 'A · 三栏工作台';
+    } else if (mode === 'B'){
+      s.topRows = 1;
+      s.topH = 56;
+      s.leftW = r(clamp(w*0.40, 280, 340));
+      s.ctrlW = w - s.leftW - 24;
+      s.logW = s.ctrlW;
+      s.logInline = true;
+      s.joyR = r(clamp(s.ctrlW*0.17, 56, 84)); s.joyFloat = false;
+      s.fontT = 21; s.fontB = 17; s.fontS = 14;
+      s.btnH = 48;
+      s.estopH = 64;
+      actionButtons(s, s.leftW);
+      s.paramInline = hc !== 'S';
+      s.modeName = 'B · 双栏（左常驻 + 右上下）';
+    } else {
+      s.topRows = 1;
+      s.topH = hc === 'S' ? 52 : 56;
+      s.leftW = 0;
+      s.ctrlW = w;
+      s.logW = w;
+      s.logInline = false;
+      s.bottomTab = (hc !== 'S');
+      s.tabH = s.bottomTab ? 56 + s.safe.b : 0;
+      s.drawerW = r(Math.min(420, w*0.62));
+      s.joyR = r(clamp(Math.min(w,h)*0.20, 60, 128));
+      s.joyFloat = true;
+      s.fontT = 19; s.fontB = 16; s.fontS = 13;
+      s.btnH = 52;
+      s.estopH = hc === 'S' ? 72 : 88;
+      actionButtons(s, s.drawerW);
+      s.paramInline = false;
+      s.paramMore = (hc === 'S');   // 横屏矮屏：快捷+参数收进「更多」浮层
+      s.modeName = 'C · 单栏 + 悬浮双摇杆（' + (s.bottomTab ? '底部页签' : '侧滑抽屉') + '）';
+    }
+    return s;
+  }
+
+  var frame = document.getElementById('frame');
+  var metrics = document.getElementById('metrics');
+  var rw = document.getElementById('rw'), rh = document.getElementById('rh');
+  var lw = document.getElementById('lw'), lh = document.getElementById('lh');
+  var touch = true;
+
+  function block(cls, x, y, w, h, text){
+    return '<div class="blk ' + cls + '" style="left:' + x + '%;top:' + y + '%;width:' + w + '%;height:' + h + '%">' + (text||'') + '</div>';
+  }
+
+  function render(){
+    var w = +rw.value, h = +rh.value;
+    lw.textContent = w; lh.textContent = h;
+    var s = spec(w, h, touch);
+
+    // 画布尺寸：等比缩放到容器内
+    var maxW = frame.parentElement.clientWidth - 28;
+    var maxH = 340;
+    var k = Math.min(maxW / w, maxH / h);
+    frame.style.width = r(w*k) + 'px';
+    frame.style.height = r(h*k) + 'px';
+
+    var html = '';
+    var pct = function(v, tot){ return (v/tot*100); };
+
+    // 安全区
+    html += '<div class="safe" style="left:0;top:0;right:0;height:' + pct(s.safe.t,h) + '%"></div>';
+    html += '<div class="safe" style="left:0;bottom:0;right:0;height:' + pct(s.safe.b,h) + '%"></div>';
+
+    // 顶栏
+    html += block('top', 0, 0, 100, pct(s.topH,h), '顶栏 ' + s.topH + 'dp · ' + s.topRows + ' 行');
+
+    var bodyTop = pct(s.topH, h);
+
+    if (s.mode === 'A'){
+      var bodyH = 100 - bodyTop;
+      html += block('left', 0.8, bodyTop + 0.4, pct(s.leftW,w), bodyH - 0.8, '左栏 ' + s.leftW + 'dp');
+      var cx = pct(s.leftW + 16, w);
+      html += block('ctrl', cx, bodyTop + 0.4, pct(s.ctrlW,w), bodyH - 0.8, '遥控栏 ' + s.ctrlW + 'dp');
+      if (s.logInline){
+        var lx = pct(s.leftW + 16 + s.ctrlW + 16, w);
+        html += block('log', lx, bodyTop + 0.4, pct(s.logW,w), bodyH - 0.8, '日志栏 ' + s.logW + 'dp');
+      } else {
+        html += '<div class="blk" style="left:' + pct(s.leftW+16,w) + '%;top:' + (bodyTop+1) + '%;width:' + pct(s.ctrlW,w) + '%;height:7%;background:#3a2f1f;border:1px solid #6b5330;color:#f0d6a8">日志已折叠 → 顶栏「日志 ▾」浮层</div>';
+      }
+    } else if (s.mode === 'B'){
+      var bodyH2 = 100 - bodyTop;
+      html += block('left', 0.8, bodyTop + 0.4, pct(s.leftW,w), bodyH2 - 0.8, '左栏 ' + s.leftW + 'dp<br>（设备/动作库/设置）');
+      var rx = pct(s.leftW + 16, w);
+      var rw2 = pct(s.ctrlW, w);
+      var ctrlPart = Math.max(0.42, Math.min(0.72, 420/h));
+      html += block('ctrl', rx, bodyTop + 0.4, rw2, (bodyH2 - 1.2)*ctrlPart, '遥控栏 ' + s.ctrlW + 'dp');
+      html += block('log', rx, bodyTop + 0.4 + (bodyH2 - 1.2)*ctrlPart + 0.6, rw2, (bodyH2 - 1.2)*(1-ctrlPart) - 0.6, '日志（可收起）');
+    } else {
+      var bodyH3 = 100 - bodyTop - pct(s.tabH, h);
+      html += block('ctrl', 0.8, bodyTop + 0.4, 98.4, bodyH3 - 0.8, '遥控页（单栏铺满）');
+      // 急停示意
+      html += '<div class="blk estop" style="left:4%;top:' + (bodyTop + 3) + '%;width:92%;height:' + pct(s.estopH,h) + '%">急停 ' + s.estopH + 'dp（吸底常驻）</div>';
+      if (s.paramMore){
+        html += '<div class="blk" style="left:4%;top:' + (bodyTop + 3 + pct(s.estopH,h) + 1.5) + '%;width:92%;height:7%;background:#3a2f1f;border:1px solid #6b5330;color:#f0d6a8">快捷 / 参数 → 收进「更多 ▾」浮层</div>';
+      }
+      if (s.bottomTab){
+        html += block('tab', 0, 100 - pct(s.tabH,h), 100, pct(s.tabH,h), '底部页签 5 项');
+      } else {
+        html += '<div class="blk drawer" style="left:1%;top:' + (bodyTop + 1) + '%;width:34%;height:9%">侧滑抽屉（点 [≡] 滑出）</div>';
+      }
+    }
+
+    // 悬浮摇杆
+    if (s.joyFloat){
+      var insetX = s.joyR*0.95 + s.safe.l + 16;
+      var cy = h - s.safe.b - s.joyR - 24 - (s.bottomTab ? 56 : 0);
+      var dx = pct(s.joyR*2, w), dy = pct(s.joyR*2, h);
+      var lx2 = pct(insetX - s.joyR, w);
+      var rx2 = pct(w - insetX - s.joyR, w);
+      var ty = pct(cy - s.joyR, h);
+      html += '<div class="joy" style="left:' + lx2 + '%;top:' + ty + '%;width:' + dx + '%;height:' + dy + '%"></div>';
+      html += '<div class="joy" style="left:' + rx2 + '%;top:' + ty + '%;width:' + dx + '%;height:' + dy + '%"></div>';
+    }
+
+    frame.innerHTML = html;
+
+    // 指标
+    var rows = [
+      ['命中档位', s.wc + ' 宽 × ' + s.hc + ' 高'],
+      ['布局模式', s.modeName],
+      ['顶栏', s.topH + ' dp / ' + s.topRows + ' 行'],
+      ['左栏', s.leftW ? s.leftW + ' dp' : '—（抽屉 ' + s.drawerW + ' dp）'],
+      ['遥控栏', s.ctrlW + ' dp'],
+      ['日志栏', s.logInline ? s.logW + ' dp' : '折叠为浮层'],
+      ['急停按钮高', s.estopH + ' dp'],
+      ['按钮最小高', s.btnH + ' dp' + (touch ? '（触摸）' : '（鼠标）')],
+      ['摇杆', (s.joyFloat ? '悬浮' : '内嵌') + ' · 半径 ' + s.joyR + ' dp'],
+      ['字号 标题/正文/小字', s.fontT + ' / ' + s.fontB + ' / ' + s.fontS],
+      ['动作库', s.cols + ' 列 · 按钮宽 ' + s.actW1.toFixed(0) + ' dp'],
+      ['快捷 / 参数', s.paramInline ? '常显' : (s.paramMore ? '收进「更多 ▾」浮层' : '收进折叠区')]
+    ];
+    var html2 = '<div class="badge ' + (s.mode === 'A' ? '' : (s.mode === 'B' ? 'b' : 'c')) + '" style="margin-bottom:10px">' + s.mode + ' 模式</div>';
+    for (var i = 0; i < rows.length; i++){
+      html2 += '<div class="row"><span class="muted">' + rows[i][0] + '</span><b>' + rows[i][1] + '</b></div>';
+    }
+    metrics.innerHTML = html2;
+  }
+
+  rw.addEventListener('input', render);
+  rh.addEventListener('input', render);
+
+  document.querySelectorAll('#touchSeg button').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('#touchSeg button').forEach(function(x){ x.classList.remove('on'); });
+      b.classList.add('on');
+      touch = b.dataset.v === '1';
+      render();
+    });
+  });
+  document.querySelectorAll('#presetSeg button').forEach(function(b){
+    b.addEventListener('click', function(){
+      rw.value = b.dataset.w; rh.value = b.dataset.h; render();
+    });
+  });
+  window.addEventListener('resize', render);
+  render();
+})();
+</script>
+</body>
+</html>

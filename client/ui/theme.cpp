@@ -1,5 +1,6 @@
 #include "theme.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -7,6 +8,12 @@ namespace go2 {
 namespace {
 
 UiFonts g_fonts;
+
+/// applyTheme() 建立的**基线样式**。applyUiScale() 每次都从这里重算，
+/// 因为 ScaleAllSizes 是就地相乘、反复调用会累乘。
+ImGuiStyle g_baseStyle;
+bool g_hasBaseStyle = false;
+float g_appliedScale = 1.0f;
 
 /// 中文字体候选（Linux 优先，其次 Windows 字体）
 const char* kFontCandidates[] = {
@@ -20,6 +27,11 @@ const char* kFontCandidates[] = {
 
 constexpr ImVec4 rgba(float r, float g, float b, float a) { return ImVec4(r, g, b, a); }
 
+/// 三档字号的基准值（实际用哪档由断点决定，见 setUiFontSizes）
+constexpr float kBaseTitle = 23.0f;
+constexpr float kBaseBody = 18.0f;
+constexpr float kBaseSmall = 15.0f;
+
 }  // namespace
 
 bool loadUiFonts() {
@@ -32,18 +44,20 @@ bool loadUiFonts() {
         ImFontConfig cfg;
         cfg.OversampleH = 2;
         cfg.OversampleV = 2;
-        // ImGui 1.92+ 按需动态加载字形，无需预先指定中文字形范围
-        g_fonts.title = io.Fonts->AddFontFromFileTTF(path, 23.0f, &cfg);
-        g_fonts.body = io.Fonts->AddFontFromFileTTF(path, 18.0f, &cfg);
-        g_fonts.small = io.Fonts->AddFontFromFileTTF(path, 15.0f, &cfg);
-        if (g_fonts.body) {
-            io.FontDefault = g_fonts.body;
-            std::printf("[字体] 已加载 %s（标题/正文/小字 三级字号）\n", path);
+        // ImGui 1.92+ 按需动态加载字形，无需预先指定中文字形范围；
+        // 也只加载**一份**字体 —— 字号靠 PushFont(font, size) 在运行时给。
+        g_fonts.font = io.Fonts->AddFontFromFileTTF(path, kBaseBody, &cfg);
+        g_fonts.title = kBaseTitle;
+        g_fonts.body = kBaseBody;
+        g_fonts.small = kBaseSmall;
+        if (g_fonts.font) {
+            io.FontDefault = g_fonts.font;
+            std::printf("[字体] 已加载 %s（动态字号：标题/正文/小字 由断点决定）\n", path);
         }
-        return g_fonts.body != nullptr;
+        return g_fonts.font != nullptr;
     }
-    g_fonts.body = io.Fonts->AddFontDefault();
-    io.FontDefault = g_fonts.body;
+    g_fonts.font = io.Fonts->AddFontDefault();
+    io.FontDefault = g_fonts.font;
     std::printf("[字体] 未找到中文字体，中文可能显示为方块\n");
     return false;
 }
@@ -62,17 +76,30 @@ bool loadUiFontsFromMemory(const void* data, int dataSize, float fontScale) {
     cfg.OversampleH = 2;
     cfg.OversampleV = 2;
     const void* buf = owned.data();
-    // 手机端把三档字号整体放大（字体烘焙进图集后无法再改，只能加载时定）
     const float k = fontScale > 0.1f ? fontScale : 1.0f;
-    g_fonts.title = io.Fonts->AddFontFromMemoryTTF(const_cast<void*>(buf), dataSize, 23.0f * k, &cfg);
-    g_fonts.body = io.Fonts->AddFontFromMemoryTTF(const_cast<void*>(buf), dataSize, 18.0f * k, &cfg);
-    g_fonts.small = io.Fonts->AddFontFromMemoryTTF(const_cast<void*>(buf), dataSize, 15.0f * k, &cfg);
-    if (g_fonts.body) io.FontDefault = g_fonts.body;
-    std::printf("[字体] 已从内存加载（%d 字节，三级字号）\n", dataSize);
-    return g_fonts.body != nullptr;
+    // 只加载一份（图集默认字号 = 正文）。字号不再"烘焙"，
+    // 而是运行时按断点 PushFont(font, size) —— 换断点/转屏幕都不用重载图集。
+    g_fonts.font = io.Fonts->AddFontFromMemoryTTF(const_cast<void*>(buf), dataSize,
+                                                  kBaseBody * k, &cfg);
+    g_fonts.title = kBaseTitle * k;
+    g_fonts.body = kBaseBody * k;
+    g_fonts.small = kBaseSmall * k;
+    if (g_fonts.font) io.FontDefault = g_fonts.font;
+    std::printf("[字体] 已从内存加载（%d 字节，动态字号）\n", dataSize);
+    return g_fonts.font != nullptr;
 }
 
 const UiFonts& uiFonts() { return g_fonts; }
+
+void setUiFontSizes(float title, float body, float small) {
+    g_fonts.title = title > 6.0f ? title : kBaseTitle;
+    g_fonts.body = body > 6.0f ? body : kBaseBody;
+    g_fonts.small = small > 6.0f ? small : kBaseSmall;
+}
+
+FontScope fontTitle() { return FontScope(g_fonts.font, g_fonts.title); }
+FontScope fontBody() { return FontScope(g_fonts.font, g_fonts.body); }
+FontScope fontSmall() { return FontScope(g_fonts.font, g_fonts.small); }
 
 void applyTheme() {
     ImGuiStyle& s = ImGui::GetStyle();
@@ -156,6 +183,25 @@ void applyTheme() {
     c[ImGuiCol_TableRowBgAlt] = rgba(1, 1, 1, 0.025f);
     c[ImGuiCol_TextSelectedBg] = rgba(0.29f, 0.56f, 0.99f, 0.35f);
     c[ImGuiCol_NavCursor] = col::kAccent;
+
+    // ★ 存基线：applyUiScale 每次都从这里重算
+    g_baseStyle = s;
+    g_hasBaseStyle = true;
+    g_appliedScale = 1.0f;
+}
+
+void applyUiScale(float scale) {
+    if (!g_hasBaseStyle) {
+        g_baseStyle = ImGui::GetStyle();
+        g_hasBaseStyle = true;
+    }
+    if (!(scale > 0.01f)) scale = 1.0f;
+    if (std::fabs(scale - g_appliedScale) < 0.001f) return;  // 没变就别动，省得每帧重算
+
+    ImGuiStyle& s = ImGui::GetStyle();
+    s = g_baseStyle;  // ★ 先还原到基线，再乘 —— 否则会累乘（1.15 → 1.32 → 1.52…）
+    s.ScaleAllSizes(scale);
+    g_appliedScale = scale;
 }
 
 }  // namespace go2

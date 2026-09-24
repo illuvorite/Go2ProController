@@ -88,7 +88,13 @@
              MainActivity 里才有 acquireMulticastLock()/releaseMulticastLock()，
              原生侧要用它申请 WifiManager.MulticastLock（否则 SN 组播发现收不到回包）。
              用 SDLActivity 时 JNI 反射找不到方法 → pending 异常 → 进程直接 abort。 -->
-        <activity android:screenOrientation="sensorLandscape" android:name="org.libsdl.app.MainActivity"
+        <!-- ★ 方向：fullSensor = 四个方向都允许。
+             改造前锁 sensorLandscape（只允许横屏）—— 那是因为界面按固定像素排版，
+             手机竖屏下左栏（452dp）比屏宽还宽，直接溢出。现在有了断点布局
+             （见 ui/layout.cpp：竖屏走「单栏 + 底部页签 + 悬浮双摇杆」），竖屏可以放开。
+             configChanges 里已声明 orientation|screenSize，所以旋转不会重建 Activity，
+             布局由 drawUi 每帧按新的 DisplaySize 重算。 -->
+        <activity android:screenOrientation="fullSensor" android:name="org.libsdl.app.MainActivity"
             android:label="@string/app_name"
             android:alwaysRetainTaskState="true"
             android:launchMode="singleInstance"

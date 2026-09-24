@@ -46,10 +46,38 @@ namespace {
 
 std::atomic<bool> g_inBackground{false};
 
-// ---- 手机端整体放大：字号与所有控件间距（触摸友好：手指点得准、眼睛看得清）----
-// 字号是烘焙进 ImGui 字体图集的，只能在加载时定；控件间距则靠 ScaleAllSizes 跟着放大。
-constexpr float kMobileFontScale = 1.55f;  // 标题 23→36、正文 18→28、小字 15→23
-constexpr float kMobileUiScale = 1.35f;    // 内边距/间距/圆角/滚动条
+// ---- 坐标单位归一（dp）------------------------------------------------------
+// SDL2 在 Android 上返回的是**物理分辨率**，所以 ImGui 的坐标单位默认就是物理像素：
+// 3x 屏上 54 单位的按钮实际只有约 18dp，远低于 48dp 的触摸下限。
+//（改造前用 kMobileFontScale = 1.55 整体放大字号来"糊着补偿"，既不准、也没法随断点变。）
+// 现在改成：把 io.DisplaySize 折成逻辑尺寸、io.DisplayFramebufferScale 设成像素密度，
+// 于是 ImGui 单位 = dp —— 断点数值、按钮高度、摇杆半径才有一致含义。
+// 密度探测见 detectPixelScale()，实际值会打到日志里，便于在真机上核对。
+static float g_pixelScale = 1.0f;
+
+/// 探测"物理像素 → 逻辑 dp"的换算比。
+/// 分两种情况：SDL 已经给了逻辑尺寸（drawable > window）就直接用比值；
+/// 否则说明 window 就是物理像素，此时用 DPI 反推密度（Android 基准密度 = 160dpi）。
+static float detectPixelScale(SDL_Window* window) {
+    int ww = 0, hh = 0, dw = 0, dh = 0;
+    SDL_GetWindowSize(window, &ww, &hh);
+    SDL_GL_GetDrawableSize(window, &dw, &dh);
+    if (ww > 0 && dw > ww) {
+        const float s = static_cast<float>(dw) / static_cast<float>(ww);
+        LOGI("像素密度：SDL 已给逻辑尺寸 %dx%d，drawable %dx%d → scale=%.2f", ww, hh, dw, dh, s);
+        return s;
+    }
+    float ddpi = 0.0f, hdpi = 0.0f, vdpi = 0.0f;
+    const int display = SDL_GetWindowDisplayIndex(window);
+    if (SDL_GetDisplayDPI(display, &ddpi, &hdpi, &vdpi) == 0 && ddpi > 1.0f) {
+        const float s = std::max(1.0f, std::min(4.0f, ddpi / 160.0f));
+        LOGI("像素密度：window %dx%d（物理像素），displayDPI=%.0f → scale=%.2f", ww, hh,
+             ddpi, s);
+        return s;
+    }
+    LOGI("像素密度：探测失败，按 1.0 处理（window %dx%d）—— 若界面偏小请核对这里", ww, hh);
+    return 1.0f;
+}
 
 // ---------------------------------------------------------------- 触屏双摇杆（多点触控）
 // ImGui 只有一个"指针"（触摸被映射成鼠标），两个摇杆没法同时拖动 ——
@@ -62,18 +90,29 @@ struct TouchSticks {
     SDL_FingerID leftId = -1, rightId = -1;
     float lx = 0.0f, ly = 0.0f, rx = 0.0f, ry = 0.0f;
 
-    /// 尺寸更大、并从屏幕边缘往里收：贴着边时拇指够着别扭（还容易碰到系统的手势区），
-    /// 内移之后正好是双手握持时拇指的自然落点。
-    void layout(float w, float h) {
-        radius = std::min(128.0f, std::max(74.0f, h * 0.22f));
-        const float inset = radius * 0.95f + 44.0f;  // 左右各往里收
-        const float cy = h - radius - 90.0f;         // 底部往上收（避开手势条 / 屏幕圆角）
-        leftC = ImVec2(inset, cy);
-        rightC = ImVec2(w - inset, cy);
+    /// 安全操作区（急停 / 阻尼按钮的屏幕矩形）：落在这里的手指**不归摇杆**，
+    /// 直接放给 ImGui。改造前抓取半径是 radius*1.9，覆盖范围很大，
+    /// 落在急停上的手指会被摇杆吃掉 —— 这是安全项，必须优先。
+    float blockMinX = 0.0f, blockMinY = 0.0f, blockMaxX = 0.0f, blockMaxY = 0.0f;
+
+    /// 几何完全来自断点布局（ui/layout.cpp::computeFloatingJoysticks）。
+    /// 不再在这里自己算 radius/inset/cy 那套魔法数 —— 否则摇杆位置与内容预留高度
+    /// 会各算一套（改造前一个算 h-radius-90、一个写死 250），屏幕一变就错位。
+    void applyLayout(const go2::LayoutSpec& L, float viewW) {
+        radius = L.joyRadius;
+        leftC = ImVec2(L.joyInsetX, L.joyCenterY);
+        rightC = ImVec2(viewW - L.joyInsetX, L.joyCenterY);
+    }
+
+    bool inSafetyZone(float x, float y) const {
+        if (blockMaxX <= blockMinX) return false;
+        return x >= blockMinX && x <= blockMaxX && y >= blockMinY && y <= blockMaxY;
     }
 
     /// 手指按下：落在哪个杆的作用圈里就归它（返回 true = 这个事件被摇杆消费掉）
     bool down(SDL_FingerID id, float x, float y) {
+        // ★ 安全优先：急停 / 阻尼按钮上的手指放给 ImGui
+        if (inSafetyZone(x, y)) return false;
         const float grab = radius * 1.9f;  // 抓取范围放宽，手感更宽容
         const auto near = [&](const ImVec2& c) {
             const float dx = x - c.x, dy = y - c.y;
@@ -143,8 +182,10 @@ void loadFontsFromAssets() {
     for (const char* path : kCandidates) {
         auto data = readAsset(path);
         if (data.empty()) continue;
-        if (go2::loadUiFontsFromMemory(data.data(), static_cast<int>(data.size()),
-                                       kMobileFontScale)) {
+        // 只加载**一份**字体：三档字号改由断点在运行时给（ImGui 1.92 动态字号，
+        // 见 ui/theme.cpp 的 setUiFontSizes + PushFont(font, size)），
+        // 所以这里不再传字号倍率 —— 换断点/转屏幕都不用重载字体图集。
+        if (go2::loadUiFontsFromMemory(data.data(), static_cast<int>(data.size()), 1.0f)) {
             LOGI("内嵌字体加载成功: %s (%zu 字节)", path, data.size());
             return;
         }
@@ -299,10 +340,11 @@ int main(int argc, char** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    go2::applyTheme();
+    go2::applyTheme();  // 建立样式基线（applyUiScale 每次都从基线重算，不会累乘）
     loadFontsFromAssets();
-    // 字号放大后，控件内边距 / 间距 / 圆角 / 滚动条必须跟着放大，否则又挤又难点
-    ImGui::GetStyle().ScaleAllSizes(kMobileUiScale);
+    // 字号与控件间距不再在启动时定死：drawUi 每帧按断点调
+    // setUiFontSizes() + applyUiScale()（见 ui/layout.cpp / ui/theme.cpp）
+    g_pixelScale = detectPixelScale(window);
 
     ImGui_ImplSDL2_InitForOpenGL(window, gl);
     ImGui_ImplOpenGL3_Init("#version 300 es");
@@ -333,7 +375,16 @@ int main(int argc, char** argv) {
     go2::RobotManager mgr;
     mgr.loadKeyCache();  // go2_keys_cache.json（已 chdir 到应用可写目录）
     go2::UiState ui;
-    ui.mobileLayout = true;  // 手游布局：摇杆贴左右两侧 + 隐藏日志面板
+    // 输入方式：Android 上默认手指；插上鼠标后主循环会自动切成"鼠标优先"
+    // （按钮最小尺寸跟着变，见 layout.cpp 的 touch 修正）
+    ui.touchInput = true;
+    // 安全区（刘海 / 圆角 / 手势条）：先用保守常量 ——
+    // 安卓侧边返回手势区约 20dp、底部手势条约 24dp。
+    // 要精确值需要在 MainActivity 里读 WindowInsets 再经 JNI 传过来。
+    ui.safe.top = 0.0f;  // 全屏沉浸式，状态栏已隐藏
+    ui.safe.bottom = 24.0f;
+    ui.safe.left = 20.0f;
+    ui.safe.right = 20.0f;
     ui.addLog("[Android] 启动：Go2 控制台（SDL2 + GLES3）");
     TouchSticks sticks;
 
@@ -351,12 +402,14 @@ int main(int argc, char** argv) {
             bool forStick = false;
             if (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION ||
                 e.type == SDL_FINGERUP) {
-                int ww = 0, hh = 0;
-                SDL_GetWindowSize(window, &ww, &hh);
+                // 手指坐标必须换算到 **ImGui 的逻辑坐标系**（= 已按密度归一的 dp），
+                // 不能用 SDL_GetWindowSize 的物理像素 —— 否则摇杆命中判定与绘制整体错位。
+                const ImVec2 ds = ImGui::GetIO().DisplaySize;
                 const SDL_FingerID fid = e.tfinger.fingerId;
-                const float fx = e.tfinger.x * static_cast<float>(ww);
-                const float fy = e.tfinger.y * static_cast<float>(hh);
+                const float fx = e.tfinger.x * ds.x;
+                const float fy = e.tfinger.y * ds.y;
                 if (e.type == SDL_FINGERDOWN) {
+                    ui.touchInput = true;  // 输入方式：手指优先（按钮最小尺寸跟着变）
                     forStick = sticks.down(fid, fx, fy);
                 } else if (e.type == SDL_FINGERMOTION) {
                     if (sticks.owns(fid)) {
@@ -374,6 +427,11 @@ int main(int argc, char** argv) {
             switch (e.type) {
                 case SDL_QUIT:
                     running = false;
+                    break;
+                case SDL_MOUSEBUTTONDOWN:
+                    // 真鼠标（不是触摸合成的鼠标事件）→ 切成"鼠标优先"：
+                    // 按钮回落到紧凑尺寸。SDL 用 which == SDL_TOUCH_MOUSEID 标记合成事件。
+                    if (e.button.which != SDL_TOUCH_MOUSEID) ui.touchInput = false;
                     break;
                 case SDL_APP_WILLENTERBACKGROUND:  // SDL 2.0.16+
                     onEnterBackground(mgr, ui);
@@ -400,12 +458,33 @@ int main(int argc, char** argv) {
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
+        // ★ 坐标单位归一：让 ImGui 的单位 = dp（详见文件顶部 detectPixelScale 的说明）。
+        // 必须在 NewFrame 之前改：DisplaySize 折成逻辑尺寸、FramebufferScale 设成密度，
+        // 这样渲染出的 drawable 仍是物理分辨率（不糊），而所有布局常量都以 dp 计。
+        if (g_pixelScale > 1.01f) {
+            ImGuiIO& io = ImGui::GetIO();
+            io.DisplaySize =
+                ImVec2(io.DisplaySize.x / g_pixelScale, io.DisplaySize.y / g_pixelScale);
+            io.DisplayFramebufferScale = ImVec2(g_pixelScale, g_pixelScale);
+        }
         ImGui::NewFrame();
 
-        // 手游布局：先按当前屏幕算好摇杆位置，并把手指算出的数值写进 ui
-        //（必须在 drawUi 之前写，这样同一帧的 planMotion 就能用上，无延迟）
-        sticks.layout(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y);
-        if (ui.mobileLayout) {
+        // 摇杆几何来自断点布局；先把安全操作区交给摇杆做抓取互斥
+        //（手指落在急停/阻尼上不能被摇杆吃掉）
+        sticks.blockMinX = ui.safetyMinX;
+        sticks.blockMinY = ui.safetyMinY;
+        sticks.blockMaxX = ui.safetyMaxX;
+        sticks.blockMaxY = ui.safetyMaxY;
+
+        // 先把布局算出来：摇杆要在 drawUi 之前拿到几何，且数值要在同一帧内生效（无延迟）
+        //（drawUi 里会再算一次，纯函数 + 滞回，结果相同）
+        {
+            const ImVec2 ds = ImGui::GetIO().DisplaySize;
+            ui.layout = go2::makeLayout(ds.x, ds.y, ui.touchInput, ui.safe,
+                                        ui.layout.viewW > 0.0f ? &ui.layout : nullptr);
+        }
+        if (!ui.layout.joyInline) {
+            sticks.applyLayout(ui.layout, ui.layout.screenW);
             ui.joyLx = sticks.lx;
             ui.joyLy = sticks.ly;
             ui.joyRx = sticks.rx;
@@ -414,8 +493,8 @@ int main(int argc, char** argv) {
 
         go2::drawUi(mgr, ui);  // ★ 与桌面同一份界面代码
 
-        // 两个摇杆画成屏幕浮层（在最上层，不占界面空间）—— 手游布局的核心
-        if (ui.mobileLayout) {
+        // 两个摇杆画成屏幕浮层（在最上层，不占界面空间）—— 单栏模式的核心
+        if (!ui.layout.joyInline) {
             ImDrawList* fg = ImGui::GetForegroundDrawList();
             go2::drawJoystickAt("##tjoyL", fg, sticks.leftC.x, sticks.leftC.y, sticks.radius,
                                 sticks.lx, sticks.ly, sticks.leftUsed);

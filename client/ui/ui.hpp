@@ -1,5 +1,6 @@
 #pragma once
 
+#include "layout.hpp"
 #include "motion.hpp"
 
 #include <atomic>
@@ -64,9 +65,29 @@ struct UiState {
     bool  estop = false;               // 急停锁定：锁定期间摇杆/快捷步都不得下发运动
     int   activeMask = 0;              // 内部：上一帧在操作的摇杆（1=左 2=右），用于即时生效
 
-    /// 手游布局（触屏）：两个摇杆改画成**屏幕左右两侧的浮层**（数值由触屏入口驱动，
-    /// 支持双指同时操作），并隐藏日志面板。**只改排布与可见性，功能不变**。
-    bool mobileLayout = false;
+    /// 断点布局参数（每帧由 makeLayout 算出，见 layout.hpp）。
+    ///
+    /// 取代了原来的 `bool mobileLayout` —— 那种"桌面 / 手机"二选一在真实设备上两头不讨好：
+    /// 1920dp 宽的大平板被当成手机（把日志整栏砍掉、摇杆浮到两角），
+    /// 而 390dp 宽的手机竖屏因为左栏写死 452dp 直接溢出屏幕。
+    LayoutSpec layout;
+    /// 设备安全区（刘海 / 圆角 / 手势条），由平台入口填
+    SafeArea safe;
+    /// 输入方式：最近一次操作是手指 → true，决定按钮最小尺寸（触摸 48dp / 鼠标 34dp）。
+    /// **按输入方式判定而不是按平台** —— 触屏笔记本、平板接外接鼠标都能自动适配。
+    bool touchInput = false;
+    /// 单栏模式下当前选中的页面：0=遥控 1=控制台（设备/动作库/设置，内部再用 TabBar 分页）2=日志
+    int mobilePage = 0;
+    /// 单栏模式下侧滑抽屉是否打开
+    bool drawerOpen = false;
+    /// 日志浮层是否打开（矮屏 / 单栏模式用）
+    bool logOverlayOpen = false;
+
+    /// 安全操作区（急停 / 阻尼按钮的屏幕矩形，每帧由 drawUi 写入）。
+    /// 悬浮摇杆的抓取范围**不得覆盖**这里 —— 否则手指落在急停上会被摇杆吃掉，
+    /// 那是安全项，必须优先交给 ImGui 处理。
+    /// 用四个 float 而不是 ImVec2，免得 ui.hpp 被迫依赖 imgui.h。
+    float safetyMinX = 0.0f, safetyMinY = 0.0f, safetyMaxX = 0.0f, safetyMaxY = 0.0f;
 
     // ---- 持续模式开关（自由行走 / 领航跟随 / 交叉步 / 经济步态 …）----
     // 这类指令是 on/off 语义、会一直生效，且 StopMove 停不掉；急停时会逐个关闭并复位这里的状态

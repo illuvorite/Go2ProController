@@ -109,7 +109,9 @@
 | 多点触控 | ImGui 默认把触摸映射为单点鼠标 → **双摇杆必须两点同时按** | 在 SDL 层接管 `SDL_FingerDown/Motion/Up`，把触点分配到「左半屏/右半屏」两个自绘摇杆；急停按钮走独立区域 |
 | DPI / 缩放 | Windows 125%/150% 缩放下 ImGui 会糊；手机分辨率差异大 | 统一 `io.FontGlobalScale` + 动态取 `SDL_GetDisplayDPI` / `glfwGetWindowContentScale`；主题尺寸用「可缩放 token」 |
 | 中文字体 | 现在依赖系统字体（Noto/wqy/msyh），手机上不一定有 | **内嵌字体**：思源黑体 / Noto Sans SC 子集化（1~3 MB，OFL 授权允许嵌入） |
-| 布局 | 手机竖屏窄、横屏宽；有刘海与手势条 | 断点式布局：手机 = 单列（设备/遥控/动作分页 + 底部 Tab），桌面 = 三栏；SafeArea 内边距 |
+| 布局 | 手机竖屏窄、横屏宽；有刘海与手势条 | ✅ **已做**：断点布局 `ui/layout.{hpp,cpp}` —— 4 宽度档（<600 / 600–899 / 900–1279 / ≥1280 dp）× 3 高度档（<480 / 480–799 / ≥800）→ 3 种模式（三栏 / 双栏 / 单栏+悬浮双摇杆），再叠加「矮屏修正」「触摸修正」两条规则与 8dp 断点滞回；安全区用于顶栏内边距与摇杆落点。单元测试 `tests/layout_test.cpp` 用 60+ 条 static_assert 在编译期把各机型档位数值钉死 |
+| DPI / 密度归一 | SDL2 在 Android 返回**物理分辨率** → ImGui 单位 = 物理像素，3x 屏上 54 单位按钮只有约 18dp | ✅ **已做**：`main_android.cpp::detectPixelScale()` + 每帧折 `DisplaySize` / 设 `DisplayFramebufferScale`，让 ImGui 单位 = dp（断点数值才有一致含义） |
+| 字号 | 原先烘焙进图集（桌面 23/18/15、手机 ×1.55 再烘一份），加载后改不了 | ✅ **已做**：ImGui 1.92 动态字体 → 只加载一份字体，`PushFont(font, 字号)` 运行时给（`ui/theme.cpp::setUiFontSizes`）。另：`ScaleAllSizes` 是就地相乘，`applyUiScale()` 每次从 `applyTheme()` 的基线重算，避免累乘 |
 
 ### 3.4 文件、路径、生命周期
 
@@ -221,7 +223,8 @@ network_get/
 | **P2 macOS** | brew/vcpkg OpenSSL、universal2、Metal 或 OpenGL 后端、签名+公证、dmg | 3~5 天 | macOS（Intel + M 系列）功能对齐，双击即用 |
 | **P3 Android** | SDL2 + GLES3 + 触摸双摇杆 + 多播锁 + Keystore + 生命周期 + AAB | 1~2 周 | 手机/平板完成全流程，切后台自动停车 |
 | ↳ **P3 脚手架已完成（2026-09-23）** | `client/apps/android/`：`setup.sh`（下载 SDL2/ImGui → 展开 SDL 的 android-project → 注入权限/横屏/包名/minSdk/MulticastLock/CMake 路径）、`native/main_android.cpp`（SDL2+GLES3+ImGui，复用 `drawUi`，含前后台停车与重连）、`native/CMakeLists.txt`（go2_core+go2_ui+SDL2+ImGui）、`README.md`（构建步骤与依赖） | 已完成 | 待用户机器上首次构建（需 Android SDK/NDK + vcpkg arm64-android 依赖）→ 按报错迭代 |
-| ↳ P3 待做 | 多点触控双摇杆（ImGui 默认单点）、Keystore 存钥匙、MulticastLock 已在 Java 侧就绪、AAB + 权限申报 | 1~2 周 | |
+| ↳ P3 待做 | Keystore 存钥匙、MulticastLock 已在 Java 侧就绪、AAB + 权限申报、安全区精确值（读 WindowInsets 经 JNI）、触屏 tooltip 改长按、遥控时保持屏幕常亮 | 1~2 周 | |
+| ↳ **P3 响应式布局已完成（2026-09-24）** | 新增 `ui/layout.{hpp,cpp}`（断点算法，constexpr 纯函数）；`ui/ui.cpp` 按断点重排（三栏 / 双栏 / 单栏+悬浮摇杆，顶栏与动作库自适应）；`ui/theme.{hpp,cpp}` 改动态字号 + 样式基线快照；`main_android.cpp` 做密度归一、摇杆几何取自布局、触摸与鼠标按输入方式切换、摇杆不得抢走急停/阻尼的触摸；`AndroidManifest.xml` 放开竖屏（`fullSensor`）；新增 `tests/layout_test.cpp`（编译期断言）。详见 `docs/responsive_layout_plan.html` 与提交记录 | 已完成 | 4 个改动文件编到目标文件通过；60+ 条 static_assert 全过（真机验收待做） |
 | **P4 iOS** | SDL2/Uikit + Metal + Local Network 权限 + Keychain + TestFlight | 1~2 周 | iPhone/iPad 全流程通过审核内测 |
 | **P5 远程中继**（可选） | 局域网常驻网关（树莓派/小主机）：对外暴露加密 WebSocket，内部独占连狗；多客户端串行化 | 1 周 | 手机 4G 下可控，且与局域网直连体验一致 |
 
