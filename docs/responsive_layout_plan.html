@@ -136,6 +136,34 @@
   </div>
 </header>
 
+<section>
+  <h2><span class="n">!</span>设计变更（2026-09-24 晚，按你的反馈重做）</h2>
+  <div class="callout err" style="margin-top:14px">
+    <b>下面第 3、4 节的「三栏 / 双栏」布局方案已被推翻，不要再按它实现。</b>
+    你在平板上看到三栏后给了明确方向，最终形态是：
+  </div>
+  <table>
+    <thead><tr><th style="width:26%">你的要求</th><th>落地结果</th></tr></thead>
+    <tbody>
+      <tr><td><b>双摇杆要在两边角落</b>，不能有任何页面影响它们</td><td>摇杆**永远悬浮在屏幕两个下角**，画在<b>前景层</b>（<code>GetForegroundDrawList</code>）—— 任何窗口、任何弹窗都盖不住它。弹窗打开时摇杆依然在最上层，触屏也照常可用。</td></tr>
+      <tr><td>主界面不该是三栏</td><td>主界面<b>只有遥控</b>：急停 / 强制阻尼 / 参数 / 快捷 / 读数。内容居中且限宽 760dp（宽屏不会把急停拉成一条又长又扁的横条）。</td></tr>
+      <tr><td><b>日志别展示</b>，用按钮开弹窗</td><td>顶栏「日志」按钮 → 弹窗（自动滚动 / 只看异常 / 清空，软换行）。</td></tr>
+      <tr><td><b>动作库不要折叠</b>，按钮一排排平铺</td><td>顶栏「动作库」按钮 → 弹窗；去掉 <code>CollapsingHeader</code>，分组只作小标题，按钮按弹窗宽度<b>自动分列平铺</b>（平板横屏下 4 列）。</td></tr>
+      <tr><td>设备也单独做按钮 + 弹窗</td><td>顶栏「设备」按钮 → 弹窗（扫描 / 手动加 IP / 全部连接 / 全部断开 + 设备列表）。另有「设置」弹窗（钥匙库等）。</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <b>断点现在只决定这些</b>：顶栏布局、内容最大宽度、摇杆半径、弹窗尺寸、动作库按钮列数、字号。
+    不再有"列布局"这一说。
+  </div>
+  <div class="callout err">
+    <b>真机上踩到并修掉的两个硬 bug</b>（都只在真机暴露，值得记住）：
+    <br>① <b>弹窗打不开</b>：顶栏按钮画在子窗口里，而 ImGui 弹窗 ID 会带子窗口 ID 栈前缀 → 在子窗口里 <code>OpenPopup</code> 与主窗口层级的 <code>BeginPopupModal</code> 对不上。改成按钮只登记一次性请求，由 <code>drawUi</code> 在主窗口层级统一 <code>OpenPopup</code>。
+    <br>② <b>触摸点击全部失效</b>（键盘正常、按钮能 hover 却点不动）：坐标归一后 <code>DisplaySize</code> 是 dp，但 SDL 事件里的指针坐标仍是物理像素。先在 NewFrame 后补发坐标 —— 会被 ImGui 的<b>输入 trickling</b> 丢掉（同帧先移动后按键时，后补的坐标事件会被丢弃）。改成在<b>事件源头</b>折算 <code>SDL_MOUSEMOTION</code>/<code>MOUSEBUTTON</code> 的坐标。
+  </div>
+</section>
+
+
 <!-- ============================================ 0 -->
 <section>
   <h2><span class="n">0</span>落地状态（已实现，附验证方式）</h2>
@@ -231,7 +259,7 @@
 
 <!-- ============================================ 3 -->
 <section>
-  <h2><span class="n">3</span>断点体系：4 档宽度 × 3 档高度</h2>
+  <h2><span class="n">3</span>断点体系：4 档宽度 × 3 档高度 <span class="tag p0">已作废</span></h2>
   <p>这个界面的瓶颈<b>不只是宽度</b>。遥控页是"安全关键操作区"：急停、阻尼、参数、快捷键、双摇杆都要能一眼看到、手指够得着——所以<b>高度和宽度一样重要</b>。因此用二维断点。</p>
 
   <h3>3.1 宽度档（按逻辑 dp，不是物理像素）</h3>
@@ -343,7 +371,7 @@
 
 <!-- ============================================ 4 -->
 <section>
-  <h2><span class="n">4</span>三种布局模式详解</h2>
+  <h2><span class="n">4</span>三种布局模式详解 <span class="tag p0">已作废</span></h2>
 
   <div class="modecard">
     <h3><span class="badge">A</span> 三栏工作台 <span class="cond">E / L 宽 × R / T 高（≥900 × ≥480dp）· 平板横屏、桌面</span></h3>
