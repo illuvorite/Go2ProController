@@ -10,7 +10,9 @@ venv/
 *.egg-info/
 
 # 构建产物
-client/build/
+# 用 build* 而不是 build/ —— 之前只写了 client/build/，结果 client/build2/
+# 这个重复的构建目录被 git add -A 一起提交进去了（含 FetchContent 的 CMake 元数据）
+client/build*/
 captures/
 reports/
 
