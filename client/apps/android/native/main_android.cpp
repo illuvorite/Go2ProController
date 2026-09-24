@@ -90,10 +90,25 @@ struct TouchSticks {
     SDL_FingerID leftId = -1, rightId = -1;
     float lx = 0.0f, ly = 0.0f, rx = 0.0f, ry = 0.0f;
 
-    /// 安全操作区（急停 / 阻尼按钮的屏幕矩形）：落在这里的手指**不归摇杆**，
-    /// 直接放给 ImGui。改造前抓取半径是 radius*1.9，覆盖范围很大，
-    /// 落在急停上的手指会被摇杆吃掉 —— 这是安全项，必须优先。
-    float blockMinX = 0.0f, blockMinY = 0.0f, blockMaxX = 0.0f, blockMaxY = 0.0f;
+    /// 安全操作区（急停 / 阻尼按钮、摇杆带中间的「单控 / 群控」面板）：落在这里的手指
+    /// **不归摇杆**，直接放给 ImGui。抓取半径是 radius*1.9，覆盖范围很大，
+    /// 落在急停/面板上的手指会被摇杆吃掉 —— 这些必须优先给 ImGui。
+    /// ★ 多矩形（原来只有一个）：急停在上、面板在下，取"并集"会把整块屏幕变成禁区。
+    static constexpr int kMaxBlocks = go2::UiState::kMaxSafetyRects;
+    float blockRects[kMaxBlocks][4] = {};
+    int blockCount = 0;
+    /// 每帧从 ui.safetyRects 同步过来（drawUi 里登记的）
+    void setBlocks(const go2::UiState& ui) {
+        blockCount = std::min(ui.safetyRectCount, kMaxBlocks);
+        for (int i = 0; i < blockCount; ++i)
+            for (int k = 0; k < 4; ++k) blockRects[i][k] = ui.safetyRects[i][k];
+    }
+    /// 有弹窗盖住摇杆带 / 切后台：松开所有手指，别让摇杆保持住数值
+    void releaseAll() {
+        leftUsed = rightUsed = false;
+        leftId = rightId = -1;
+        lx = ly = rx = ry = 0.0f;
+    }
 
     /// 几何完全来自断点布局（ui/layout.cpp::computeFloatingJoysticks）。
     /// 不再在这里自己算 radius/inset/cy 那套魔法数 —— 否则摇杆位置与内容预留高度
@@ -105,8 +120,11 @@ struct TouchSticks {
     }
 
     bool inSafetyZone(float x, float y) const {
-        if (blockMaxX <= blockMinX) return false;
-        return x >= blockMinX && x <= blockMaxX && y >= blockMinY && y <= blockMaxY;
+        for (int i = 0; i < blockCount; ++i) {
+            const float* r = blockRects[i];
+            if (x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]) return true;
+        }
+        return false;
     }
 
     /// 手指按下：落在哪个杆的作用圈里就归它（返回 true = 这个事件被摇杆消费掉）
@@ -478,15 +496,19 @@ int main(int argc, char** argv) {
                 const SDL_FingerID fid = e.tfinger.fingerId;
                 const float fx = e.tfinger.x * ds.x;
                 const float fy = e.tfinger.y * ds.y;
+                // 弹窗盖住摇杆带时（ui.modalOpen）：手指全交给 ImGui —— 否则会被摇杆的
+                // 抓取圈吃掉，弹窗上的按钮就点不动了（与桌面端"弹窗盖住摇杆带"一致）
+                const bool stickBlocked = ui.modalOpen;
                 if (e.type == SDL_FINGERDOWN) {
                     ui.touchInput = true;  // 输入方式：手指优先（按钮最小尺寸跟着变）
-                    forStick = sticks.down(fid, fx, fy);
+                    forStick = !stickBlocked && sticks.down(fid, fx, fy);
                 } else if (e.type == SDL_FINGERMOTION) {
-                    if (sticks.owns(fid)) {
+                    if (!stickBlocked && sticks.owns(fid)) {
                         sticks.move(fid, fx, fy);
                         forStick = true;
                     }
                 } else {
+                    // 抬手永远要处理（哪怕这一刻刚好弹窗打开了），否则手指会"粘"在摇杆上
                     if (sticks.owns(fid)) {
                         sticks.up(fid);
                         forStick = true;
@@ -594,12 +616,9 @@ int main(int argc, char** argv) {
         // ---- 遥控时保持屏幕常亮（选中了要控制的狗就常亮；切后台/取消勾选自动关）----
         setKeepScreenOn(!g_inBackground.load() && ui.selectedCount() > 0);
 
-        // 摇杆几何来自断点布局；先把安全操作区交给摇杆做抓取互斥
-        //（手指落在急停/阻尼上不能被摇杆吃掉）
-        sticks.blockMinX = ui.safetyMinX;
-        sticks.blockMinY = ui.safetyMinY;
-        sticks.blockMaxX = ui.safetyMaxX;
-        sticks.blockMaxY = ui.safetyMaxY;
+        // 摇杆几何来自断点布局；先把"手指优先给 ImGui"的区域交给摇杆做抓取互斥
+        //（急停 / 阻尼 / 摇杆带中间的「单控 / 群控」面板 —— 落在那里的手指不能被摇杆吃掉）
+        sticks.setBlocks(ui);
 
         // 先把布局算出来：摇杆要在 drawUi 之前拿到几何，且数值要在同一帧内生效（无延迟）
         //（drawUi 里会再算一次，纯函数 + 滞回，结果相同）
@@ -610,6 +629,9 @@ int main(int argc, char** argv) {
         }
         // 摇杆几何来自断点布局（永远悬浮在两下角）
         sticks.applyLayout(ui.layout, ui.layout.screenW);
+        // 弹窗盖住摇杆带时：数值强制清零 + 松手（与桌面端 drawJoysticks 的语义一致），
+        // 否则"眼睛看弹窗、手指还按着摇杆" → 狗会一直走
+        if (ui.modalOpen) sticks.releaseAll();
         // 把触屏算好的数值写进 ui —— 必须在 drawUi 之前，同一帧的 planMotion 才用得上（无延迟）
         ui.joyLx = sticks.lx;
         ui.joyLy = sticks.ly;

@@ -3,12 +3,14 @@
 // ============================================================================
 // 断点布局：把「可用尺寸 + 输入方式 + 安全区」算成一套布局参数
 //
-// ★ 设计方向（2026-09-24 按用户反馈重做）：
-//   主界面**只有遥控**，双摇杆永远悬浮在屏幕两个下角（画在最上层，
-//   任何面板/弹窗都不能遮挡或抢走它们）；设备 / 动作库 / 设置 / 日志
-//   全部改成顶栏按钮 → 弹窗。
-//   所以这里不再有「三栏 / 双栏」那套列布局 —— 断点只决定：
-//     顶栏布局、遥控内容的最大宽度、摇杆半径、弹窗尺寸、动作库按钮列数、字号。
+// ★ 设计方向（2026-09-24 第三轮，按用户反馈再改）：
+//   主界面分**上下两块**：
+//     · 上 = 页面区：遥控 / 动作库 两个页面（顶栏页签切换）。
+//       **两个页面都铺满整屏宽**（不再有 760dp 居中留白）；设备 / 设置 / 日志
+//       仍是弹窗 —— 弹窗打开时摇杆带被它盖住（摇杆那一帧不画）。
+//     · 下 = 摇杆带：双摇杆悬浮在屏幕两个下角，任何页面都盖不住它；
+//       **两杆中间是「单控 / 群控」面板**（按钮 + 当前受控对象）。
+//   摇杆半径比第一版**缩小**（短边 *0.15、上限 88dp）—— 把纵向空间让给页面区。
 //
 // 单位约定：**dp**（逻辑像素）。各入口必须先按设备密度归一 ImGui 坐标
 // （见 apps/android/native/main_android.cpp 里的 detectPixelScale），
@@ -49,34 +51,46 @@ struct LayoutSpec {
     bool touch = false;    ///< 手指优先（决定按钮最小尺寸）；按输入方式判定，不按平台
     SafeArea safe{};
 
-    // ---- 顶栏（品牌 + 状态 + 四个入口按钮）----
+    // ---- 顶栏（品牌 + 状态 + 页签 + 模式/工具/急停按钮）----
     float topBarH = 56.0f;
     float topBtnH = 40.0f;    ///< 顶栏按钮高
     float topBtnW = 88.0f;    ///< 顶栏按钮宽（窄屏会算小）
     bool showBrand = true;    ///< 太窄时把品牌名让给按钮
+    bool topTwoRows = false;  ///< 极窄屏：顶栏拆两行（一行放不下 8 个按钮）
 
-    // ---- 遥控主体 ----
-    float contentMaxW = 720.0f;  ///< 内容最大宽（居中，避免宽屏把按钮拉得又长又扁）
-    float contentPad = 16.0f;    ///< 内容左右内边距
+    // ---- 页面区（遥控 / 动作库）----
+    float pagePad = 16.0f;      ///< 页面左右内边距
+    float pageW = 0.0f;         ///< 页面内容宽（两个页面都按它铺满整屏宽）
+    float pageH = 0.0f;         ///< 页面内容高 = screenH − 顶栏 − 摇杆带
+    /// 页面内容宽（历史名：曾经是用来居中限宽的"最大宽"）。
+    /// ★ 用户明确要求"铺满" → 现在直接等于 pageW，不再居中留白。
+    float contentMaxW = 720.0f;
+    float contentPad = 16.0f;   ///< 页面内边距
 
     // ---- 控件尺寸 ----
     float btnH = 48.0f;       ///< 通用按钮高
-    float estopH = 76.0f;     ///< 急停按钮高（安全关键：永远全宽、永远可见）
+    float estopH = 76.0f;     ///< 遥控页急停按钮高（安全关键：永远全宽、永远可见）
     float dampH = 52.0f;      ///< 阻尼按钮高
     float sliderW = 260.0f;   ///< 参数滑条宽
     bool paramInline = true;  ///< 参数常显（否则收进「参数」折叠区）
 
-    // ---- 双摇杆：永远悬浮在屏幕两个下角 ----
-    float joyRadius = 96.0f;
+    // ---- 摇杆带：双摇杆悬浮在屏幕两个下角，中间是「单控 / 群控」面板 ----
+    float joyRadius = 88.0f;
     float joyInsetX = 0.0f;   ///< 圆心距屏幕左/右边缘
     float joyCenterY = 0.0f;  ///< 圆心距屏幕顶部
-    float joyReserve = 0.0f;  ///< 内容底部要预留的高度（与摇杆同源，避免压住按钮）
+    float joyReserve = 0.0f;  ///< 页面区底部要预留的高度（与摇杆同源，避免压住内容）
+    float joyGapMinX = 0.0f;  ///< 两杆之间的空档（面板放在这里，绝不压到摇杆）
+    float joyGapMaxX = 0.0f;
+    float joyPanelW = 0.0f;   ///< 空档里「单控 / 群控」面板的尺寸
+    float joyPanelH = 0.0f;
+    bool joyPanelStack = false;  ///< 空档太窄 → 两个按钮竖排（窄屏手机）
 
-    // ---- 弹窗（设备 / 动作库 / 设置 / 日志）----
+    // ---- 弹窗（设备 / 设置 / 日志）：打开时**盖住**摇杆带 ----
     float popupW = 640.0f;
     float popupH = 480.0f;
 
-    // ---- 动作库弹窗里的按钮网格（一排排平铺，不折叠）----
+    // ---- 动作库页里的按钮网格（一排排平铺，不折叠）----
+    float actAreaW = 0.0f;  ///< 网格可用宽（= 页面宽 − 内边距）
     int actCols = 3;
     float actW1 = 160.0f;
     float actW2 = 130.0f;
@@ -113,6 +127,13 @@ constexpr float kHysteresis = 8.0f;
 /// 摇杆下方给标签留的高度：标签本身约 16dp + 与圆之间的 8dp 间隔 + 一点余量。
 /// 不给它留位置，真机上（底部安全区为 0 时）标签会被屏幕下边缘裁掉。
 constexpr float kJoyLabelSpace = 30.0f;
+
+/// 顶栏按钮个数（决定单行模式下的按钮宽）：
+/// 页签 2（遥控 / 动作库）+ 工具 3（设备 / 设置 / 日志）+ 急停 1
+/// ★「单控 / 群控」已挪到两个摇杆中间（摇杆带面板），不再占顶栏位置。
+constexpr int kTopBtnsSingleRow = 6;
+/// 两行模式下第二行的按钮个数：页签 2 + 工具 3
+constexpr int kTopBtnsRow2 = 5;
 
 constexpr WidthClass rawWidthClass(float w) {
     if (w >= kWLarge) return WidthClass::Large;
@@ -155,21 +176,22 @@ constexpr HeightClass heightClassOf(float h, HeightClass prev, bool hasPrev) {
     return raw;
 }
 
-/// 动作库弹窗里的按钮网格：按弹窗宽度算列数与单格宽度（一排排平铺，不用折叠面板）
+/// 动作库页里的按钮网格：按**页面可用宽**算列数与单格宽度
+/// （动作库是常驻整屏页面，所以用整屏宽而不是弹窗宽 —— 宽屏能排 8 列）。
 constexpr void computeActionGrid(LayoutSpec& s) {
     const float gap = 8.0f;
-    const float avail = std::max(160.0f, s.popupW - 48.0f);  // 扣掉弹窗内边距
+    const float avail = std::max(160.0f, s.actAreaW);
     const float minW = s.touch ? 118.0f : 108.0f;
-    const float idealW = s.touch ? 200.0f : 170.0f;
+    const float idealW = s.touch ? 190.0f : 168.0f;
 
     int cols = static_cast<int>((avail + gap) / (minW + gap));
     if (cols < 1) cols = 1;
-    if (cols > 4) cols = 4;
+    if (cols > 8) cols = 8;
     float w = (avail - gap * static_cast<float>(cols - 1)) / static_cast<float>(cols);
-    if (w > idealW) {  // 太宽就加一列（最多 4 列），否则按钮会又长又扁
+    if (w > idealW) {  // 太宽就加列（最多 8 列），否则按钮会又长又扁
         const int more = static_cast<int>(avail / (idealW + gap));
         if (more > cols) {
-            cols = std::min(more, 4);
+            cols = std::min(more, 8);
             w = (avail - gap * static_cast<float>(cols - 1)) / static_cast<float>(cols);
         }
     }
@@ -181,7 +203,7 @@ constexpr void computeActionGrid(LayoutSpec& s) {
 
 }  // namespace layout_detail
 
-/// 由 screenW/screenH/safe/tabBarH 推导悬浮摇杆的圆心与内容预留高度。
+/// 由 screenW/screenH/safe 推导悬浮摇杆的圆心、内容预留高度与两杆之间的空档。
 /// 摇杆位置与预留高度必须同源 —— 改造前一个算 h-radius-90、一个写死 250，屏幕一变就错位。
 constexpr void computeFloatingJoysticks(LayoutSpec& s) {
     // 注意坐标系：算出来的是**屏幕坐标**（ImGui 原点是窗口左上角），所以用 screenH / safe.*
@@ -190,8 +212,17 @@ constexpr void computeFloatingJoysticks(LayoutSpec& s) {
     // 底部往上收：既要避开手势条，也要给摇杆下方的标签（"左 · 移动"）留出位置 ——
     // 真机上底部安全区可能是 0（沉浸式下系统把手势条藏了），不给标签留就会把字裁掉。
     s.joyCenterY = s.screenH - s.safe.bottom - s.joyRadius - layout_detail::kJoyLabelSpace;
-    // ★ 内容预留高度与摇杆位置**同源**：改造前一个算 h-radius-90、一个写死 250，屏幕一变就错位
+    // ★ 页面区预留高度与摇杆位置**同源**：改造前一个算 h-radius-90、一个写死 250，屏幕一变就错位
     s.joyReserve = s.screenH - (s.joyCenterY - s.joyRadius);
+    // 两杆之间的空档（极窄屏可能为负 → 交给绘制侧判断，不画状态文字）
+    s.joyGapMinX = s.joyInsetX + s.joyRadius;
+    s.joyGapMaxX = s.screenW - s.joyInsetX - s.joyRadius;
+    if (s.joyGapMaxX < s.joyGapMinX) {
+        // 两杆几乎贴在一起：收缩成一个"以屏幕中心为准"的空点（绘制侧会跳过文字）
+        const float c = s.screenW * 0.5f;
+        s.joyGapMinX = c;
+        s.joyGapMaxX = c;
+    }
 }
 
 /// 由「可用尺寸 + 输入方式 + 安全区」算出布局参数（纯函数，无副作用）。
@@ -217,7 +248,6 @@ constexpr LayoutSpec makeLayout(float w, float h, bool touch, const SafeArea& sa
         heightClassOf(s.viewH, hasPrev ? prev->heightClass : HeightClass::Regular, hasPrev);
 
     const bool shortScreen = (s.heightClass == HeightClass::Short);
-    const bool narrow = (s.widthClass == WidthClass::Compact);
 
     // ======================= 字号与样式 =======================
     // 字号只跟**宽度档**走（同一块屏上，接鼠标还是用手指不该改变字号）；
@@ -232,48 +262,74 @@ constexpr LayoutSpec makeLayout(float w, float h, bool touch, const SafeArea& sa
     s.styleScale = touch ? 1.15f : 1.0f;  // 触摸：内边距/圆角/滚动条跟着放大
 
     // ======================= 顶栏 =======================
-    // 只有一行：品牌 + 受控状态 + 四个入口按钮（设备/动作库/设置/日志）
-    s.topBarH = (touch ? 58.0f : 46.0f) + safe.top;
     s.topBtnH = touch ? (shortScreen ? 40.0f : 44.0f) : 30.0f;
 
-    // 按钮宽：给品牌与状态 chip 留出位置，剩下的四等分；太窄就收起品牌名
-    const float barAvail = s.viewW - 32.0f;                       // 左右内边距
-    const float brandNeed = touch ? 132.0f : 210.0f;              // 品牌 + chip
-    const float gaps = 8.0f * 5.0f;                               // 品牌/4 按钮之间的间隙
-    float btnW = (barAvail - brandNeed - gaps) / 4.0f;
-    s.showBrand = btnW >= 56.0f;
-    if (!s.showBrand) btnW = (barAvail - 96.0f - gaps) / 4.0f;    // 只留 chip
-    s.topBtnW = clampf(btnW, 44.0f, 118.0f);
+    // 按钮宽：给品牌与状态 chip 留出位置，剩下等分。
+    // 极窄屏（C 档）一行塞不下 8 个按钮 → 拆两行：
+    //   第一行：状态 chip + 单控 / 群控 / 急停
+    //   第二行：页签（遥控 / 动作库）+ 工具（设备 / 设置 / 日志）
+    constexpr float kPadX = 16.0f;  // 顶栏左右内边距（单边）
+    const float barAvail = std::max(120.0f, s.viewW - kPadX * 2.0f);
+    s.topTwoRows = (s.widthClass == WidthClass::Compact);
+    if (s.topTwoRows) {
+        s.showBrand = false;  // 位置上让给按钮；品牌改在遥控页标题里出现
+        // 第二行 5 个按钮：4 个间隙 + 两端留白
+        const float gaps = 8.0f * static_cast<float>(kTopBtnsRow2);
+        s.topBtnW = clampf((barAvail - gaps) / static_cast<float>(kTopBtnsRow2), 44.0f, 118.0f);
+        s.topBarH = 2.0f * s.topBtnH + (touch ? 26.0f : 20.0f) + safe.top;
+    } else {
+        const float brandNeed = touch ? 140.0f : 210.0f;  // 品牌 + chip
+        const float gaps = 8.0f * static_cast<float>(kTopBtnsSingleRow + 1);
+        float btnW = (barAvail - brandNeed - gaps) / static_cast<float>(kTopBtnsSingleRow);
+        s.showBrand = btnW >= 56.0f;
+        if (!s.showBrand)  // 只留 chip
+            btnW = (barAvail - 96.0f - gaps) / static_cast<float>(kTopBtnsSingleRow);
+        s.topBtnW = clampf(btnW, 44.0f, 118.0f);
+        s.topBarH = (touch ? 58.0f : 46.0f) + safe.top;
+    }
 
-    // ======================= 遥控主体 =======================
-    // 宽屏不把按钮拉得又长又扁 → 内容居中 + 宽度上限
-    const float pad = (touch ? 14.0f : 18.0f);
-    s.contentPad = pad;
-    s.contentMaxW = clampf(s.viewW - pad * 2.0f, 260.0f, 760.0f);
-
-    // ======================= 双摇杆（永远悬浮两下角）=======================
-    // 半径跟着短边走，但**上限压到 112dp**：摇杆太大就会把整条底边都占掉，
-    // 内容区会被挤得只剩一小条（真机截图里就出现过内容被摇杆压住）。
-    s.joyRadius = clampf(std::min(s.viewW, s.viewH) * 0.18f, 64.0f, 112.0f);
+    // ======================= 双摇杆（悬浮两下角）=======================
+    // 半径跟着短边走，但**上限压到 88dp**、下限 52dp：
+    // 页面区吃掉的高度要尽量小（这一版比第一版小了约 1/4）。
+    s.joyRadius = clampf(std::min(s.viewW, s.viewH) * 0.15f, 52.0f, 88.0f);
     computeFloatingJoysticks(s);
+
+    // ---- 摇杆带中间的「单控 / 群控」面板（用户要求放两个摇杆中间）----
+    {
+        const float gapW = s.joyGapMaxX - s.joyGapMinX;
+        s.joyPanelW = clampf(gapW - 24.0f, 84.0f, 320.0f);
+        s.joyPanelStack = (s.joyPanelW < 190.0f);  // 空档太窄 → 两个按钮竖排
+        s.joyPanelH = (s.joyPanelStack ? 2.0f * s.topBtnH + 6.0f : s.topBtnH) +
+                      (touch ? 46.0f : 38.0f);     // 再加一行"当前受控对象"文字
+    }
+
+    // ======================= 页面区 =======================
+    const float pad = (touch ? 14.0f : 18.0f);
+    s.pagePad = pad;
+    s.contentPad = pad;
+    s.pageW = std::max(240.0f, s.viewW - pad * 2.0f);
+    s.pageH = std::max(160.0f, s.screenH - s.topBarH - s.joyReserve);
+    // ★ 铺满：两个页面都用满 pageW（用户明确否定"居中限宽留白"的观感）
+    s.contentMaxW = s.pageW;
 
     // ---- 控件尺寸 ----
     s.btnH = touch ? (shortScreen ? 44.0f : 50.0f) : 34.0f;
     s.estopH = touch ? (shortScreen ? 64.0f : 78.0f) : 52.0f;
     s.dampH = touch ? (shortScreen ? 46.0f : 54.0f) : 0.0f;
-    s.sliderW = clampf(s.contentMaxW - 150.0f, 150.0f, 300.0f);
-    // 内容区真实可用高度 = 整屏 − 顶栏 − 摇杆区。
+    // 参数行左边是标签、右边滑条撑满（见 ui.cpp 的 paramRow）—— 这里给个上限免得宽屏滑条太长
+    s.sliderW = clampf(s.pageW * 0.5f, 150.0f, 560.0f);
     // 矮屏纵向紧张 → 参数收进折叠区，把空间让给急停/阻尼/快捷。
-    const float contentAvailH = s.screenH - s.topBarH - s.joyReserve;
-    s.paramInline = (contentAvailH > 420.0f);
+    s.paramInline = (s.pageH > 420.0f);
 
-    // ======================= 弹窗 =======================
+    // ======================= 弹窗（设备 / 设置 / 日志）=======================
+    // ★ 弹窗要**盖住摇杆带**（用户要求："其余弹窗统一覆盖在摇杆区域上方"）：
+    //   所以按整屏比例取高，且居中于整屏 —— 打开时摇杆那一帧不画（见 ui.cpp）。
     s.popupW = clampf(s.viewW * 0.88f, 300.0f, 1000.0f);
-    s.popupH = clampf(s.viewH * 0.82f, 260.0f, 780.0f);
+    s.popupH = clampf(s.viewH * 0.90f, 260.0f, 820.0f);
     s.actH = touch ? 52.0f : 34.0f;
+    s.actAreaW = std::max(160.0f, s.pageW - 24.0f);
     computeActionGrid(s);
 
-    (void)narrow;
     return s;
 }
 

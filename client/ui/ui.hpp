@@ -29,6 +29,11 @@ struct RobotEntry {
     std::string modeName = "-";
 };
 
+/// 主界面页面（顶栏页签切换）。
+/// 动作库是**常驻整屏页面**（按 pageW 铺满），不再是弹窗；
+/// 设备 / 设置 / 日志 仍是弹窗，打开时盖住摇杆带。
+enum class UiPage { Remote, Actions };
+
 struct UiState {
     // ---- 设备列表 ----
     std::vector<RobotEntry> robots;
@@ -76,15 +81,41 @@ struct UiState {
     /// **按输入方式判定而不是按平台** —— 触屏笔记本、平板接外接鼠标都能自动适配。
     bool touchInput = false;
 
-    // ---- 弹窗（顶栏四个入口按钮）----
+    // ---- 页面（顶栏页签）----
+    UiPage page = UiPage::Remote;  ///< 遥控 / 动作库（动作库是常驻整屏页面）
+
+    // ---- 机器狗名称（用户可改，持久化到 robot_names.json）----
+    // 用 ip → 名称 的独立映射：改名不依赖设备是否在线，设备被移除/重新添加也不丢。
+    std::map<std::string, std::string> names;
+    std::string renamingIp;      ///< 正在改名的设备（空 = 没有在改名）
+    char nameBuf[64] = "";       ///< 改名输入框缓冲
+    /// 从 robot_names.json 读取（drawUi 里惰性调用一次，桌面/安卓共用）
+    void loadNames();
+    void saveNames();
+    /// 改名并立即落盘（name 为空 = 恢复成显示 IP）
+    void setName(const std::string& ip, const std::string& name);
+    std::string nameOf(const std::string& ip);   ///< 自定义名称（空 = 没起名）
+    std::string labelOf(const std::string& ip);  ///< 显示名：有名称用名称，否则 IP
+    /// 群控：勾选列表内**全部**设备，返回台数（未就绪的勾上也无害，指令只发给就绪的）
+    int selectAll();
+    /// 单控：只勾选这一台（其余全部取消）
+    bool selectOnly(const std::string& ip);
+    /// "当前指令发给谁"的一句话（摇杆带中间显示：单控 · 名字 / 群控 · N 台）
+    std::string controlTargetText();
+
+    // ---- 弹窗（顶栏入口按钮）----
     // 注意：顶栏按钮是在**子窗口**里画的，而 ImGui 的弹窗 ID 会带 ID 栈前缀 ——
     // 在子窗口里直接 OpenPopup 会和主窗口层级的 BeginPopupModal 对不上（弹窗打不开）。
     // 所以按钮只写一次性请求，由 drawUi 在主窗口层级统一 OpenPopup。
-    int popupRequest = 0;  ///< 一次性请求：0=无 1=设备 2=动作库 3=设置 4=日志
+    int popupRequest = 0;  ///< 一次性请求：0=无 1=设备 2=设置 3=日志
     bool showDevices = false;   ///< 弹窗开关（作为 BeginPopupModal 的 p_open）
-    bool showActions = false;   ///< 动作库：一排排按钮平铺（不折叠）
     bool showSettings = false;  ///< 设置：钥匙库 / 隐私 / 说明
     bool showLog = false;       ///< 运行日志
+    /// 本帧是否有模态弹窗打开（设备 / 设置 / 日志）—— 弹窗要**盖住摇杆带**：
+    /// 打开时摇杆不画、不响应、数值清零（避免"眼睛看弹窗、手指还在推摇杆"）。
+    /// ⚠️ 安卓触屏入口（apps/android/native/main_android.cpp）也要读这个标志：
+    ///    为真时不要把手指标成摇杆、也不要把摇杆数值写进 ui（同步平板端时需要补上）。
+    bool modalOpen = false;
 
     /// 摇杆数值是否由平台层驱动（安卓触屏多点触控）：
     /// true → 平台层负责画到前景层，ui 侧只读不写（否则会把触屏算好的值覆盖成 0）
@@ -96,7 +127,17 @@ struct UiState {
     /// 悬浮摇杆的抓取范围**不得覆盖**这里 —— 否则手指落在急停上会被摇杆吃掉，
     /// 那是安全项，必须优先交给 ImGui 处理。
     /// 用四个 float 而不是 ImVec2，免得 ui.hpp 被迫依赖 imgui.h。
-    float safetyMinX = 0.0f, safetyMinY = 0.0f, safetyMaxX = 0.0f, safetyMaxY = 0.0f;
+    /// ★ 改成**多矩形**：摇杆带中间多了「单控 / 群控」面板之后，单个矩形取并集会大得离谱
+    ///   （急停在上、面板在下 → 整块屏幕都变成禁区，触屏就彻底失灵了）。
+    static constexpr int kMaxSafetyRects = 8;
+    float safetyRects[kMaxSafetyRects][4] = {};
+    int safetyRectCount = 0;
+    /// 登记一块"手指优先交给 ImGui"的屏幕矩形；每帧由 drawUi 开头清零
+    void addSafetyRect(float x0, float y0, float x1, float y1) {
+        if (safetyRectCount >= kMaxSafetyRects) return;
+        float* r = safetyRects[safetyRectCount++];
+        r[0] = x0; r[1] = y0; r[2] = x1; r[3] = y1;
+    }
 
     // ---- 持续模式开关（自由行走 / 领航跟随 / 交叉步 / 经济步态 …）----
     // 这类指令是 on/off 语义、会一直生效，且 StopMove 停不掉；急停时会逐个关闭并复位这里的状态

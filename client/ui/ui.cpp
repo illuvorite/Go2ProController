@@ -90,6 +90,78 @@ int UiState::selectedCount() {
     return static_cast<int>(selectedIps().size());
 }
 
+// ---------------------------------------------------------------- 机器狗名称
+// 规矩与钥匙一致：只读写**本应用目录**下的文件（安卓启动时已 chdir 到应用专属目录）。
+// names 只在界面线程读写，不需要加锁。
+void UiState::loadNames() {
+    std::ifstream f("robot_names.json");
+    if (!f) return;
+    try {
+        nlohmann::json j;
+        f >> j;
+        if (!j.is_object()) return;
+        for (auto it = j.begin(); it != j.end(); ++it)
+            if (it.value().is_string() && !it.value().get<std::string>().empty())
+                names[it.key()] = it.value().get<std::string>();
+    } catch (...) {
+        // 文件损坏就当没起过名 —— 绝不能因为一个名字文件让界面起不来
+    }
+}
+
+void UiState::saveNames() {
+    nlohmann::json j = nlohmann::json::object();
+    for (const auto& kv : names)
+        if (!kv.second.empty()) j[kv.first] = kv.second;
+    std::ofstream f("robot_names.json", std::ios::trunc);
+    if (f) f << j.dump(2) << "\n";
+}
+
+void UiState::setName(const std::string& ip, const std::string& name) {
+    // 去掉首尾空白：只有空白的名字等于"没起名"（恢复显示 IP）
+    std::string clean = name;
+    while (!clean.empty() && (clean.back() == ' ' || clean.back() == '\t')) clean.pop_back();
+    const size_t b = clean.find_first_not_of(" \t");
+    clean = (b == std::string::npos) ? std::string() : clean.substr(b);
+    if (clean.empty())
+        names.erase(ip);
+    else
+        names[ip] = clean;
+    saveNames();
+}
+
+std::string UiState::nameOf(const std::string& ip) {
+    auto it = names.find(ip);
+    return it == names.end() ? std::string() : it->second;
+}
+
+std::string UiState::labelOf(const std::string& ip) {
+    const std::string n = nameOf(ip);
+    return n.empty() ? ip : n;
+}
+
+int UiState::selectAll() {
+    std::lock_guard<std::mutex> lock(robotsMutex);
+    for (auto& r : robots) r.selected = true;
+    return static_cast<int>(robots.size());
+}
+
+bool UiState::selectOnly(const std::string& ip) {
+    std::lock_guard<std::mutex> lock(robotsMutex);
+    bool found = false;
+    for (auto& r : robots) {
+        r.selected = (r.ip == ip);
+        if (r.selected) found = true;
+    }
+    return found;
+}
+
+std::string UiState::controlTargetText() {
+    const auto ips = selectedIps();
+    if (ips.empty()) return "未选择受控设备";
+    if (ips.size() == 1) return "单控 · " + labelOf(ips.front());
+    return "群控 · " + std::to_string(ips.size()) + " 台";
+}
+
 void UiState::noteApiResult(int apiId, int code, const std::string& note) {
     if (apiId == 0) return;
     std::lock_guard<std::mutex> lock(apiMutex);
@@ -268,6 +340,139 @@ void readout(const char* label, const char* value, ImVec4 valueColor) {
                     value);
     }
     ImGui::Dummy(ImVec2(w, h));
+}
+
+/// 拖动型控件（滑条）是否正被拖动：是 → 手指拖动用于调值，**不滚屏**。
+/// 用"上一帧的标记"：touchDragScroll 在窗口开头调用，而滑条是在之后才画的。
+/// （声明必须在 touchDragScroll / iosSliderFloat 之前）
+bool g_valueDragPrev = false;
+bool g_valueDragCur = false;
+/// 由 drawUi 每帧开头调用：把本帧的标记挪到"上一帧"、清空本帧的
+void rollDragFlags() {
+    g_valueDragPrev = g_valueDragCur;
+    g_valueDragCur = false;
+}
+
+// ---------------------------------------------------------------- 苹果风格控件
+// 用户要求"滑动条按照苹果风格设计"。目标观感（iOS）：
+//   灰色胶囊轨道 + 左侧主色"已填充"段 + **白色圆形旋钮** + 数值居中显示。
+// ⚠ 为什么填充段要自己画：ImGui 原生滑条只画一个"旋钮"矩形，并不画左边已填充的部分
+//   （见 imgui_widgets.cpp::SliderBehaviorT 里 out_grab_bb 的算法：只是一个以当前值为中心的方块）。
+//   所以这里先把填充段画在**轨道之前**（画得更早 = 压在轨道底下，文字与旋钮仍在它上面），
+//   再把轨道设成半透明白、旋钮设成白色圆点。
+bool iosSliderFloat(const char* label, float* v, float lo, float hi, const char* fmt,
+                    float width = 0.0f) {
+    const float fontSize = ImGui::GetFontSize();
+    const float padY = 5.0f;
+    const float track = fontSize + padY * 2.0f;  // 轨道高
+    const float knob = track - 4.0f;             // 旋钮直径（ImGui 里 grab_padding 固定 2）
+    const float frameW = (width > 0.0f) ? width : ImGui::CalcItemWidth();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+
+    // ---- 已填充段（主色）----
+    float t = (hi > lo) ? ((*v - lo) / (hi - lo)) : 0.0f;
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    const float fillRight = p0.x + 2.0f + t * (frameW - 4.0f - knob);
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->PushClipRect(p0, ImVec2(p0.x + frameW, p0.y + track), true);
+        dl->AddRectFilled(p0, ImVec2(std::max(p0.x + 2.0f, fillRight), p0.y + track),
+                          ImGui::GetColorU32(
+                              ImVec4(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.92f)),
+                          track * 0.5f);
+        dl->PopClipRect();
+    }
+
+    // ---- 轨道 + 白色圆形旋钮 ----
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, padY));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, track * 0.5f);
+    ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, track);  // ≥ 半径 → 正圆
+    ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, knob);    // 旋钮 = 轨道内高 → 圆点
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(1.0f, 1.0f, 1.0f, 0.09f));  // 轨道
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.13f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(1.0f, 1.0f, 1.0f, 0.15f));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, ImVec4(1.0f, 1.0f, 1.0f, 0.97f));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    ImGui::SetNextItemWidth(frameW);
+    // 格式传一个空格：让 ImGui 自己的"居中数值"变成空白（它画在旋钮**之后**，
+    // 白色旋钮上压白字会看不见 —— 实测 "1.20 rad/s" 中间被旋钮吃掉）。
+    // 数值改由下面自己画在"离旋钮最远的轨道一端"。
+    // NoInput：因为格式被换成空格，Ctrl+点 的临时输入框会以"空"起步（回车会把值压到下限），
+    //          索性关掉它 —— 数值在轨道上一直看得见，拖动即可调。
+    const bool changed =
+        ImGui::SliderFloat(label, v, lo, hi, " ", ImGuiSliderFlags_NoInput);
+    // 记下"正在拖滑条"：这一下的手指拖动不该变成页面滚动（见 touchDragScroll）
+    if (ImGui::IsItemActive()) g_valueDragCur = true;
+    ImGui::PopStyleColor(5);
+    ImGui::PopStyleVar(5);
+
+    // ---- 数值文本：**固定在轨道右端**（不随值左右跳），带 1px 暗色描边 → 压在旋钮上也读得清 ----
+    {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), fmt, *v);
+        const ImVec2 ts = ImGui::CalcTextSize(buf);
+        const float padX = 12.0f;
+        if (ts.x + padX * 2.0f < frameW) {
+            const ImVec2 pos(p0.x + frameW - ts.x - padX, p0.y + (track - ts.y) * 0.5f);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f),
+                        ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.6f)), buf);
+            dl->AddText(pos, ImGui::GetColorU32(col::kText), buf);
+        }
+    }
+    (void)t;
+    return changed;
+}
+
+/// 整数滑条：内部仍走**浮点**滑条（ImGui 的整数滑条会把旋钮拉成一个长条：
+/// grab_sz = 行程/(取值范围+1)，见 SliderBehaviorT）—— 这里只把结果四舍五入回整数。
+bool iosSliderInt(const char* label, int* v, int lo, int hi, float width = 0.0f) {
+    float f = static_cast<float>(*v);
+    const bool changed =
+        iosSliderFloat(label, &f, static_cast<float>(lo), static_cast<float>(hi), "%.0f", width);
+    if (changed) {
+        const int nv = static_cast<int>(f + 0.5f);
+        *v = nv < lo ? lo : (nv > hi ? hi : nv);
+    }
+    return changed;
+}
+
+/// 参数行（苹果风格）：左边标签，右边滑条撑满剩余宽度（宽屏不再留一大片空白）。
+/// ⚠ 滑条的 ID 由**标签派生**（`##线速度上限` 之类）—— 一开始这里图省事三个滑条都用 "##p"，
+///   结果 ImGui 报 "3 visible items with conflicting ID" 并在界面上弹红框
+///   （io.ConfigDebugHighlightIdConflicts 在这个版本的 ImGui 里**默认开着**，Release 也照报）。
+///   凡是同一窗口里重复使用的控件，标签必须带上区分度，或用 PushID 包一层。
+void paramRowF(const char* label, float* v, float lo, float hi, const char* fmt, float def,
+               float labelW = 108.0f) {
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(labelW);
+    const float resetW = ImGui::CalcTextSize("重置").x + 22.0f;
+    const std::string id = std::string("##") + label;
+    iosSliderFloat(id.c_str(), v, lo, hi, fmt,
+                   ImGui::GetContentRegionAvail().x - resetW - 9.0f);
+    ImGui::SameLine();
+    if (ImGui::Button((std::string("重置##") + label).c_str(), ImVec2(resetW, 0.0f)))
+        *v = def;  // 恢复默认值（helpTip 定义在后面，这里不调）
+}
+
+/// ★ 手指按住拖动 = 滚动当前窗口。
+/// 用户实测反馈：平板上只有按住最右边的滚动条才能往下滑，太别扭；
+/// 应该是"在任意位置按住屏幕就能滑"。ImGui 自己没有拽动滚动（只支持滚轮），
+/// 所以这里补上：在**每个可滚动窗口的开头**调一次。
+/// 只在触摸输入下生效（鼠标拖拽另有含义，别抢）。
+/// ⚠ 这里**不能用 `IsAnyItemActive()` 当守卫**：手指按到按钮上按钮就会 Active，
+///   而整页都是按钮 → 实测"按住屏幕滑不动"（第一次真机验证就是这么失败的）。
+///   改成只看"拖动型控件（滑条）是否在拖"—— 用上一帧的标记（滑条在本函数之后才画）。
+void touchDragScroll(const LayoutSpec& L) {
+    if (!L.touch) return;
+    if (g_valueDragPrev) return;  // 正在拖滑条 → 这一下是要调值，不是滚屏
+    // ChildWindows：设备卡片那种"不滚动的小子窗"上按住也要能滚**本窗口**
+    if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) return;
+    if (!ImGui::IsMouseDragging(ImGuiMouseButton_Left)) return;
+    const float dy = ImGui::GetIO().MouseDelta.y;
+    if (dy == 0.0f) return;
+    ImGui::SetScrollY(ImGui::GetScrollY() - dy);
 }
 
 /// 后台线程：扫描本机所有网段，发现的 Go2 自动加入列表并连接
@@ -474,8 +679,9 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
     ImGui::SameLine();
     {
         FontScope fs = fontSmall();
-        ImGui::TextDisabled("已选 %d 台（%s）", ui.selectedCount(),
-                            ui.selectedCount() > 1 ? "群控" : "单控");
+        const int sc = ui.selectedCount();
+        ImGui::TextDisabled("已选 %d 台（%s）· 顶栏「单控 / 群控」一键切换", sc,
+                            sc == 0 ? "无" : (sc > 1 ? "群控" : "单控"));
     }
     ImGui::Spacing();
 
@@ -504,15 +710,29 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
                           ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY,
                           ImGuiWindowFlags_NoScrollbar);
         {
-            // ---- 第一行：勾选 · 状态灯 · IP · 状态胶囊 · 操作 ----
+            // ---- 第一行：勾选 · 状态灯 · 名称 · 状态胶囊 · 操作 ----
             bool sel = ui.isSelected(e.ip);
             if (ImGui::Checkbox("##sel", &sel)) ui.setSelected(e.ip, sel);
             ImGui::SameLine(0, 4);
             statusDot(stc);
             ImGui::SameLine(0, 2);
+            // 名称（没起名就显示 IP）；起了名也把 IP 露出来 —— 排障全靠它
             {
-                FontScope fs = fontBody();
-                ImGui::TextColored(stc, "%s", maskIps(e.ip, ui.privacyMode).c_str());
+                const std::string nm = ui.nameOf(e.ip);
+                if (nm.empty()) {
+                    FontScope fs = fontBody();
+                    ImGui::TextColored(stc, "%s", maskIps(e.ip, ui.privacyMode).c_str());
+                } else {
+                    {
+                        FontScope fs = fontBody();
+                        ImGui::TextColored(stc, "%s", maskIps(nm, ui.privacyMode).c_str());
+                    }
+                    ImGui::SameLine(0, 8);
+                    {
+                        FontScope fs = fontSmall();
+                        ImGui::TextDisabled("%s", maskIps(e.ip, ui.privacyMode).c_str());
+                    }
+                }
             }
             ImGui::SameLine(0, 8);
             chip(stateText(st), stc);
@@ -534,8 +754,44 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
                 ui.addLog("[UI] 已移除 " + e.ip);
             }
 
-            // ---- 第二行：电量条 · 电量 · 模式 ----
+            // ---- 第二行：改名 · 单控 ----
+            // 放这一行而不是第一行右侧：那儿要留给"连接 / 移除"，全挤一起窄屏会溢出
             ImGui::Spacing();
+            if (ui.renamingIp == e.ip) {
+                ImGui::SetNextItemWidth(
+                    std::max(150.0f, ImGui::GetContentRegionAvail().x - 150.0f));
+                const bool enter = ImGui::InputTextWithHint(
+                    "##name", "给这台狗起个名字（留空 = 用 IP）", ui.nameBuf, sizeof(ui.nameBuf),
+                    ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("保存") || enter) {
+                    ui.setName(e.ip, ui.nameBuf);
+                    ui.addLog("[UI] " + e.ip + " 命名为「" + ui.labelOf(e.ip) + "」");
+                    ui.renamingIp.clear();
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("取消")) {
+                    ui.renamingIp.clear();
+                    ui.nameBuf[0] = '\0';
+                }
+            } else {
+                if (ImGui::SmallButton("改名")) {
+                    ui.renamingIp = e.ip;
+                    std::snprintf(ui.nameBuf, sizeof(ui.nameBuf), "%s", ui.nameOf(e.ip).c_str());
+                }
+                helpTip("给这台机器狗起个名字：显示在设备卡片和摇杆带上。\n"
+                        "存在 robot_names.json（应用目录），下次启动还在。");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("单控")) {
+                    const std::string nm = ui.nameOf(e.ip);
+                    ui.selectOnly(e.ip);
+                    ui.addLog("[单控] 只控制 " + e.ip + (nm.empty() ? "" : "（" + nm + "）"));
+                }
+                helpTip("只让这一台接收指令（其余设备自动取消勾选）");
+                ImGui::SameLine(0, 14);
+            }
+
+            // ---- 第三行：电量条 · 电量 · 模式 ----
             batteryBar(e.battery);
             ImGui::SameLine(0, 8);
             {
@@ -594,20 +850,21 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
 }  // namespace
 
 // ============================================================================
-// 界面：遥控为主 + 两下角悬浮摇杆 + 四个弹窗（设备 / 动作库 / 设置 / 日志）
+// 界面：上下两块 —— 上「页面区」（遥控 / 动作库）+ 下「摇杆带」
 //
-// ★ 设计要点（2026-09-24 按用户反馈重做）：
-//   · 双摇杆**永远悬浮在屏幕两个下角**，画在**前景层** —— 任何面板、任何弹窗都盖不住它，
-//     也不该有任何页面"影响"到它（数值由平台层触屏或多点触控驱动）
-//   · 主界面只有遥控；设备 / 动作库 / 设置 / 日志 全部是顶栏按钮 → 弹窗
-//   · 动作库在弹窗里**一排排按钮平铺**，不再用折叠面板
+// ★ 设计要点（2026-09-24 第二轮，按用户反馈重做）：
+//   · 动作库改成**常驻整屏页面**（不再弹窗）：顶栏页签切换，按 pageW 铺满，
+//     一排排按钮平铺（不折叠）；高度扣掉摇杆带 → 与摇杆区**明确分上下**
+//   · 双摇杆**永远悬浮在屏幕两个下角**，半径比上一版缩小（短边 0.15、上限 88dp），
+//     把纵向空间让给动作库；两杆中间的空档显示"指令发给谁"（单控 / 群控）
+//   · 设备 / 设置 / 日志 仍是弹窗，打开时**盖住摇杆带**（摇杆那一帧不画）
+//   · 顶栏：页签（遥控 / 动作库）+ 单控 / 群控 + 设备 / 设置 / 日志 + ■ 急停
 // ============================================================================
 
 namespace {
 
-// 弹窗 ID（同一个 ID 栈里要唯一）
+// 弹窗 ID（同一个 ID 栈里要唯一）。动作库**不是弹窗**了 —— 它是常驻页面，没有 ID。
 constexpr const char* kIdDevices = "设备##dlg";
-constexpr const char* kIdActions = "动作库##dlg";
 constexpr const char* kIdSettings = "设置##dlg";
 constexpr const char* kIdLog = "日志##dlg";
 
@@ -618,42 +875,120 @@ constexpr ImGuiWindowFlags kPopupFlags = ImGuiWindowFlags_NoResize |
                                          ImGuiWindowFlags_NoTitleBar |
                                          ImGuiWindowFlags_NoSavedSettings;
 
+// ---------------------------------------------------------------- 顶栏与全局操作
+/// 名称文件只在第一次画界面时读一次（桌面与安卓共用这条路径，入口不用各自记得初始化）
+void ensureNamesLoaded(UiState& ui) {
+    static bool loaded = false;
+    if (loaded) return;
+    loaded = true;
+    ui.loadNames();
+}
+
+/// 群控：全选（指令只发给已就绪的）
+void selectGroupAll(UiState& ui) {
+    const int n = ui.selectAll();
+    ui.addLog("[群控] 全选 " + std::to_string(n) + " 台（指令只发给已就绪的）");
+}
+
+/// 单控：只控制这一台（其余全部取消勾选）
+void selectOne(UiState& ui, const std::string& ip) {
+    const std::string nm = ui.nameOf(ip);
+    ui.selectOnly(ip);
+    ui.addLog("[单控] 只控制 " + ip + (nm.empty() ? "" : "（" + nm + "）"));
+}
+
+/// 急停（锁定式）：停**全部就绪**的机器狗（不只勾选的）+ 逐个关掉我们打开过的「持续模式」开关。
+/// ★ 顶栏和遥控页两个入口共用这一份实现 —— 免得两处行为悄悄分叉（急停是安全项，不能有差异）。
+void triggerEstop(RobotManager& mgr, UiState& ui) {
+    ui.estop = true;
+    std::vector<RobotEntry> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(ui.robotsMutex);
+        snapshot = ui.robots;
+    }
+    // 直接（同步、最快）：先停速度
+    int n = 0;
+    for (const auto& e : snapshot)
+        if (auto* c = mgr.find(e.ip); c && c->isReady() && c->stopMove()) ++n;
+
+    // 只关"我们真正打开过"的开关 —— 连按急停也不会把通道灌爆
+    //（上一版每次关 20 个，连按十几次 → 260 条指令把 SCTP 队列打满，指令反而被丢）
+    const std::vector<int> toClose(ui.activeToggleIds.begin(), ui.activeToggleIds.end());
+    if (!ui.estopBusy.exchange(true)) {
+        std::thread([&mgr, &ui, snapshot, toClose] {
+            // 狗在执行动作时可能吞掉第一条 StopMove → 补发两次
+            for (int round = 0; round < 2; ++round) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(330));
+                for (const auto& e : snapshot)
+                    if (auto* c = mgr.find(e.ip); c && c->isReady()) c->stopMove();
+            }
+            if (!toClose.empty())
+                for (const auto& e : snapshot)
+                    if (auto* c = mgr.find(e.ip); c && c->isReady())
+                        c->disablePersistentModes(toClose);
+            ui.estopBusy = false;
+        }).detach();
+    }
+    for (auto& kv : ui.toggles) kv.second = false;
+    ui.activeToggleIds.clear();
+    ui.movingSent = false;
+    ui.addLog("[急停] 已锁定：停车 " + std::to_string(n) + " 台 + 关闭 " +
+              std::to_string(toClose.size()) + " 个已开启的模式；连按不会叠加");
+}
+
 // ---------------------------------------------------------------- 顶栏
-// 品牌 + 受控状态 + 四个入口按钮（设备 / 动作库 / 设置 / 日志）
+// 一行（宽松屏）：品牌 · 受控状态 | 遥控 动作库 | 设备 设置 日志 | ■ 急停
+// 两行（C 档极窄屏）：第一行 状态 + 急停；第二行 遥控 动作库 + 设备 设置 日志
+//
+// ★「单控 / 群控」已按用户要求挪到**两个摇杆中间**（见 drawJoysticks 的摇杆带面板），
+//   顶栏因此从 8 个按钮减到 6 个，宽松屏上每个按钮更宽、更好点。
 void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
-    (void)mgr;
     ImGui::BeginChild("top", ImVec2(0, L.topBarH), ImGuiChildFlags_Borders);
 
-    if (L.showBrand) {
-        FontScope fs = fontTitle();
-        ImGui::TextUnformatted("Go2 控制台");
-        ImGui::SameLine();
-    }
-    {
-        const int sel = ui.selectedCount();
-        const int total = static_cast<int>(ui.robots.size());
-        const std::string s = std::to_string(sel) + "/" + std::to_string(total) + " 台受控";
-        chip(s.c_str(), sel > 0 ? col::kAccent : col::kIdle);
-        ImGui::SameLine();
-    }
-
-    // 四个入口按钮靠右排
-    const float need = L.topBtnW * 4.0f + 24.0f;
-    const float avail = ImGui::GetContentRegionAvail().x;
-    if (avail > need) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - need);
-
     const ImVec2 bs(L.topBtnW, L.topBtnH);
-    // 按钮只登记"一次性请求"，真正的 OpenPopup 由 drawUi 在主窗口层级做 ——
-    // 在子窗口里直接 OpenPopup 会因为 ID 栈前缀不同而和 BeginPopupModal 对不上。
-    // badge > 0 时在按钮右上角画一个红色角标（用于「日志」提醒有新异常）。
-    const auto entry = [&](const char* label, int req, bool open, ImVec4 tint, int badge = 0) {
-        if (open) ImGui::PushStyleColor(ImGuiCol_Button, tint);
+    const float sp = ImGui::GetStyle().ItemSpacing.x;
+    const ImVec4 accent(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.80f);
+    const ImVec4 red(0.78f, 0.16f, 0.16f, 1.0f);
+    const int sel = ui.selectedCount();
+    const int total = static_cast<int>(ui.robots.size());
+
+    // 把接下来的 n 个按钮推到右端（两边留白，别贴着边）
+    const auto alignRight = [&](int n) {
+        const float need = L.topBtnW * static_cast<float>(n) + sp * static_cast<float>(n - 1);
+        const float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > need) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - need));
+    };
+    // 高亮按钮：active = 当前就是这一页
+    const auto hiBtn = [&](const char* label, bool active) {
+        if (active) ImGui::PushStyleColor(ImGuiCol_Button, accent);
         const bool hit = ImGui::Button(label, bs);
-        if (open) ImGui::PopStyleColor();
-        if (hit) ui.popupRequest = req;
-        if (badge > 0) {
+        if (active) ImGui::PopStyleColor();
+        return hit;
+    };
+    const auto plainBtn = [&](const char* label) { return ImGui::Button(label, bs); };
+
+    const auto statusChip = [&] {
+        const std::string s = (sel == 0) ? std::string("未选择受控")
+                                         : std::to_string(sel) + "/" + std::to_string(total) +
+                                               " 台受控";
+        chip(s.c_str(), sel > 0 ? col::kAccent : col::kIdle);
+    };
+    const auto estopBtn = [&] {
+        ImGui::PushStyleColor(ImGuiCol_Button, red);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.22f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.00f, 0.32f, 0.32f, 1.0f));
+        const bool hit = ImGui::Button(ui.estop ? "已急停" : "■ 急停", bs);
+        ImGui::PopStyleColor(3);
+        return hit;
+    };
+    // 日志按钮：有新异常时右上角画红色角标（日志弹窗没开也能发现出错）
+    const auto logBtn = [&] {
+        const bool hit = ImGui::Button("日志", bs);
+        const int unread =
+            (ui.problemCount > ui.problemSeen) ? (ui.problemCount - ui.problemSeen) : 0;
+        if (unread > 0) {
             char t[8];
-            std::snprintf(t, sizeof(t), badge > 99 ? "99+" : "%d", badge);
+            std::snprintf(t, sizeof(t), unread > 99 ? "99+" : "%d", unread);
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const ImVec2 mn = ImGui::GetItemRectMin();
             const ImVec2 mx = ImGui::GetItemRectMax();
@@ -665,27 +1000,60 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
             dl->AddText(ImGui::GetFont(), fs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f),
                         ImGui::GetColorU32(ImVec4(1, 1, 1, 1)), t);
         }
+        return hit;
     };
 
-    // 有新异常时给「日志」按钮加角标（日志弹窗没打开也能发现出错）
-    const int unread = (ui.problemCount > ui.problemSeen) ? (ui.problemCount - ui.problemSeen) : 0;
+    const auto goPage = [&](UiPage p) {
+        if (ui.page == p) return;
+        ui.page = p;
+        ui.addLog(std::string("[UI] 切到") + (p == UiPage::Actions ? "动作库" : "遥控") + "页");
+    };
 
-    entry("设备", 1, ui.showDevices,
-          ImVec4(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.75f));
-    ImGui::SameLine();
-    entry("动作库", 2, ui.showActions,
-          ImVec4(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.75f));
-    ImGui::SameLine();
-    entry("设置", 3, ui.showSettings,
-          ImVec4(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.75f));
-    ImGui::SameLine();
-    entry("日志", 4, ui.showLog, ImVec4(col::kWarn.x, col::kWarn.y, col::kWarn.z, 0.75f), unread);
+    if (L.topTwoRows) {
+        // ---- 第一行：受控状态 + 急停 ----
+        statusChip();
+        ImGui::SameLine();
+        alignRight(1);
+        if (estopBtn()) triggerEstop(mgr, ui);
+        // ---- 第二行：页签 + 工具 ----
+        if (hiBtn("遥控", ui.page == UiPage::Remote)) goPage(UiPage::Remote);
+        ImGui::SameLine();
+        if (hiBtn("动作库", ui.page == UiPage::Actions)) goPage(UiPage::Actions);
+        ImGui::SameLine();
+        alignRight(3);
+        if (plainBtn("设备")) ui.popupRequest = 1;
+        ImGui::SameLine();
+        if (plainBtn("设置")) ui.popupRequest = 2;
+        ImGui::SameLine();
+        if (logBtn()) ui.popupRequest = 3;
+    } else {
+        if (L.showBrand) {
+            FontScope fs = fontTitle();
+            ImGui::TextUnformatted("Go2 控制台");
+            ImGui::SameLine();
+        }
+        statusChip();
+        ImGui::SameLine();
+        alignRight(6);
+        if (hiBtn("遥控", ui.page == UiPage::Remote)) goPage(UiPage::Remote);
+        ImGui::SameLine();
+        if (hiBtn("动作库", ui.page == UiPage::Actions)) goPage(UiPage::Actions);
+        ImGui::SameLine();
+        if (plainBtn("设备")) ui.popupRequest = 1;
+        ImGui::SameLine();
+        if (plainBtn("设置")) ui.popupRequest = 2;
+        ImGui::SameLine();
+        if (logBtn()) ui.popupRequest = 3;
+        ImGui::SameLine();
+        if (estopBtn()) triggerEstop(mgr, ui);
+    }
 
     ImGui::EndChild();
 }
 
 // ---------------------------------------------------------------- 设备弹窗
 void drawDevicePanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
+    touchDragScroll(L);  // 触摸：按住拖动即可滚动（不用去抓右边滚动条）
     // ---- 发现 / 连接（这些按钮原来在顶栏第二行，现在收进设备弹窗）----
     const auto doAddManual = [&mgr, &ui] {
         // 支持一次粘贴多台（逗号 / 分号 / 空格分隔）
@@ -764,25 +1132,45 @@ void drawDevicePanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     drawDeviceList(mgr, ui);
 }
 
-// ---------------------------------------------------------------- 动作库弹窗
-// 一排排按钮平铺：分组只作为小标题，不再折叠收起
-void drawActionLibrary(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
+// ---------------------------------------------------------------- 动作库页（常驻整屏）
+// ★ 动作库是**常驻页面**，不是弹窗：铺满整屏宽度（按 pageW，比遥控页宽），
+//   与下方摇杆带用一条分隔线明确分开；页眉固定不动，只有动作网格滚动。
+//   一排排按钮平铺：分组只作为小标题，不折叠。
+void drawActionPageHeader(UiState& ui) {
+    sectionTitle("动作库");
+    ImGui::SameLine();
+    {
+        FontScope fs = fontSmall();
+        ImGui::TextDisabled("指令发给 %s", ui.controlTargetText().c_str());
+    }
+    ImGui::SameLine(0, 18);
+    if (ImGui::Checkbox("MCF 固件", &ui.mcfMode) && takeTipShown())
+        ui.mcfMode = !ui.mcfMode;  // 长按看说明 → 撤销这次切换
+    helpTip("Go2 Pro 等 MCF 固件使用另一套 api_id（如后空翻 2043 vs 1044）；\n"
+            "选错也没关系：被拒后会用另一套 id 自动重试一次");
+    ImGui::SameLine();
+    if (ImGui::Checkbox("隐藏不支持的", &ui.hideUnsupported) && takeTipShown())
+        ui.hideUnsupported = !ui.hideUnsupported;  // 长按看说明 → 撤销这次切换
+    helpTip("隐藏「试过且被该固件拒绝（code=3203）」的动作，\n"
+            "避免反复点到不存在的指令；取消勾选即可重新显示");
+}
+
+void drawActionPageBody(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     const float actW1 = L.actW1;
     const float actW2 = L.actW2;
     const float actW3 = L.actW3;
     const float actH = L.actH;
-// ---- 宇树动作库（全量指令，见 sport_library.cpp）----
-sectionTitle("宇树动作库");
-ImGui::SameLine();
-if (ImGui::Checkbox("MCF 固件", &ui.mcfMode) && takeTipShown())
-    ui.mcfMode = !ui.mcfMode;  // 长按看说明 → 撤销这次切换
-helpTip("Go2 Pro 等 MCF 固件使用另一套 api_id（如后空翻 2043 vs 1044）；\n"
-        "选错也没关系：被拒后会用另一套 id 自动重试一次");
-ImGui::SameLine();
-if (ImGui::Checkbox("隐藏不支持的", &ui.hideUnsupported) && takeTipShown())
-    ui.hideUnsupported = !ui.hideUnsupported;  // 长按看说明 → 撤销这次切换
-helpTip("隐藏「试过且被该固件拒绝（code=3203）」的动作，\n"
-        "避免反复点到不存在的指令；取消勾选即可重新显示");
+
+// 参数类动作（带滑条的那些）：一行放 2 个、滑条自动撑满格子。
+// 用户反馈"整体太空了" —— 整屏页面上如果每行只有左边一小截滑条，右边全是空白，非常难看。
+const float kParamGap = 12.0f;
+const float paramCellW = (L.actAreaW - kParamGap) * 0.5f;
+const float paramSliderW = std::max(120.0f, paramCellW - actW2 - 9.0f);
+int paramCol = 0;
+const auto paramCell = [&] {
+    if (paramCol % 2 != 0) ImGui::SameLine(0.0f, kParamGap);
+    ++paramCol;
+};
 
 // 当前指令集没有这条（如 MCF 专属指令）时，用另一套 id 兜底，避免"整条动作根本点不到"
 auto resolveId = [&ui](const SportAction& a, bool* fellBack) {
@@ -876,13 +1264,16 @@ struct GroupDef {
     SportGroup g;
     const char* title;
 };
+// ★ 顺序按用户要求：**姿势/动作类放上面，步态类（那几个带滑条的）放最下面**。
+//   理由：常用的是站/趴/打招呼/舞蹈这些"姿势动作"，一眼就能点到；
+//   步态/身高那组每行都带滑条、最占地方，压到页面底部不挡事。
 static const GroupDef kGroups[] = {
     {SportGroup::Basic, "基础姿态"},
-    {SportGroup::Show, "表演动作"},
-    {SportGroup::Gait, "步态 / 速度 / 身高"},
+    {SportGroup::Show, "表演动作 / 姿势"},
     {SportGroup::Stunt, "跳跃特技（危险）"},
     {SportGroup::Query, "状态查询"},
     {SportGroup::Advanced, "其他 / 进阶"},
+    {SportGroup::Gait, "步态 / 速度 / 身高（参数）"},
 };
 
 for (const auto& gd : kGroups) {
@@ -912,7 +1303,10 @@ for (const auto& gd : kGroups) {
 
         // ---- 开关型（持续模式）：画成 开/关 按钮，再点一次即关闭 ----
         // 这类指令是 on/off 语义、会一直生效；StopMove 停不掉，必须带 false 关闭。
+        // 也参与网格排布 —— 整屏页面下一行能放 8 个，让开关单独占一整行会非常空旷。
         if (a.toggle) {
+            if (L.actCols > 1 && (col % L.actCols) != 0) ImGui::SameLine();
+            ++col;
             bool& on = ui.toggles[a.key];
             if (on)
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.55f, 0.28f, 1.0f));
@@ -932,22 +1326,20 @@ for (const auto& gd : kGroups) {
             helpTip("持续模式开关（开启后会一直生效，StopMove 停不掉）\n"
                     "点一下切换开/关；急停会自动把所有开关关掉");
             if (on) ImGui::PopStyleColor();
-            col = 0;
             ImGui::PopID();
             continue;
         }
 
         if (a.param == SportParam::Int || a.param == SportParam::Real) {
             const std::string key = a.key;
+            paramCell();  // 一行放两个参数：滑条撑满格子，右边不留空白
             if (a.param == SportParam::Int) {
                 int* v = (key == "SwitchGait") ? &ui.gaitType : &ui.speedLevel;
-                ImGui::SetNextItemWidth(90);
-                ImGui::SliderInt("##v", v, 0, (key == "SwitchGait") ? 4 : 2);
+                iosSliderInt("##v", v, 0, (key == "SwitchGait") ? 4 : 2, paramSliderW);
             } else {
                 float* v =
                     (key == "FootRaiseHeight") ? &ui.footRaise : &ui.bodyHeight;
-                ImGui::SetNextItemWidth(90);
-                ImGui::SliderFloat("##v", v, 0.0f, 0.35f, "%.2f");
+                iosSliderFloat("##v", v, 0.0f, 0.35f, "%.2f", paramSliderW);
             }
             ImGui::SameLine();
             if (ImGui::Button((label + "##b").c_str(), ImVec2(actW2, actH))) sendAction(a);
@@ -958,15 +1350,16 @@ for (const auto& gd : kGroups) {
         }
 
         if (a.param == SportParam::Euler) {
-            ImGui::SetNextItemWidth(62);
-            ImGui::SliderFloat("roll##e", &ui.eulerX, -0.5f, 0.5f, "%.2f");
+            paramCol = 0;  // 姿态角占一整行：三个轴 + 发送
+            const float ew = std::max(76.0f, (L.actAreaW - actW2 - 9.0f * 3.0f) / 3.0f);
+            iosSliderFloat("roll##e", &ui.eulerX, -0.5f, 0.5f, "%.2f", ew);
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(62);
-            ImGui::SliderFloat("pitch##e", &ui.eulerY, -0.5f, 0.5f, "%.2f");
+            iosSliderFloat("pitch##e", &ui.eulerY, -0.5f, 0.5f, "%.2f", ew);
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(62);
-            ImGui::SliderFloat("yaw##e", &ui.eulerZ, -0.6f, 0.6f, "%.2f");
-            if (ImGui::Button((label + "##b").c_str(), ImVec2(-1, 0))) sendAction(a);
+            iosSliderFloat("yaw##e", &ui.eulerZ, -0.6f, 0.6f, "%.2f", ew);
+            ImGui::SameLine();
+            // 按钮宽度用格子宽（不是 -1 全宽）：整屏页面上全宽按钮会被拉成一条长横条
+            if (ImGui::Button((label + "##b").c_str(), ImVec2(actW2, actH))) sendAction(a);
             actionTip(id);
             col = 0;
             ImGui::PopID();
@@ -974,7 +1367,9 @@ for (const auto& gd : kGroups) {
         }
 
         if (a.param == SportParam::Json) {
-            ImGui::SetNextItemWidth(180);
+            paramCol = 0;
+            // 输入框别拉满整行 —— 否则按钮被甩到最右边，看着和输入框没关系
+            ImGui::SetNextItemWidth(std::min(std::max(L.actAreaW * 0.45f, 180.0f), 460.0f));
             ImGui::InputText("##json", ui.rawJson, sizeof(ui.rawJson));
             ImGui::SameLine();
             if (ImGui::Button((label + "##b").c_str(), ImVec2(actW3, actH))) sendAction(a);
@@ -1148,8 +1543,23 @@ ImGui::Separator();
         ImGui::EndDisabled();
 }
 
+/// 动作库页的骨架：固定页眉 + 可滚动的动作网格。
+/// 高度扣掉摇杆带（−joyReserve）—— 内容永远不会渲染到摇杆的地盘上，
+/// 这就是"动作库与摇杆区明确区分上下位置"的落点。
+void drawActionPage(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
+    ImGui::BeginChild("actpage", ImVec2(0, -L.joyReserve), ImGuiChildFlags_Borders);
+    drawActionPageHeader(ui);
+    ImGui::Separator();
+    ImGui::BeginChild("actscroll", ImVec2(0, 0), ImGuiChildFlags_None);
+    touchDragScroll(L);  // 触摸：按住拖动即可滚动（不用去抓右边滚动条）
+    drawActionPageBody(mgr, ui, L);
+    ImGui::EndChild();
+    ImGui::EndChild();
+}
+
 // ---------------------------------------------------------------- 设置弹窗
 void drawSettingsPanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
+    touchDragScroll(L);  // 触摸：按住拖动即可滚动
 // ---- 本地钥匙库（data2=3 新固件；纯本地，不依赖云）----
 sectionTitle("本地钥匙");
 ImGui::SetNextItemWidth(std::min(280.0f, L.popupW - 150.0f));
@@ -1182,90 +1592,49 @@ ImGui::Separator();
 sectionTitle("说明");
 {
     FontScope fs = fontSmall();
-    ImGui::TextDisabled("· 空格键 = 急停（锁定式；双杆回中后可解除）");
+    ImGui::TextDisabled("· 空格键 / 顶栏「■ 急停」= 急停（锁定式；双杆回中后可解除）");
+    ImGui::TextDisabled("· 两个摇杆中间的「单控 / 群控」决定指令发给谁；点「单控」会弹出选狗列表");
+    ImGui::TextDisabled("· 设备卡片「改名」可给每台狗起名（存 robot_names.json，下次启动还在）");
     ImGui::TextDisabled("· 动作被拒会给出原因；指令集不匹配会自动换另一套 id 重试");
     ImGui::TextDisabled("· 「隐藏不支持的」可过滤掉该固件没有的动作");
-    ImGui::TextDisabled("· 阻尼 / 急停在中间「遥控」面板");
+    ImGui::TextDisabled("· 阻尼在「遥控」页（狗仍在自走时的兜底手段：会让它立即软腿趴下）");
 }
 }
 
 // ---------------------------------------------------------------- 遥控主体
 void drawRemotePanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     const bool compactLabel = (L.widthClass == WidthClass::Compact);
-    // 宽屏不把按钮拉得又长又扁：内容居中 + 宽度上限
-    const float availW = ImGui::GetContentRegionAvail().x;
-    if (availW > L.contentMaxW) {
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - L.contentMaxW) * 0.5f);
-    }
-    // ★ 高度直接扣掉「摇杆区」（负值 = 可用高度 − 该值）：
-    //   这样内容**永远不会渲染到摇杆的地盘上**，两个下角永远留给摇杆。
-    //   早期版本只是在末尾加一个 Dummy 留白，内容照样会滚到摇杆下面、被压住。
-    ImGui::BeginChild("remote", ImVec2(L.contentMaxW, -L.joyReserve), ImGuiChildFlags_None);
+    // ★ 铺满：不再居中限宽（用户明确要求"铺满"，居中留白观感太空）。
+    //   高度扣掉摇杆带（负值 = 可用高度 − 该值）：内容**永远不会渲染到摇杆的地盘上**。
+    ImGui::BeginChild("remote", ImVec2(0, -L.joyReserve), ImGuiChildFlags_None);
+    touchDragScroll(L);  // 触摸：手指按住拖动即可滚动（不用去抓右边滚动条）
 sectionTitle("遥控");
 ImGui::SameLine();
 {
     FontScope fs = fontSmall();
-    ImGui::TextDisabled("左杆移动 · 右杆转向 · 松手即停");
+    ImGui::TextDisabled("左杆移动 · 右杆转向 · 松手即停 —— 指令发给：%s",
+                        ui.controlTargetText().c_str());
 }
 ImGui::Spacing();
 
 // 急停：**锁定式**。按下后停全部就绪的机器狗（不只勾选的），
 // 并在解除前让摇杆/快捷步彻底失效 —— 否则下一帧的 10Hz Move 重发会把车又"开起来"。
+// 语义实现在 triggerEstop()（顶栏那个红色「■ 急停」按钮走的是同一份代码）。
 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 11.0f);
 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.78f, 0.16f, 0.16f, 1.0f));
 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.22f, 0.22f, 1.0f));
 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1.00f, 0.32f, 0.32f, 1.0f));
-// 急停是安全关键操作：**永远全宽、永远在视口内**，高度按断点给（矮屏 72 / 竖屏 88 / 多栏 56~64）。
+// 急停是安全关键操作：**永远全宽、永远在视口内**，高度按断点给（矮屏 64 / 竖屏 78 / 桌面 52）。
 // 断线状态下也要能按 —— 所以这里不依赖任何连接状态。
 const bool estopClicked =
     bigButton(compactLabel ? "■  急停" : "■  急停（全部停车 / 空格键）", ImVec2(-1, L.estopH));
 // 记下安全操作区的屏幕矩形：触屏入口拿它做摇杆抓取互斥（手指落在急停上不能被摇杆吃掉）
-ui.safetyMinX = ImGui::GetItemRectMin().x;
-ui.safetyMinY = ImGui::GetItemRectMin().y;
-ui.safetyMaxX = ImGui::GetItemRectMax().x;
-ui.safetyMaxY = ImGui::GetItemRectMax().y;
+ui.addSafetyRect(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y,
+                 ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
 ImGui::PopStyleColor(3);
 ImGui::PopStyleVar();
-// 键盘急停：空格（正在输入框里打字时不触发）
-const bool estopHotkey =
-    !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false);
-
-if (estopClicked || estopHotkey) {
-    ui.estop = true;
-    std::vector<RobotEntry> snapshot;
-    {
-        std::lock_guard<std::mutex> lock(ui.robotsMutex);
-        snapshot = ui.robots;
-    }
-    // 直接（同步、最快）：先停速度
-    int n = 0;
-    for (const auto& e : snapshot)
-        if (auto* c = mgr.find(e.ip); c && c->isReady() && c->stopMove()) ++n;
-
-    // 只关"我们真正打开过"的开关 —— 连按急停也不会把通道灌爆
-    // （上一版每次关 20 个，连按十几次 → 260 条指令把 SCTP 队列打满，指令反而被丢）
-    const std::vector<int> toClose(ui.activeToggleIds.begin(), ui.activeToggleIds.end());
-    if (!ui.estopBusy.exchange(true)) {
-        std::thread([&mgr, &ui, snapshot, toClose] {
-            // 狗在执行动作时可能吞掉第一条 StopMove → 补发两次
-            for (int round = 0; round < 2; ++round) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(330));
-                for (const auto& e : snapshot)
-                    if (auto* c = mgr.find(e.ip); c && c->isReady()) c->stopMove();
-            }
-            if (!toClose.empty())
-                for (const auto& e : snapshot)
-                    if (auto* c = mgr.find(e.ip); c && c->isReady())
-                        c->disablePersistentModes(toClose);
-            ui.estopBusy = false;
-        }).detach();
-    }
-    for (auto& kv : ui.toggles) kv.second = false;
-    ui.activeToggleIds.clear();
-    ui.movingSent = false;
-    ui.addLog("[急停] 已锁定：停车 " + std::to_string(n) + " 台 + 关闭 " +
-              std::to_string(toClose.size()) + " 个已开启的模式；连按不会叠加");
-}
+// 键盘急停（空格）在 drawUi 里统一处理 —— 动作库页也必须能按空格停车
+if (estopClicked) triggerEstop(mgr, ui);
 
 // 兜底：狗仍在自走时，阻尼是唯一能"立即停住"的手段 —— 狗会软腿趴下，需二次确认
 // 阻尼与急停保持 ≥12dp 间距（靠 ItemSpacing 缩放后天然满足），避免误触
@@ -1294,7 +1663,8 @@ if (estopClicked || estopHotkey) {
         if (ImGui::SmallButton("取消")) ui.dampArmed = false;
     }
     // 阻尼按钮也算安全操作区（它是"狗仍在自走"时唯一能立即停住的手段）
-    ui.safetyMaxY = std::max(ui.safetyMaxY, ImGui::GetItemRectMax().y);
+    ui.addSafetyRect(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y,
+                     ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
 }
 
 if (ui.estop) {
@@ -1321,59 +1691,78 @@ if (ui.estop) {
 
 ImGui::Spacing();
 
+// ---- 参数 / 快捷：铺满之后"一行只放一个控件"会显得很空 → 宽屏左右两栏 ----
 const bool canMove = ui.selectedCount() > 0;
 
-ImGui::Spacing();
-// ---- 参数：宽屏常显；矮屏 / 单栏收进「参数」折叠区，把纵向空间让给急停和摇杆 ----
-// （「步速」滑条在下面的快捷区里，那里本来就要跟方向键放一起，所以不重复）
-const auto drawParamSliders = [&] {
+const auto drawParams = [&] {
+    sectionTitle("参数");
     ImGui::BeginDisabled(!canMove);
-    ImGui::SetNextItemWidth(L.sliderW);
-    ImGui::SliderFloat("线速度上限", &ui.maxLinSpeed, 0.05f, 1.5f, "%.2f m/s");
-    ImGui::SetNextItemWidth(L.sliderW);
-    ImGui::SliderFloat("转向角速度", &ui.yawRate, 0.2f, 2.0f, "%.2f rad/s");
+    paramRowF("线速度上限", &ui.maxLinSpeed, 0.05f, 1.5f, "%.2f m/s", 0.60f);
+    paramRowF("转向角速度", &ui.yawRate, 0.2f, 2.0f, "%.2f rad/s", 1.20f);
+    paramRowF("快捷步速", &ui.speedScale, 0.05f, 1.5f, "%.2f", 0.50f);
     ImGui::EndDisabled();
 };
-if (L.paramInline) {
-    drawParamSliders();
-} else if (ImGui::CollapsingHeader("参数（线速度 / 角速度）")) {
-    drawParamSliders();
-}
 
-// ---- 快捷单步（急停锁定期间不可用）----
-ImGui::Spacing();
-ImGui::TextDisabled("快捷（一次下发，速度持续到下一条指令）");
-ImGui::BeginDisabled(!canMove || ui.estop);
-{
-    const float halfW = (ImGui::GetContentRegionAvail().x - 9.0f) * 0.5f;
-    // 触摸时按钮高按断点给（≥48dp）；鼠标保持原来的 38
-    const ImVec2 bs(halfW, L.btnH > 0.0f ? L.btnH + 6.0f : 38.0f);
-    if (ImGui::Button("▲  前进", bs)) {
-        const int n = forEachSelected(mgr, ui,
-            [v = ui.speedScale](RobotClient& c) { return c.move(v, 0, 0); });
-        ui.addLog("[群控] 前进 → " + std::to_string(n) + " 台");
-    }
+// 快捷方向键按 D-pad 排：上行「前进」居中，下行「左转 / 后退 / 右转」——
+// 铺满整屏后比"两个一行"更直观，纵向也只占两行。
+const auto drawQuick = [&] {
+    sectionTitle("快捷");
     ImGui::SameLine();
-    if (ImGui::Button("◀  左转", bs)) {
-        const int n = forEachSelected(mgr, ui,
-            [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, v); });
-        ui.addLog("[群控] 左转 → " + std::to_string(n) + " 台");
+    {
+        FontScope fs = fontSmall();
+        ImGui::TextDisabled("一次下发，速度持续到下一条指令");
     }
-    if (ImGui::Button("▼  后退", bs)) {
-        const int n = forEachSelected(mgr, ui,
-            [v = ui.speedScale](RobotClient& c) { return c.move(-v, 0, 0); });
-        ui.addLog("[群控] 后退 → " + std::to_string(n) + " 台");
+    ImGui::BeginDisabled(!canMove || ui.estop);
+    {
+        const float gap = 9.0f;
+        const float bw = (ImGui::GetContentRegionAvail().x - gap * 2.0f) / 3.0f;
+        const float bh = L.btnH > 0.0f ? L.btnH + 6.0f : 38.0f;
+        const float x0 = ImGui::GetCursorPosX();
+        ImGui::SetCursorPosX(x0 + bw + gap);  // 上行只放"前进"，保持在中间那一格
+        if (ImGui::Button("▲  前进", ImVec2(bw, bh))) {
+            const int n = forEachSelected(mgr, ui,
+                [v = ui.speedScale](RobotClient& c) { return c.move(v, 0, 0); });
+            ui.addLog("[群控] 前进 → " + std::to_string(n) + " 台");
+        }
+        ImGui::SetCursorPosX(x0);
+        if (ImGui::Button("◀  左转", ImVec2(bw, bh))) {
+            const int n = forEachSelected(mgr, ui,
+                [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, v); });
+            ui.addLog("[群控] 左转 → " + std::to_string(n) + " 台");
+        }
+        ImGui::SameLine(0.0f, gap);
+        if (ImGui::Button("▼  后退", ImVec2(bw, bh))) {
+            const int n = forEachSelected(mgr, ui,
+                [v = ui.speedScale](RobotClient& c) { return c.move(-v, 0, 0); });
+            ui.addLog("[群控] 后退 → " + std::to_string(n) + " 台");
+        }
+        ImGui::SameLine(0.0f, gap);
+        if (ImGui::Button("右转  ▶", ImVec2(bw, bh))) {
+            const int n = forEachSelected(mgr, ui,
+                [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, -v); });
+            ui.addLog("[群控] 右转 → " + std::to_string(n) + " 台");
+        }
     }
-    ImGui::SameLine();
-    if (ImGui::Button("右转  ▶", bs)) {
-        const int n = forEachSelected(mgr, ui,
-            [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, -v); });
-        ui.addLog("[群控] 右转 → " + std::to_string(n) + " 台");
+    ImGui::EndDisabled();
+};
+
+// 宽屏且纵向够 → 参数与快捷并排（把横向空间用起来）；否则依次往下排
+if (L.paramInline && L.pageW >= 900.0f) {
+    if (ImGui::BeginTable("remoteMain", 2,
+                          ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX)) {
+        ImGui::TableNextColumn();
+        drawParams();
+        ImGui::TableNextColumn();
+        drawQuick();
+        ImGui::EndTable();
     }
-    ImGui::SetNextItemWidth(std::min(150.0f, L.sliderW * 0.6f));
-    ImGui::SliderFloat("步速", &ui.speedScale, 0.05f, 1.5f, "%.2f");
+} else {
+    if (L.paramInline)
+        drawParams();
+    else if (ImGui::CollapsingHeader("参数（线速度 / 角速度 / 步速）"))
+        drawParams();
+    drawQuick();
 }
-ImGui::EndDisabled();
 
 // ---- 当前指令与发送节拍 ----
 // 决策全部交给纯函数 planMotion（急停语义有单元测试保证，见 tests/motion_test.cpp）
@@ -1397,6 +1786,59 @@ ImGui::Spacing();
                                  : (plan.send ? "下发中 · 10Hz" : "松手即停");
     const ImVec4 sc = ui.estop ? col::kErr : (plan.send ? col::kOk : col::kIdle);
     readout(state, buf, sc);
+}
+
+// ---- 受控设备一览（铺满之后下方本来就空着，这里顺便让"指令发给谁"一目了然）----
+ImGui::Spacing();
+sectionTitle("受控设备");
+ImGui::SameLine();
+{
+    FontScope fs = fontSmall();
+    ImGui::TextDisabled("%s —— 在摇杆带中间的「单控 / 群控」里切换",
+                        ui.controlTargetText().c_str());
+}
+{
+    std::vector<RobotEntry> snap;
+    {
+        std::lock_guard<std::mutex> lock(ui.robotsMutex);
+        snap = ui.robots;
+    }
+    int shown = 0;
+    for (const auto& e : snap) {
+        if (!ui.isSelected(e.ip)) continue;
+        ++shown;
+        ImGui::PushID(e.ip.c_str());
+        RobotClient* c = mgr.find(e.ip);
+        const ConnState st = c ? c->state() : ConnState::Disconnected;
+        const ImVec4 stc = stateColor(st);
+        statusDot(stc);
+        ImGui::SameLine(0, 6);
+        {
+            FontScope fs = fontBody();
+            ImGui::TextColored(stc, "%s", maskIps(ui.labelOf(e.ip), ui.privacyMode).c_str());
+        }
+        if (!ui.nameOf(e.ip).empty()) {  // 起了名也把 IP 露出来（排障要用）
+            ImGui::SameLine(0, 8);
+            FontScope fs = fontSmall();
+            ImGui::TextDisabled("%s", maskIps(e.ip, ui.privacyMode).c_str());
+        }
+        ImGui::SameLine(0, 10);
+        chip(stateText(st), stc);
+        ImGui::SameLine(0, 14);
+        batteryBar(e.battery);
+        ImGui::SameLine(0, 8);
+        {
+            FontScope fs = fontSmall();
+            const std::string batt =
+                e.battery >= 0 ? (std::to_string(int(e.battery)) + "%") : "电量 -";
+            ImGui::TextDisabled("%s   模式 %s", batt.c_str(), e.modeName.c_str());
+        }
+        ImGui::PopID();
+    }
+    if (shown == 0) {
+        FontScope fs = fontSmall();
+        ImGui::TextDisabled("（还没有受控设备 —— 点两个摇杆中间的「单控 / 群控」）");
+    }
 }
 
 if (canMove) {
@@ -1433,7 +1875,6 @@ if (canMove) {
 
 // ---------------------------------------------------------------- 日志弹窗
 void drawLogPanel(UiState& ui, const LayoutSpec& L) {
-    (void)L;
 {
     FontScope fs = fontSmall();
     ImGui::Checkbox("自动滚动", &ui.autoScroll);
@@ -1450,6 +1891,7 @@ ImGui::Spacing();
 const bool wrapLog = true;  // 弹窗里一律软换行
 ImGui::BeginChild("logscroll", ImVec2(0, 0), ImGuiChildFlags_None,
                   wrapLog ? ImGuiWindowFlags_None : ImGuiWindowFlags_HorizontalScrollbar);
+touchDragScroll(L);  // 触摸：按住拖动即可滚动
 {
     std::lock_guard<std::mutex> lock(ui.logMutex);
     FontScope fs = fontSmall();
@@ -1467,7 +1909,11 @@ if (ui.autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f)
 ImGui::EndChild();
 }
 
-// ---------------------------------------------------------------- 四个弹窗
+// ---------------------------------------------------------------- 三个弹窗（设备 / 设置 / 日志）
+// ★ 弹窗要"覆盖在摇杆区域上方"：几何上按整屏居中（layout 里 popupH 取整屏的 90%），
+//   绘制上**摇杆那一帧直接不画**（见 drawJoysticks 的 modalOpen 判断）——
+//   否则悬浮摇杆画在前景层，永远压在弹窗上面，弹窗就成了"半遮半掩"。
+//   （动作库不再是弹窗：它是常驻整屏页面，见 drawActionPage。）
 void drawPopups(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     const ImVec2 ds = ImGui::GetIO().DisplaySize;
     const auto place = [&] {
@@ -1490,20 +1936,15 @@ void drawPopups(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
 
     place();
     if (ImGui::BeginPopupModal(kIdDevices, &ui.showDevices, kPopupFlags)) {
+        ui.modalOpen = true;  // 弹窗盖住摇杆带（摇杆这一帧不画、不响应）
         header("设备");
         drawDevicePanel(mgr, ui, L);
         ImGui::EndPopup();
     }
 
     place();
-    if (ImGui::BeginPopupModal(kIdActions, &ui.showActions, kPopupFlags)) {
-        header("动作库");
-        drawActionLibrary(mgr, ui, L);
-        ImGui::EndPopup();
-    }
-
-    place();
     if (ImGui::BeginPopupModal(kIdSettings, &ui.showSettings, kPopupFlags)) {
+        ui.modalOpen = true;
         header("设置");
         drawSettingsPanel(mgr, ui, L);
         ImGui::EndPopup();
@@ -1511,6 +1952,7 @@ void drawPopups(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
 
     place();
     if (ImGui::BeginPopupModal(kIdLog, &ui.showLog, kPopupFlags)) {
+        ui.modalOpen = true;
         ui.problemSeen = ui.problemCount;  // 打开日志就算"看过了"，顶栏角标随之清掉
         header("运行日志");
         drawLogPanel(ui, L);
@@ -1554,9 +1996,19 @@ bool joystickHitArea(const char* id, ImVec2 center, float radius, float* x, floa
     return active;
 }
 
-/// 画两个摇杆 + 处理鼠标输入。**必须在主窗口 End() 之后调用**。
-/// 视觉画到前景层（GetForegroundDrawList）—— 永远盖在所有窗口与弹窗之上。
-void drawJoysticks(UiState& ui, const LayoutSpec& L) {
+/// 画两个摇杆 + 两杆中间的「单控 / 群控」面板。**必须在主窗口 End() 之后调用**。
+/// 视觉画到前景层（GetForegroundDrawList）—— 页面内容永远盖不住它；
+/// 但**弹窗打开时整条摇杆带不画**（用户要求：其余弹窗统一覆盖在摇杆区域上方）。
+void drawJoysticks(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
+    // ★ 弹窗盖住摇杆带：不画、不响应、数值清零。
+    //   数值必须清零 —— 否则"推着摇杆时点开设备弹窗"会让摇杆值一直保持住、狗继续走。
+    //   （movingSent 故意留在原值：下一帧遥控页会因此补发一次 StopMove）
+    if (ui.modalOpen) {
+        ui.joyLx = ui.joyLy = ui.joyRx = ui.joyRy = 0.0f;
+        ui.joyLActive = ui.joyRActive = false;
+        return;
+    }
+
     float lx = ui.joyLx, ly = ui.joyLy, rx = ui.joyRx, ry = ui.joyRy;
     bool lActive = ui.joyLActive, rActive = ui.joyRActive;
 
@@ -1577,6 +2029,8 @@ void drawJoysticks(UiState& ui, const LayoutSpec& L) {
     }
 
     ImDrawList* fg = ImGui::GetForegroundDrawList();
+    // 注：摇杆带上沿曾经画过一条分隔线 + 极淡底板，用户要求去掉（"摇杆上面不要分界线"）——
+    // 页面内容本来就通过 -joyReserve 让开了位置，不需要再画线提示。
     const float cxL = L.joyInsetX;
     const float cxR = L.screenW - L.joyInsetX;
     drawJoystickAt("##joyL", fg, cxL, L.joyCenterY, L.joyRadius, lx, ly, lActive);
@@ -1594,13 +2048,110 @@ void drawJoysticks(UiState& ui, const LayoutSpec& L) {
                     ImVec2(xs[i] - sz.x * 0.5f, L.joyCenterY + L.joyRadius + 8.0f), dim,
                     labels[i]);
     }
+
+    // ---- 两杆中间：「单控 / 群控」面板（用户要求按钮放这里）----
+    // 一个独立小窗（画在最后 → 在所有窗口之上），里面是：
+    //   [单控] [群控]      ← 点「单控」弹出选狗列表（用户要求"单控要能选机械狗"）
+    //   单控 · 火烈鸟        ← 当前指令发给谁
+    // 空档太窄（手机竖屏）时两个按钮竖排；面板宽高由 layout 给，保证不会压到摇杆。
+    {
+        const float gapW = L.joyGapMaxX - L.joyGapMinX;
+        if (gapW > 40.0f) {
+            const float cx = (L.joyGapMinX + L.joyGapMaxX) * 0.5f;
+            // ★ 面板整块登记为"手指优先给 ImGui"的安全区：否则窄屏手机上
+            //   落在面板上的手指会被摇杆的抓取圈吃掉，按钮点不动。
+            ui.addSafetyRect(cx - L.joyPanelW * 0.5f, L.joyCenterY - L.joyPanelH * 0.5f,
+                             cx + L.joyPanelW * 0.5f, L.joyCenterY + L.joyPanelH * 0.5f);
+            ImGui::SetNextWindowPos(
+                ImVec2(cx - L.joyPanelW * 0.5f, L.joyCenterY - L.joyPanelH * 0.5f),
+                ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(L.joyPanelW, L.joyPanelH), ImGuiCond_Always);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.078f, 0.094f, 0.118f, 0.92f));
+            // ⚠️ 千万**不要**加 ImGuiWindowFlags_NoBringToFrontOnFocus：
+            //    实测（用 imgui_internal.h 打窗口顺序）它会让本窗永远排在最底层，
+            //    主窗口（整屏不透明）于是把整个面板盖掉 —— 现象就是"面板消失"。
+            ImGui::Begin("##joyPanel", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoScrollWithMouse |
+                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus);
+            {
+                const int sel = ui.selectedCount();
+                const float cw = ImGui::GetContentRegionAvail().x;
+                const float bh = L.topBtnH;
+                const float bw = L.joyPanelStack ? cw : (cw - 8.0f) * 0.5f;
+                const auto panelBtn = [&](const char* label, bool active, const ImVec2& size) {
+                    if (active)
+                        ImGui::PushStyleColor(ImGuiCol_Button,
+                                              ImVec4(col::kAccent.x, col::kAccent.y,
+                                                     col::kAccent.z, 0.85f));
+                    const bool hit = ImGui::Button(label, size);
+                    if (active) ImGui::PopStyleColor();
+                    return hit;
+                };
+                if (panelBtn("单控", sel == 1, ImVec2(bw, bh))) ImGui::OpenPopup("##pick");
+                if (L.joyPanelStack) {
+                    if (panelBtn("群控", sel > 1, ImVec2(bw, bh))) selectGroupAll(ui);
+                } else {
+                    ImGui::SameLine(0.0f, 8.0f);
+                    if (panelBtn("群控", sel > 1, ImVec2(bw, bh))) selectGroupAll(ui);
+                }
+                // 当前受控对象（居中一行小字）
+                {
+                    FontScope fs = fontSmall();
+                    const std::string t = ui.controlTargetText();
+                    const float tw = ImGui::CalcTextSize(t.c_str()).x;
+                    if (tw < cw)
+                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                                             std::max(0.0f, (cw - tw) * 0.5f));
+                    ImGui::TextColored(sel == 0 ? col::kDim
+                                                : (sel == 1 ? col::kAccent : col::kOk),
+                                       "%s", t.c_str());
+                }
+                // ---- 单控：选哪一台 ----
+                if (ImGui::BeginPopup("##pick")) {
+                    ImGui::TextDisabled("选择要单控的机器狗");
+                    ImGui::Separator();
+                    std::vector<RobotEntry> snap;
+                    {
+                        std::lock_guard<std::mutex> lock(ui.robotsMutex);
+                        snap = ui.robots;
+                    }
+                    if (snap.empty()) {
+                        ImGui::TextDisabled("（列表为空 —— 先去「设备」里扫描 / 添加）");
+                    } else {
+                        for (const auto& e : snap) {
+                            RobotClient* c = mgr.find(e.ip);
+                            const ConnState st = c ? c->state() : ConnState::Disconnected;
+                            const std::string nm = ui.nameOf(e.ip);
+                            std::string label = (nm.empty() ? e.ip : nm + "   " + e.ip);
+                            label += std::string("   ") + stateText(st);
+                            if (ImGui::Selectable(label.c_str(), ui.isSelected(e.ip))) {
+                                selectOne(ui, e.ip);
+                                ImGui::CloseCurrentPopup();
+                            }
+                        }
+                    }
+                    ImGui::EndPopup();
+                }
+            }
+            ImGui::End();
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar(2);
+        }
+    }
 }
 
 }  // namespace
 
 // ============================================================ 主界面
 void drawUi(RobotManager& mgr, UiState& ui) {
-    ui.sideHold = 0;  // 每帧重置：只有"按住侧移按钮"的那一帧会被置位
+    ui.sideHold = 0;          // 每帧重置：只有"按住侧移按钮"的那一帧会被置位
+    ui.safetyRectCount = 0;   // 安全区矩形每帧重登（急停/阻尼/摇杆带面板，见 addSafetyRect）
+    rollDragFlags();          // 拖动型控件标记翻帧（touchDragScroll 要用上一帧的）
+    ensureNamesLoaded(ui);    // 名字文件只读一次（桌面 / 安卓共用这条路径）
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
@@ -1622,26 +2173,35 @@ void drawUi(RobotManager& mgr, UiState& ui) {
     const LayoutSpec& L = ui.layout;
     g_touchUi = L.touch;  // 提示文案：鼠标悬停显示 / 触摸长按显示
 
-    drawTopBar(mgr, ui, L);       // 顶栏：品牌 + 状态 + 四个入口按钮
-    drawRemotePanel(mgr, ui, L);  // 主界面：遥控（居中 + 宽度上限）
+    // 空格 = 急停：**两个页面都要能按** —— 动作库里全是危险动作，
+    // 急停不能只活在遥控页（正在输入框里打字时不触发）。
+    if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false))
+        triggerEstop(mgr, ui);
+
+    drawTopBar(mgr, ui, L);  // 顶栏：页签 + 单控/群控 + 设备/设置/日志 + ■ 急停
+    if (ui.page == UiPage::Actions)
+        drawActionPage(mgr, ui, L);  // 动作库：**常驻整屏页面**（与摇杆带分上下）
+    else
+        drawRemotePanel(mgr, ui, L);  // 遥控：居中 + 宽度上限
 
     // 弹窗要在**主窗口层级**打开：顶栏按钮画在子窗口里，而 ImGui 的弹窗 ID 会带上
     // 子窗口的 ID 栈前缀，直接在子窗口里 OpenPopup 会与这里的 BeginPopupModal 对不上
     //（症状：点按钮没反应，弹窗永远不出现 —— 真机上踩过一次）。
+    ui.modalOpen = false;  // 由 drawPopups 置位：有弹窗时摇杆带被盖住
     switch (ui.popupRequest) {
         case 1: ImGui::OpenPopup(kIdDevices);  ui.showDevices = true;  break;
-        case 2: ImGui::OpenPopup(kIdActions);  ui.showActions = true;  break;
-        case 3: ImGui::OpenPopup(kIdSettings); ui.showSettings = true; break;
-        case 4: ImGui::OpenPopup(kIdLog);      ui.showLog = true;      break;
+        case 2: ImGui::OpenPopup(kIdSettings); ui.showSettings = true; break;
+        case 3: ImGui::OpenPopup(kIdLog);      ui.showLog = true;      break;
         default: break;
     }
     ui.popupRequest = 0;
-    drawPopups(mgr, ui, L);       // 设备 / 动作库 / 设置 / 日志
+    drawPopups(mgr, ui, L);  // 设备 / 设置 / 日志
 
     ImGui::End();
 
-    // ★ 摇杆在最后画、且画到前景层：任何窗口与弹窗都盖不住它
-    drawJoysticks(ui, L);
+    // ★ 摇杆在最后画、且画到前景层：页面内容盖不住它；弹窗打开时整条带子不画。
+    // 两杆中间的「单控 / 群控」面板也在这里（要 mgr 读设备状态）。
+    drawJoysticks(mgr, ui, L);
 }
 
 }  // namespace go2

@@ -40,6 +40,9 @@ tab_dogs_keys.txt
 *_tab_keys.txt
 .go2/
 
+# 界面运行期数据：机器狗自定义名称（存在运行目录，属于本机状态，不入库）
+robot_names.json
+
 # ==== 第三方依赖源码（由构建自动获取，不入库）====
 # 桌面端：CMake FetchContent 自动拉取 imgui / glfw / libdatachannel / httplib / nlohmann_json
 # 安卓端：client/apps/android/setup.sh 自动下载 SDL2 与 imgui

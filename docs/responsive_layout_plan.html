@@ -163,6 +163,123 @@
   </div>
 </section>
 
+<section>
+  <h2><span class="n">!</span>设计变更（第二轮，2026-09-24 深夜；桌面端先行）</h2>
+  <div class="callout warn" style="margin-top:14px">
+    <b>上一版把四个功能全塞进弹窗，弹窗又把摇杆盖在下面。</b> 这一轮把「动作库」提升为常驻页面，
+    并把主界面明确切成<b>上下两块</b>：上 = 页面区（遥控 / 动作库），下 = 摇杆带。
+  </div>
+  <table>
+    <thead><tr><th style="width:30%">要求</th><th>落地结果（落在哪 / 怎么做的）</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>动作库改常驻页面</b>，不用弹窗，铺满整屏</td>
+        <td>新增 <code>UiPage{Remote,Actions}</code> + 顶栏页签；<code>drawActionPage()</code> 用
+          <code>BeginChild(..., -joyReserve)</code> 占满整屏宽（<code>layout.pageW</code>，不受遥控页的
+          <code>contentMaxW = 760dp</code> 限制）。网格列数改按<b>页面宽</b>算（<code>actAreaW</code>，最多 8 列：
+          桌面 1440dp 与平板横屏 1097dp 都是 8 列，手机竖屏 2 列）。开启型开关也回到网格流里，不再各占一整行。</td>
+      </tr>
+      <tr>
+        <td>与摇杆区<b>明确区分上下</b></td>
+        <td>页面高度 = <code>screenH − topBarH − joyReserve</code>（内容永不进入摇杆地盘）；
+          摇杆带上沿画一条分隔线 + 极淡底板，"页面区 / 摇杆带"一眼分开。</td>
+      </tr>
+      <tr>
+        <td>摇杆<b>缩小</b>，给动作库腾空间</td>
+        <td><code>joyRadius = clamp(min(宽,高)×0.15, 52, 88)</code>（上一版 ×0.18 / 上限 112）。
+          摇杆带高度：桌面 254→<b>206dp</b>、平板横屏 278→<b>230dp</b>、手机竖屏 182→<b>159dp</b>。</td>
+      </tr>
+      <tr>
+        <td><b>其余弹窗盖在摇杆区域上方</b></td>
+        <td>弹窗按整屏居中、高度取 <code>viewH×0.90</code>（能盖住摇杆带）；<code>drawPopups()</code> 里置
+          <code>ui.modalOpen</code>，<code>drawJoysticks()</code> 见到它就<b>不画、不响应、数值清零</b>
+          （否则"推着摇杆点开设备弹窗"会让摇杆值保持住、狗继续走）。</td>
+      </tr>
+      <tr>
+        <td>每台狗<b>可改名称</b></td>
+        <td>设备卡片第二行「改名」→ 行内输入框（回车即保存）；名字存 <code>robot_names.json</code>
+          （应用运行目录，与钥匙同规矩：只读写本应用目录）。名称显示在设备卡片与摇杆带中间的受控状态里；
+          起名后仍并列显示 IP（排障要用）。留空 = 恢复显示 IP。</td>
+      </tr>
+      <tr>
+        <td>给<b>群控 / 单控按钮</b>找个合理位置</td>
+        <td>顶栏受控状态 chip 右侧：<code>单控</code>（只留一台：优先保留已选中的，否则第一台就绪的）/
+          <code>群控</code>（全选）—— 当前状态高亮；设备卡片里另有一个「单控」快捷按钮；
+          摇杆带正中显示 <code>单控 · 名字</code> / <code>群控 · N 台</code> 作为即时反馈。</td>
+      </tr>
+      <tr>
+        <td><b>急停两个页面都要能按</b>（顺手补的安全项）</td>
+        <td>顶栏最右端常驻红色 <code>■ 急停</code>（与遥控页的全宽急停共用同一份 <code>triggerEstop()</code>）；
+          <code>空格键</code> 的判定从遥控页移到 <code>drawUi()</code>，动作库页同样有效。窄屏（C 档）顶栏自动拆两行：
+          第一行 状态 + 单控/群控/急停，第二行 页签 + 设备/设置/日志。</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <b>断点参数（本轮）</b>：<code>topBtnW</code> 按 8 个按钮均分（一行放不下 → <code>topTwoRows</code> 拆两行）；
+    <code>pagePad / pageW / pageH / actAreaW / joyGapMinX / joyGapMaxX</code> 为新增字段。
+    <code>layout_test.cpp</code> 的编译期断言已同步（含"两杆之间必须留得下状态文字""页面区高度必须留够"）。
+  </div>
+  <div class="callout warn">
+    <b>同步状态</b>：本轮只改<b>桌面端</b>（<code>ui/ui.cpp</code>、<code>ui/ui.hpp</code>、<code>ui/layout.hpp</code>、
+    <code>tests/layout_test.cpp</code> + 文档）。平板端 <code>apps/android/native/main_android.cpp</code> 待桌面验证通过后再同步，
+    需要补的一处是：<code>ui.modalOpen</code> 为真时不要把手指标成摇杆、也不要把摇杆数值写进 <code>ui</code>。
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">!</span>设计变更（第三轮，2026-09-24 深夜；桌面端先行）</h2>
+  <div class="callout warn" style="margin-top:14px">
+    <b>第二轮把界面切成上下两块之后，用户上手又提了 6 条</b>，这一轮逐条落地（仍只改桌面端）。
+  </div>
+  <table>
+    <thead><tr><th style="width:30%">要求</th><th>落地结果</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>铺满</b>（不要再居中留白）</td>
+        <td>遥控页去掉 760dp 限宽：<code>contentMaxW = pageW</code>；参数与快捷改成「两栏 + D-pad 方向键」，
+          底部新增<b>受控设备一览</b> —— 横向、纵向都不再剩大片空白。</td>
+      </tr>
+      <tr>
+        <td>摇杆上面<b>不要分界线</b></td>
+        <td>删掉摇杆带上沿的分隔线 + 底板（<code>drawJoysticks</code> 里那段 AddRectFilled/AddLine）。</td>
+      </tr>
+      <tr>
+        <td>滑条要<b>苹果风格</b></td>
+        <td>新增 <code>iosSliderFloat/iosSliderInt</code>：灰色胶囊轨道 + 主色填充段 + 白色圆形旋钮、数值居中。
+          ⚠ ImGui 原生滑条只画旋钮、不画"已填充"那一段（<code>SliderBehaviorT</code> 的 <code>out_grab_bb</code> 只是
+          以当前值为中心的方块），所以填充段是<b>自己画在轨道之前</b>的；整数滑条内部走浮点滑条
+          （否则 <code>grab_sz = 行程/(取值范围+1)</code> 会变成一根长条）。</td>
+      </tr>
+      <tr>
+        <td>整体<b>太空</b>：姿势动作放上面、步态放下面</td>
+        <td>组顺序改为「基础姿态 → 表演动作 → 跳跃特技 → 状态查询 → 其他/进阶 → <b>步态·速度·身高</b>（最后）」；
+          参数类动作一行两个、滑条撑满格子（原来每行只有左边一小截滑条，右边全是空白）。</td>
+      </tr>
+      <tr>
+        <td>平板要<b>按住屏幕就能滑</b>（现在只能抓右边滚动条）</td>
+        <td>新增 <code>touchDragScroll(L)</code>：ImGui 只有滚轮滚动、没有拽动滚动，所以自己补——
+          触摸下按住拖动即 <code>SetScrollY</code>；只在 <code>L.touch</code> 时生效，拖控件时不抢
+          （<code>IsAnyItemActive</code>）；用 <code>ImGuiHoveredFlags_ChildWindows</code>，
+          这样在设备卡片那种"不滚动的小子窗"上按住也能滚父窗。已接入：遥控页 / 动作库 / 设备 / 设置 / 日志。</td>
+      </tr>
+      <tr>
+        <td><b>单控 / 群控放两个摇杆中间</b>，且单控要能选机器狗</td>
+        <td>顶栏那两颗按钮挪到摇杆带中间的小面板（顶栏 8 → <b>6</b> 个按钮）：
+          <code>[单控] [群控]</code> + 下方一行当前受控对象；点「单控」弹出设备列表（名称 · IP · 状态）挑一台。
+          面板尺寸由 layout 给（<code>joyPanelW/joyPanelH/joyPanelStack</code>，空档太窄时按钮竖排），保证不压到摇杆。</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="callout err">
+    <b>踩坑（很重要）：摇杆带中间那个面板小窗，千万别加 <code>ImGuiWindowFlags_NoBringToFrontOnFocus</code>。</b>
+    加了以后它永远排在最底层，被整屏不透明的主窗口整个盖住 —— 现象是"面板消失"，
+    但 <code>Begin</code> 返回 true、窗口里也真有顶点（<code>VtxBuffer.Size=40</code>），非常难查。
+    定位手段：临时 <code>#include &lt;imgui_internal.h&gt;</code> 打印 <code>g.Windows[i]</code> 的
+    Name/Hidden/Active 顺序 —— 实测面板在 index 0、主窗口在 index 3，主窗口后画所以把面板盖了。
+  </div>
+</section>
+
 
 <!-- ============================================ 0 -->
 <section>
