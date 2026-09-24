@@ -47,8 +47,8 @@ static_assert(near(kPhonePortrait.fontTitle, 19.0f), "C 档字号 19/16/13");
 // ★ 摇杆：永远悬浮在两下角，且必须完全落在屏幕内、底部让开手势条
 static_assert(near(kPhonePortrait.joyRadius, 64.0f), "摇杆半径 = min(350,820)*0.18，触到 64 下限");
 static_assert(near(kPhonePortrait.joyInsetX, 100.8f), "左内缩 = radius*0.95 + 安全区左 + 20");
-static_assert(near(kPhonePortrait.joyCenterY, 734.0f), "圆心高 = 844-24-64-22");
-static_assert(near(kPhonePortrait.joyReserve, 174.0f), "摇杆区高度 = 直径 + 上下留白");
+static_assert(near(kPhonePortrait.joyCenterY, 726.0f), "圆心高 = 844-24-64-30（底部留出标签位置）");
+static_assert(near(kPhonePortrait.joyReserve, 182.0f), "摇杆区高度 = 直径 + 上下留白 + 标签位");
 static_assert(kPhonePortrait.joyCenterY + kPhonePortrait.joyRadius <=
                   kPhonePortrait.screenH - kPhonePortrait.safe.bottom,
               "★ 摇杆底边必须让开底部安全区（手势条）");
@@ -60,6 +60,9 @@ static_assert(kPhonePortrait.screenH - kPhonePortrait.topBarH - kPhonePortrait.j
               "★ 内容区高度要够（摇杆区不能把内容挤没）");
 static_assert(kPhonePortrait.joyReserve > kPhonePortrait.joyRadius * 2.0f,
               "★ 摇杆区高度要盖住整个摇杆");
+static_assert(kPhonePortrait.joyCenterY + kPhonePortrait.joyRadius + 30.0f <=
+                  kPhonePortrait.screenH - kPhonePortrait.safe.bottom + 0.1f,
+              "★ 摇杆下方要留得下标签（真机上底部安全区为 0 时标签曾被裁掉）");
 static_assert(kPhonePortrait.popupW <= kPhonePortrait.viewW, "弹窗宽不超可用宽");
 static_assert(kPhonePortrait.popupH <= kPhonePortrait.viewH, "弹窗高不超可用高");
 
@@ -72,7 +75,7 @@ static_assert(kPhoneLandscape.heightClass == go2::HeightClass::Short, "366dp 属
 static_assert(!kPhoneLandscape.paramInline, "★ 矮屏内容区只剩 ~154dp → 参数收进折叠区");
 static_assert(near(kPhoneLandscape.estopH, 64.0f), "矮屏急停 64dp");
 static_assert(near(kPhoneLandscape.joyRadius, 65.88f), "摇杆半径 = min(804,366)*0.18");
-static_assert(near(kPhoneLandscape.joyReserve, 177.76f), "摇杆区高度");
+static_assert(near(kPhoneLandscape.joyReserve, 185.76f), "摇杆区高度");
 static_assert(kPhoneLandscape.screenH - kPhoneLandscape.topBarH - kPhoneLandscape.joyReserve >
                   100.0f,
               "★ 矮屏也要留出可用的内容高度");
@@ -90,7 +93,7 @@ static_assert(near(kTabletPortrait.contentMaxW, 700.0f), "内容宽 = 728-28");
 static_assert(kTabletPortrait.paramInline, "平板竖屏内容区够高 → 参数常显");
 static_assert(near(kTabletPortrait.joyRadius, 112.0f), "摇杆半径触到 112dp 上限");
 static_assert(near(kTabletPortrait.joyInsetX, 146.4f), "左内缩 = 112*0.95+20+20");
-static_assert(near(kTabletPortrait.joyReserve, 270.0f), "摇杆区高度");
+static_assert(near(kTabletPortrait.joyReserve, 278.0f), "摇杆区高度");
 static_assert(kTabletPortrait.screenH - kTabletPortrait.topBarH - kTabletPortrait.joyReserve >
                   600.0f,
               "★ 平板竖屏内容区很充裕");
@@ -111,8 +114,8 @@ static_assert(kTabletLandscape.contentMaxW < kTabletLandscape.viewW,
               "★ 宽屏下内容宽度应小于可用宽（靠居中留白，而不是拉满）");
 static_assert(near(kTabletLandscape.joyRadius, 112.0f), "摇杆半径 112dp 上限");
 static_assert(near(kTabletLandscape.joyInsetX, 146.4f), "左内缩");
-static_assert(near(kTabletLandscape.joyCenterY, 528.0f), "圆心高 = 686-24-112-22");
-static_assert(near(kTabletLandscape.joyReserve, 270.0f), "摇杆区高度");
+static_assert(near(kTabletLandscape.joyCenterY, 520.0f), "圆心高 = 686-24-112-30");
+static_assert(near(kTabletLandscape.joyReserve, 278.0f), "摇杆区高度");
 static_assert(kTabletLandscape.joyCenterY + kTabletLandscape.joyRadius <
                   kTabletLandscape.screenH,
               "★ 摇杆完全在屏幕内");
@@ -143,7 +146,7 @@ static_assert(near(kDesktop.fontTitle, 23.0f), "桌面字号 23/18/15");
 static_assert(near(kDesktop.contentMaxW, 760.0f), "★ 桌面内容同样限宽 760dp，居中显示");
 static_assert(near(kDesktop.joyRadius, 112.0f), "桌面摇杆半径 112dp");
 static_assert(near(kDesktop.joyInsetX, 126.4f), "左内缩 = 112*0.95+20");
-static_assert(near(kDesktop.joyCenterY, 746.0f), "圆心高 = 880-112-22");
+static_assert(near(kDesktop.joyCenterY, 738.0f), "圆心高 = 880-112-30");
 static_assert(kDesktop.paramInline, "桌面内容区够高 → 参数常显");
 static_assert(near(kDesktop.popupW, 1000.0f), "弹窗宽触到 1000dp 上限");
 static_assert(kDesktop.popupW < kDesktop.viewW, "弹窗不超可用宽");

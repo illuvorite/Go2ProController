@@ -223,6 +223,60 @@ bool callActivityVoid(const char* method) {
     return ok;
 }
 
+/// 调 Activity 上的 void 方法，带一个 boolean 参数（签名 (Z)V）
+bool callActivityVoidBool(const char* method, bool arg) {
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    if (!env) return false;
+    jobject activity = static_cast<jobject>(SDL_AndroidGetActivity());
+    if (!activity) return false;
+    jclass cls = env->GetObjectClass(activity);
+    if (!cls) return false;
+    jmethodID mid = env->GetMethodID(cls, method, "(Z)V");
+    bool ok = false;
+    if (mid) {
+        env->CallVoidMethod(activity, mid, static_cast<jboolean>(arg));
+        ok = !env->ExceptionCheck();
+        if (!ok) env->ExceptionClear();
+    } else {
+        env->ExceptionClear();  // 同上：必须清掉 pending 异常，否则下次 JNI 调用直接 abort
+        SDL_Log("JNI: 找不到方法 %s(boolean)", method);
+    }
+    env->DeleteLocalRef(cls);
+    return ok;
+}
+
+/// 调 Activity 上的 int[] 方法（签名 ()[I），读回 4 个值。用于取安全区。
+bool callActivityIntArray4(const char* method, int out[4]) {
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    if (!env) return false;
+    jobject activity = static_cast<jobject>(SDL_AndroidGetActivity());
+    if (!activity) return false;
+    jclass cls = env->GetObjectClass(activity);
+    if (!cls) return false;
+    jmethodID mid = env->GetMethodID(cls, method, "()[I");
+    bool ok = false;
+    if (mid) {
+        jintArray arr = static_cast<jintArray>(env->CallObjectMethod(activity, mid));
+        if (!env->ExceptionCheck() && arr) {
+            jint* buf = env->GetIntArrayElements(arr, nullptr);
+            if (buf) {
+                const jsize n = env->GetArrayLength(arr);
+                for (int i = 0; i < 4; ++i) out[i] = (i < n) ? static_cast<int>(buf[i]) : 0;
+                env->ReleaseIntArrayElements(arr, buf, JNI_ABORT);
+                ok = true;
+            }
+            env->DeleteLocalRef(arr);
+        } else {
+            env->ExceptionClear();
+        }
+    } else {
+        env->ExceptionClear();
+        SDL_Log("JNI: 找不到方法 %s()", method);
+    }
+    env->DeleteLocalRef(cls);
+    return ok;
+}
+
 // ---------------------------------------------------------------- 前后台切换
 /// 切后台：**先停车再断开**（安全 + 机器狗同一时刻只允许一条连接），回前台自动重连
 void onEnterBackground(go2::RobotManager& mgr, go2::UiState& ui) {
@@ -381,9 +435,9 @@ int main(int argc, char** argv) {
     // 摇杆数值由触屏层（TouchSticks）驱动：ui 侧只负责画到前景层，不参与输入处理
     //（手指事件在进 ImGui 之前就被 TouchSticks 消费了，ImGui 收不到，也就没法走交互那条路）
     ui.joysticksByPlatform = true;
-    // 安全区（刘海 / 圆角 / 手势条）：先用保守常量 ——
-    // 安卓侧边返回手势区约 20dp、底部手势条约 24dp。
-    // 要精确值需要在 MainActivity 里读 WindowInsets 再经 JNI 传过来。
+    // 安全区（刘海 / 圆角 / 手势条）：先用一组保守常量兜底，启动后马上从系统 WindowInsets
+    // 读真实值（Java 侧 refreshSafeAreaInsets() → getSafeAreaInsets()，单位物理像素，这里换算成 dp）。
+    // 兜底值取安卓侧边返回手势区约 20dp、底部手势条约 24dp。
     ui.safe.top = 0.0f;  // 全屏沉浸式，状态栏已隐藏
     ui.safe.bottom = 24.0f;
     ui.safe.left = 20.0f;
@@ -393,10 +447,23 @@ int main(int argc, char** argv) {
 
     managerWireUp(mgr, ui);  // 见下方定义（回调接线与桌面一致）
     callActivityVoid("acquireMulticastLock");  // 组播发现必需
+    callActivityVoid("refreshSafeAreaInsets");  // 让 Java 侧读一次真实安全区（异步，稍后生效）
+
+    // ---- 遥控时保持屏幕常亮（安全项：操作中息屏会断连）----
+    bool keepScreenOn = false;
+    const auto setKeepScreenOn = [&](bool on) {
+        if (on == keepScreenOn) return;
+        if (callActivityVoidBool("setKeepScreenOn", on)) keepScreenOn = on;
+    };
+    // 启动时显式调一次：既把状态置为"关"，也顺带验证 JNI 方法可用
+    //（MainActivity 里找不到方法时会打 "JNI: 找不到方法" 日志）
+    if (!callActivityVoidBool("setKeepScreenOn", false))
+        ui.addLog("[Android] 警告：保持屏幕常亮不可用（JNI 方法没找到，检查清单里是否是 MainActivity）");
 
     // ---- 主循环 ----
     bool running = true;
     double lastFrame = 0.0;
+    int insetsCountdown = 0;  // 安全区刷新计数（旋转/尺寸变化后重新读）
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -486,6 +553,47 @@ int main(int argc, char** argv) {
         }
         ImGui::NewFrame();
 
+        // ---- 安全区：从系统 WindowInsets 读真实值（物理像素 → dp）----
+        // 旋转 / 分屏后 WindowInsets 会变，所以尺寸一变就重新读；
+        // 另外启动后前 ~1 秒每帧都读几次，等 Java 侧那次异步刷新落地。
+        {
+            static float lastW = -1.0f, lastH = -1.0f;
+            const ImVec2 ds = ImGui::GetIO().DisplaySize;
+            if (ds.x != lastW || ds.y != lastH) {
+                lastW = ds.x;
+                lastH = ds.y;
+                callActivityVoid("refreshSafeAreaInsets");
+                insetsCountdown = 20;  // 之后 20 帧内持续读，等异步结果
+            } else if (insetsCountdown > 0) {
+                --insetsCountdown;
+            } else {
+                // 平时每 30 帧读一次缓存即可（Java 侧是 volatile，开销可忽略）
+                static int idleTick = 0;
+                if (++idleTick % 30 == 0) callActivityVoid("refreshSafeAreaInsets");
+            }
+            int ins[4] = {0, 0, 0, 0};
+            if (callActivityIntArray4("getSafeAreaInsets", ins) && g_pixelScale > 0.01f) {
+                const float l = static_cast<float>(ins[0]) / g_pixelScale;
+                const float t = static_cast<float>(ins[1]) / g_pixelScale;
+                const float r = static_cast<float>(ins[2]) / g_pixelScale;
+                const float b = static_cast<float>(ins[3]) / g_pixelScale;
+                // 变化时打一行日志，方便真机核对（刘海/手势条到底留了多少）
+                static float pl = -1.0f, pt = -1.0f, pr = -1.0f, pb = -1.0f;
+                if (l != pl || t != pt || r != pr || b != pb) {
+                    LOGI("安全区：左 %.0f 上 %.0f 右 %.0f 下 %.0f dp（原始像素 %d/%d/%d/%d）", l, t,
+                         r, b, ins[0], ins[1], ins[2], ins[3]);
+                    pl = l; pt = t; pr = r; pb = b;
+                }
+                ui.safe.left = l;
+                ui.safe.top = t;
+                ui.safe.right = r;
+                ui.safe.bottom = b;
+            }
+        }
+
+        // ---- 遥控时保持屏幕常亮（选中了要控制的狗就常亮；切后台/取消勾选自动关）----
+        setKeepScreenOn(!g_inBackground.load() && ui.selectedCount() > 0);
+
         // 摇杆几何来自断点布局；先把安全操作区交给摇杆做抓取互斥
         //（手指落在急停/阻尼上不能被摇杆吃掉）
         sticks.blockMinX = ui.safetyMinX;
@@ -528,6 +636,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- 退出：停车 + 优雅断开（否则机器狗侧会残留连接）----
+    setKeepScreenOn(false);  // 退出时务必关掉常亮，否则会一直耗电
     ui.addLog("[Android] 退出：停车并断开");
     for (const auto& s : mgr.snapshot())
         if (auto* c = mgr.find(s.ip); c && c->isReady()) c->stopMove();

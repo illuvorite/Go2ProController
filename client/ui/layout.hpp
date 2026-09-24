@@ -110,6 +110,10 @@ constexpr float kHTall = 800.0f;     // R → T
 /// 不加这个，把窗口拖到 900dp 附近会反复横跳。
 constexpr float kHysteresis = 8.0f;
 
+/// 摇杆下方给标签留的高度：标签本身约 16dp + 与圆之间的 8dp 间隔 + 一点余量。
+/// 不给它留位置，真机上（底部安全区为 0 时）标签会被屏幕下边缘裁掉。
+constexpr float kJoyLabelSpace = 30.0f;
+
 constexpr WidthClass rawWidthClass(float w) {
     if (w >= kWLarge) return WidthClass::Large;
     if (w >= kWExpanded) return WidthClass::Expanded;
@@ -183,8 +187,9 @@ constexpr void computeFloatingJoysticks(LayoutSpec& s) {
     // 注意坐标系：算出来的是**屏幕坐标**（ImGui 原点是窗口左上角），所以用 screenH / safe.*
     // 左右往里收：贴边时拇指够着别扭，还会撞上系统手势区（安卓边缘约 20dp 是返回手势）
     s.joyInsetX = s.joyRadius * 0.95f + s.safe.left + 20.0f;
-    // 底部往上收：避开手势条
-    s.joyCenterY = s.screenH - s.safe.bottom - s.joyRadius - 22.0f;
+    // 底部往上收：既要避开手势条，也要给摇杆下方的标签（"左 · 移动"）留出位置 ——
+    // 真机上底部安全区可能是 0（沉浸式下系统把手势条藏了），不给标签留就会把字裁掉。
+    s.joyCenterY = s.screenH - s.safe.bottom - s.joyRadius - layout_detail::kJoyLabelSpace;
     // ★ 内容预留高度与摇杆位置**同源**：改造前一个算 h-radius-90、一个写死 250，屏幕一变就错位
     s.joyReserve = s.screenH - (s.joyCenterY - s.joyRadius);
 }
