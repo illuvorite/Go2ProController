@@ -1,0 +1,192 @@
+[
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/srtp/srtp.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/srtp/srtp.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/srtp/srtp.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/cipher/cipher.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/cipher/cipher.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/cipher/cipher.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/cipher/cipher_test_cases.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/cipher/cipher_test_cases.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/cipher/cipher_test_cases.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/cipher/null_cipher.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/cipher/null_cipher.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/cipher/null_cipher.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/cipher/aes_icm_ossl.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/cipher/aes_icm_ossl.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/cipher/aes_icm_ossl.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/cipher/aes_gcm_ossl.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/cipher/aes_gcm_ossl.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/cipher/aes_gcm_ossl.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/hash/auth.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/hash/auth.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/hash/auth.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/hash/auth_test_cases.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/hash/auth_test_cases.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/hash/auth_test_cases.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/hash/null_auth.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/hash/null_auth.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/hash/null_auth.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/hash/hmac_ossl.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/hash/hmac_ossl.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/hash/hmac_ossl.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/kernel/alloc.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/kernel/alloc.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/kernel/alloc.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/kernel/crypto_kernel.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/kernel/crypto_kernel.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/kernel/crypto_kernel.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/kernel/err.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/kernel/err.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/kernel/err.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/kernel/key.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/kernel/key.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/kernel/key.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/math/datatypes.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/math/datatypes.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/math/datatypes.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/replay/rdb.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/replay/rdb.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/replay/rdb.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIC -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp2.dir/crypto/replay/rdbx.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/replay/rdbx.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/replay/rdbx.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/datatypes_driver.dir/crypto/test/datatypes_driver.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/test/datatypes_driver.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/test/datatypes_driver.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/datatypes_driver.dir/test/util.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/util.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/util.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/cipher_driver.dir/crypto/test/cipher_driver.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/test/cipher_driver.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/test/cipher_driver.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/cipher_driver.dir/test/getopt_s.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/getopt_s.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/getopt_s.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/kernel_driver.dir/crypto/test/kernel_driver.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/test/kernel_driver.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/test/kernel_driver.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/kernel_driver.dir/test/getopt_s.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/getopt_s.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/getopt_s.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/rdbx_driver.dir/test/rdbx_driver.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/rdbx_driver.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/rdbx_driver.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/rdbx_driver.dir/test/getopt_s.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/getopt_s.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/getopt_s.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/rdbx_driver.dir/test/ut_sim.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/ut_sim.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/ut_sim.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/replay_driver.dir/test/replay_driver.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/replay_driver.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/replay_driver.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/replay_driver.dir/test/ut_sim.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/ut_sim.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/ut_sim.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/roc_driver.dir/test/roc_driver.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/roc_driver.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/roc_driver.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/roc_driver.dir/test/ut_sim.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/ut_sim.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/ut_sim.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp_driver.dir/test/srtp_driver.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/srtp_driver.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/srtp_driver.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp_driver.dir/test/util.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/util.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/util.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/srtp_driver.dir/test/getopt_s.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/getopt_s.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/getopt_s.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/test_srtp.dir/test/test_srtp.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/test_srtp.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/test_srtp.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/rtpw.dir/test/rtpw.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/rtpw.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/rtpw.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/rtpw.dir/test/rtp.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/rtp.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/rtp.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/rtpw.dir/test/util.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/util.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/util.c"
+},
+{
+  "directory": "/mnt/d/code/project/Go2ProController/client/build2",
+  "command": "/usr/bin/cc -DHAVE_CONFIG_H -I/mnt/d/code/project/Go2ProController/client/build2/_deps/libdatachannel-build/deps/libsrtp -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/crypto/include -I/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/include -O3 -DNDEBUG -fPIE -Wall -Wextra -Wshadow -Wpedantic -Wunused -Wnull-dereference -Wdouble-promotion -Wcast-qual -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Werror -std=gnu99 -o _deps/libdatachannel-build/deps/libsrtp/CMakeFiles/rtpw.dir/test/getopt_s.c.o -c /mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/getopt_s.c",
+  "file": "/mnt/d/code/project/Go2ProController/client/build/_deps/libdatachannel-src/deps/libsrtp/test/getopt_s.c"
+}
+]

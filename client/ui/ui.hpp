@@ -129,6 +129,10 @@ struct UiState {
     std::mutex logMutex;
     bool autoScroll = true;
     bool logErrorsOnly = false;  // 只看异常（失败 / 错误 / 急停 / 警告）
+    /// 累计的异常/失败行数（addLog 里统计），以及"上次打开日志时看到的数量"。
+    /// 两者不等 → 顶栏「日志」按钮显示角标，提醒有新异常（日志弹窗没开时也能发现）
+    int problemCount = 0;
+    int problemSeen = 0;
 
     void addLog(const std::string& line);
 

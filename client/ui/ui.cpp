@@ -19,10 +19,19 @@
 
 namespace go2 {
 
+namespace {
+/// 前置声明：addLog 里要统计"异常行"用于日志按钮的角标，
+/// 而它的定义在文件靠后（与"只看异常"过滤用的是同一套判断，避免两处标准不一致）
+bool isProblemLine(const std::string& s);
+}  // namespace
+
 void UiState::addLog(const std::string& line) {
     std::lock_guard<std::mutex> lock(logMutex);
     logs.push_back(line);
     if (logs.size() > 500) logs.erase(logs.begin(), logs.begin() + 100);
+    // 累计异常/失败行数：日志弹窗没打开时，靠顶栏「日志」按钮上的角标提醒
+    // （否则出错了用户根本不知道，机器人控制里这种"静默失败"很危险）
+    if (isProblemLine(line)) ++problemCount;
 }
 
 bool UiState::addOrUpdate(const std::string& ip, bool manual) {
@@ -157,17 +166,6 @@ bool accentButton(const char* label, const ImVec2& size = ImVec2(0, 32)) {
     return r;
 }
 
-/// 成功色按钮（恢复类操作用）
-bool okButton(const char* label, const ImVec2& size = ImVec2(0, 32)) {
-    ImGui::PushStyleColor(ImGuiCol_Button,
-                          ImVec4(col::kOk.x, col::kOk.y, col::kOk.z, 0.75f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.80f, 0.44f, 0.95f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.40f, 0.88f, 0.52f, 1.00f));
-    const bool r = ImGui::Button(label, size);
-    ImGui::PopStyleColor(3);
-    return r;
-}
-
 /// 段落标题：左侧主色竖条 + 标题字号（small=true 用正文字号）
 void sectionTitle(const char* text) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -179,12 +177,6 @@ void sectionTitle(const char* text) {
     ImGui::SameLine(0.0f, 9.0f);
     FontScope fs = fontTitle();
     ImGui::TextUnformatted(text);
-}
-
-/// 小标题（正文字号 + 次要色）
-void subTitle(const char* text) {
-    FontScope fs = fontSmall();
-    ImGui::TextColored(col::kDim, "%s", text);
 }
 
 /// 圆形状态灯（带柔和光晕）
@@ -653,12 +645,30 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     const ImVec2 bs(L.topBtnW, L.topBtnH);
     // 按钮只登记"一次性请求"，真正的 OpenPopup 由 drawUi 在主窗口层级做 ——
     // 在子窗口里直接 OpenPopup 会因为 ID 栈前缀不同而和 BeginPopupModal 对不上。
-    const auto entry = [&](const char* label, int req, bool open, ImVec4 tint) {
+    // badge > 0 时在按钮右上角画一个红色角标（用于「日志」提醒有新异常）。
+    const auto entry = [&](const char* label, int req, bool open, ImVec4 tint, int badge = 0) {
         if (open) ImGui::PushStyleColor(ImGuiCol_Button, tint);
         const bool hit = ImGui::Button(label, bs);
         if (open) ImGui::PopStyleColor();
         if (hit) ui.popupRequest = req;
+        if (badge > 0) {
+            char t[8];
+            std::snprintf(t, sizeof(t), badge > 99 ? "99+" : "%d", badge);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImVec2 mn = ImGui::GetItemRectMin();
+            const ImVec2 mx = ImGui::GetItemRectMax();
+            const float fs = ImGui::GetFontSize() * 0.72f;
+            const ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, t);
+            const float r = std::max(9.0f, ts.x * 0.5f + 5.0f);
+            const ImVec2 c(mx.x - r * 0.55f, mn.y + r * 0.55f);
+            dl->AddCircleFilled(c, r, ImGui::GetColorU32(col::kErr), 16);
+            dl->AddText(ImGui::GetFont(), fs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f),
+                        ImGui::GetColorU32(ImVec4(1, 1, 1, 1)), t);
+        }
     };
+
+    // 有新异常时给「日志」按钮加角标（日志弹窗没打开也能发现出错）
+    const int unread = (ui.problemCount > ui.problemSeen) ? (ui.problemCount - ui.problemSeen) : 0;
 
     entry("设备", 1, ui.showDevices,
           ImVec4(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.75f));
@@ -669,7 +679,7 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     entry("设置", 3, ui.showSettings,
           ImVec4(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.75f));
     ImGui::SameLine();
-    entry("日志", 4, ui.showLog, ImVec4(col::kWarn.x, col::kWarn.y, col::kWarn.z, 0.75f));
+    entry("日志", 4, ui.showLog, ImVec4(col::kWarn.x, col::kWarn.y, col::kWarn.z, 0.75f), unread);
 
     ImGui::EndChild();
 }
@@ -1501,6 +1511,7 @@ void drawPopups(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
 
     place();
     if (ImGui::BeginPopupModal(kIdLog, &ui.showLog, kPopupFlags)) {
+        ui.problemSeen = ui.problemCount;  // 打开日志就算"看过了"，顶栏角标随之清掉
         header("运行日志");
         drawLogPanel(ui, L);
         ImGui::EndPopup();
