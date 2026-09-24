@@ -1,0 +1,16 @@
+diff --git a/src/impl/datachannel.cpp b/src/impl/datachannel.cpp
+index 710a398..1b0a547 100644
+--- a/src/impl/datachannel.cpp
++++ b/src/impl/datachannel.cpp
+@@ -233,6 +233,11 @@ void DataChannel::incoming(message_ptr message) {
+ 		break;
+ 	case Message::String:
+ 	case Message::Binary:
++		// Go2 机器狗不回 DCEP ACK，收到数据即视为通道已打开；
++		// 否则 Channel::flushPendingMessages 会因 mOpenTriggered==false 丢弃消息
++		if (!mIsOpen.exchange(true)) {
++			triggerOpen();
++		}
+ 		mRecvQueue.push(message);
+ 		triggerAvailable(mRecvQueue.size());
+ 		break;

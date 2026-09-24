@@ -475,6 +475,110 @@ if click:
         net_diag.close()
 
 
+    @cli.command()
+    @click.option('--ip', '-i', 'ips', multiple=True,
+                  help='机器狗 IP（可多次指定，或逗号分隔一次给多台）')
+    @click.option('--subnet', '-s', 'subnets', multiple=True,
+                  help='要扫描的 /24 网段，如 192.168.2.0/24（可多次）')
+    @click.option('--sn-scan/--no-sn-scan', default=True,
+                  help='用 UDP 多播按 SN 发现设备（默认开）')
+    @click.option('--key', 'keys', multiple=True,
+                  help='已知的每设备 AES-128 钥匙（32位 hex），仅用于判定报告措辞')
+    def webrtc(ips, subnets, sn_scan, keys):
+        """WebRTC 控制链路体检（9991/8081 + con_notify + data2 是否需要钥匙）
+
+        \b
+        用于「Air 能连、Pro 连不上」这类多机问题：先逐台确认
+          1) 信令端口是否开放（新固件 9991 / 旧固件 8081）
+          2) con_notify 是否正常响应（端口通但无响应 = 被手机 App 占用）
+          3) data2 是 2 还是 3（=2 内置静态钥匙；=3 必须云账号取每设备钥匙）
+        """
+        from . import webrtc_check as wc
+
+        # ---- 目标收集 ----
+        targets = []
+        for item in ips:
+            targets += [x.strip() for x in item.split(',') if x.strip()]
+
+        sn_map = {}
+        if sn_scan:
+            rprint("[bold]① UDP 多播按 SN 发现设备 ...[/bold]")
+            sn_map = wc.discover_sn(timeout=2.0)
+            if sn_map:
+                for sn, ip in sn_map.items():
+                    rprint(f"   SN [cyan]{sn}[/cyan] → [green]{ip}[/green]")
+            else:
+                rprint("   [yellow]未收到多播回复（多播不跨路由是正常的，"
+                       "继续用 IP/网段方式）[/yellow]")
+
+        subnet_list = [x.strip() for x in subnets if x.strip()]
+        if subnet_list:
+            for cidr in subnet_list:
+                rprint(f"[bold]② 扫描网段 {cidr} 的 9991/8081 ...[/bold]")
+                found = wc.scan_subnet(cidr)
+                rprint(f"   命中 {len(found)} 台: {', '.join(found) if found else '（无）'}")
+                for ip in found:
+                    if ip not in targets:
+                        targets.append(ip)
+
+        if not targets:
+            targets = list(sn_map.values()) or ["192.168.1.211"]
+            rprint(f"[yellow]未指定 IP/网段，使用默认目标: {', '.join(targets)}[/yellow]")
+
+        # ---- 逐台体检 ----
+        rprint(f"\n[bold]③ 逐台信令体检（共 {len(targets)} 台）...[/bold]\n")
+        results = []
+        for ip in targets:
+            sn = next((s for s, addr in sn_map.items() if addr == ip), "")
+            r = wc.check_robot(ip, has_key=bool(keys), sn=sn)
+            results.append(r)
+
+        table = Table(title="WebRTC 控制链路体检结果")
+        table.add_column("IP", style="cyan")
+        table.add_column("SN")
+        table.add_column("Ping")
+        table.add_column("9991")
+        table.add_column("8081")
+        table.add_column("data2")
+        table.add_column("静态key")
+        table.add_column("云钥匙")
+        table.add_column("结论", overflow="fold")
+
+        for r in results:
+            ping_txt = (f"[green]{r.ping_ms:.0f}ms[/green]" if r.ping_ok and r.ping_ms
+                        else ("[green]通[/green]" if r.ping_ok else "[red]不通[/red]"))
+            new_txt = "[green]开放[/green]" if r.port_new_open else "[red]关闭[/red]"
+            old_txt = "[green]开放[/green]" if r.port_old_open else "[dim]-[/dim]"
+            d2 = "-" if r.data2 is None else str(r.data2)
+            if r.data2 == 3:
+                d2 = "[yellow]3[/yellow]"
+            # 内置静态 key 试解结果：能解就不需要云钥匙（比只看 data2 可靠）
+            if r.data2 is None:
+                static_txt = "-"
+            elif r.legacy_key_ok:
+                static_txt = "[green]可解[/green]"
+            else:
+                static_txt = "[red]不可解[/red]"
+            key_txt = "已备" if r.has_key else ("[red]缺[/red]"
+                                               if (r.data2 == 3 and not r.legacy_key_ok) else "-")
+            table.add_row(r.ip, r.sn or "-", ping_txt, new_txt, old_txt, d2,
+                          static_txt, key_txt, r.conclusion)
+        console.print(table)
+
+        for r in results:
+            if r.actions:
+                rprint(f"\n[bold]{r.ip}[/bold] 建议:")
+                for a in r.actions:
+                    rprint(f"  ➜ {a}")
+
+        ok, tips = wc.summarize(results)
+        rprint(f"\n[bold]小结: {ok}/{len(results)} 台信令可达[/bold]")
+        for t in tips:
+            rprint(f"  [yellow]※[/yellow] {t}")
+        rprint("\n[dim]下一步：client/ 目录编译 go2_remote，"
+               "用 `--verify ip1,ip2,ip3 --actions` 做三台同时连接的稳定性验证[/dim]")
+
+
 def main():
     """主入口"""
     if not click or not RICH_AVAILABLE:

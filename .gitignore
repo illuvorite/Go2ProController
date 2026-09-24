@@ -1,0 +1,77 @@
+# 敏感文件：每设备 AES-128 钥匙（data2=3 新固件）——禁止提交
+go2_keys_cache.json
+keys.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 构建产物
+client/build/
+captures/
+reports/
+
+# 运行时落盘的调试样本
+*.sdp
+cyclonedds.log
+
+# 启动器/应用运行日志
+last_run.log
+launch_trace.log
+launch_trace.txt
+*.ppm
+
+# AI 助手工作目录（本地项目数据：记忆/团队记录，不入库）
+.codebuddy/
+
+# 其它工具的工作目录
+.kilo/
+
+# ==== 钥匙与凭证：绝不入库 ====
+keys.json
+*_keys*.json
+go2_keys_cache.json
+tab_dogs_keys.txt
+*_tab_keys.txt
+.go2/
+
+# ==== 第三方依赖源码（由构建自动获取，不入库）====
+# 桌面端：CMake FetchContent 自动拉取 imgui / glfw / libdatachannel / httplib / nlohmann_json
+# 安卓端：client/apps/android/setup.sh 自动下载 SDL2 与 imgui
+# 这两个加起来 88MB，塞进仓库没有意义
+client/third_party/SDL/
+client/third_party/imgui/
+
+# ==== Android 构建产物 / 依赖（体积巨大，绝不入库）====
+# 光 _sdk 就 4.6GB、_deps_arm64 59MB、app/.cxx 251MB —— 误提交会让推送直接失败
+client/apps/android/_sdk/
+client/apps/android/_deps_arm64/
+client/apps/android/_deps_tmp/
+client/apps/android/_build_rtc/
+client/apps/android/_build/
+client/apps/android/build/
+client/apps/android/app/build/
+client/apps/android/app/.cxx/
+client/apps/android/.gradle/
+client/apps/android/.idea/
+# 机器相关的绝对路径配置（每台机器自己生成）
+client/apps/android/local.properties
+# gradle.properties 里有本机专属的 JDK 绝对路径与代理设置 —— 入库的是 gradle.properties.example
+client/apps/android/gradle.properties
+client/apps/android/*.log
+
+# 构建出来的安装包与二进制库
+*.apk
+*.aab
+*.so
+*.a
+*.o
+*.dylib
+*.dll
+
+# 开发过程截图（临时产物，文档用的截图请放 docs/screenshots/）
+/_tab*.png
+/_tab*.jpg

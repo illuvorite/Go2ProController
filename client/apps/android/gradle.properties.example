@@ -1,0 +1,21 @@
+# 复制成 gradle.properties 后再改成你自己机器的值
+#   cp gradle.properties.example gradle.properties
+#
+# 这个文件里放的都是「本机专属」的设置，所以真正的 gradle.properties 不入库
+# （否则别人 clone 下来会因为路径和代理不对而构建失败）。
+
+# ---- 必改：项目内自带的 JDK 17 绝对路径 ----
+# 由 client/apps/android/install_sdk_*.py 装到 _sdk/jdk17
+# 例：org.gradle.java.home=D:/code/project/Go2ProController/client/apps/android/_sdk/jdk17
+# 不设也可以：那就走系统 JAVA_HOME
+# org.gradle.java.home=<你的路径>/client/apps/android/_sdk/jdk17
+
+# ---- 可选：Gradle 走本机代理下载依赖 ----
+# Gradle 只认 systemProp.*，不认 HTTP_PROXY 环境变量
+# systemProp.http.proxyHost=127.0.0.1
+# systemProp.http.proxyPort=7897
+# systemProp.https.proxyHost=127.0.0.1
+# systemProp.https.proxyPort=7897
+
+# ---- 通用设置（可以照抄）----
+org.gradle.jvmargs=-Xmx2048m

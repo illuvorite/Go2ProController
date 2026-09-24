@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "go2-remote",
+  "version": "1.0.0",
+  "description": "Unitree Go2 控制管理台（Windows / macOS 依赖清单；Linux 走系统包 + FetchContent）",
+  "dependencies": [
+    "openssl",
+    "libdatachannel",
+    "glfw3",
+    "nlohmann-json"
+  ]
+}

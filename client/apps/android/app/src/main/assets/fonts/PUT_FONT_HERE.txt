@@ -1,0 +1,8 @@
+把中文字体放到本目录，文件名用下列之一（应用会自动加载第一个找到的）：
+  NotoSansSC-Regular.otf / NotoSansSC-Regular.ttf
+  SourceHanSansSC-Regular.otf / wqy-microhei.ttc
+
+推荐 Noto Sans SC 或思源黑体（OFL 授权，允许随应用分发）。
+下载示例（自行执行）：
+  curl -L -o NotoSansSC-Regular.otf \
+    https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf

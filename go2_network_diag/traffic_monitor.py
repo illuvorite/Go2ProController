@@ -3,6 +3,10 @@
 监控网络流量并提供实时分析
 """
 
+# 让类型注解延迟求值：rich 未安装时 Table 等名字不存在，
+# 否则下面的 `-> Table` 会在导入期直接抛 NameError，整个 CLI 都起不来。
+from __future__ import annotations
+
 import time
 import threading
 import queue
