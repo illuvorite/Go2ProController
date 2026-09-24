@@ -378,6 +378,9 @@ int main(int argc, char** argv) {
     // 输入方式：Android 上默认手指；插上鼠标后主循环会自动切成"鼠标优先"
     // （按钮最小尺寸跟着变，见 layout.cpp 的 touch 修正）
     ui.touchInput = true;
+    // 摇杆数值由触屏层（TouchSticks）驱动：ui 侧只负责画到前景层，不参与输入处理
+    //（手指事件在进 ImGui 之前就被 TouchSticks 消费了，ImGui 收不到，也就没法走交互那条路）
+    ui.joysticksByPlatform = true;
     // 安全区（刘海 / 圆角 / 手势条）：先用保守常量 ——
     // 安卓侧边返回手势区约 20dp、底部手势条约 24dp。
     // 要精确值需要在 MainActivity 里读 WindowInsets 再经 JNI 传过来。
@@ -423,6 +426,19 @@ int main(int argc, char** argv) {
                     }
                 }
             }
+            // ★ 指针坐标也要在**源头**折算成 dp：SDL 给的是物理像素，而界面按 dp 排版。
+            //   不能等 NewFrame 之后再补发坐标 —— ImGui 的输入 trickling 会在"同帧先移动后按键"
+            //   时丢掉后补的坐标事件，结果按下用的还是物理坐标，点击就落到屏幕外了
+            //（真机症状：按钮能 hover、但点不动；键盘正常，所以特别容易漏掉）。
+            if (g_pixelScale > 1.01f) {
+                if (e.type == SDL_MOUSEMOTION) {
+                    e.motion.x = static_cast<int>(e.motion.x / g_pixelScale);
+                    e.motion.y = static_cast<int>(e.motion.y / g_pixelScale);
+                } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+                    e.button.x = static_cast<int>(e.button.x / g_pixelScale);
+                    e.button.y = static_cast<int>(e.button.y / g_pixelScale);
+                }
+            }
             if (!forStick) ImGui_ImplSDL2_ProcessEvent(&e);
             switch (e.type) {
                 case SDL_QUIT:
@@ -461,6 +477,7 @@ int main(int argc, char** argv) {
         // ★ 坐标单位归一：让 ImGui 的单位 = dp（详见文件顶部 detectPixelScale 的说明）。
         // 必须在 NewFrame 之前改：DisplaySize 折成逻辑尺寸、FramebufferScale 设成密度，
         // 这样渲染出的 drawable 仍是物理分辨率（不糊），而所有布局常量都以 dp 计。
+        // 指针坐标则在事件源头折算（见上面 SDL_MOUSEMOTION 分支），这里不用再补。
         if (g_pixelScale > 1.01f) {
             ImGuiIO& io = ImGui::GetIO();
             io.DisplaySize =
@@ -483,38 +500,17 @@ int main(int argc, char** argv) {
             ui.layout = go2::makeLayout(ds.x, ds.y, ui.touchInput, ui.safe,
                                         ui.layout.viewW > 0.0f ? &ui.layout : nullptr);
         }
-        if (!ui.layout.joyInline) {
-            sticks.applyLayout(ui.layout, ui.layout.screenW);
-            ui.joyLx = sticks.lx;
-            ui.joyLy = sticks.ly;
-            ui.joyRx = sticks.rx;
-            ui.joyRy = sticks.ry;
-        }
+        // 摇杆几何来自断点布局（永远悬浮在两下角）
+        sticks.applyLayout(ui.layout, ui.layout.screenW);
+        // 把触屏算好的数值写进 ui —— 必须在 drawUi 之前，同一帧的 planMotion 才用得上（无延迟）
+        ui.joyLx = sticks.lx;
+        ui.joyLy = sticks.ly;
+        ui.joyRx = sticks.rx;
+        ui.joyRy = sticks.ry;
+        ui.joyLActive = sticks.leftUsed;
+        ui.joyRActive = sticks.rightUsed;
 
-        go2::drawUi(mgr, ui);  // ★ 与桌面同一份界面代码
-
-        // 两个摇杆画成屏幕浮层（在最上层，不占界面空间）—— 单栏模式的核心
-        if (!ui.layout.joyInline) {
-            ImDrawList* fg = ImGui::GetForegroundDrawList();
-            go2::drawJoystickAt("##tjoyL", fg, sticks.leftC.x, sticks.leftC.y, sticks.radius,
-                                sticks.lx, sticks.ly, sticks.leftUsed);
-            go2::drawJoystickAt("##tjoyR", fg, sticks.rightC.x, sticks.rightC.y, sticks.radius,
-                                sticks.rx, sticks.ry, sticks.rightUsed);
-            // 杆下方的极简标签（手游里一般不写太多字，够认就行）
-            const ImU32 dim = ImGui::GetColorU32(ImVec4(1, 1, 1, 0.38f));
-            const float fs = ImGui::GetFontSize() * 0.95f;
-            ImFont* font = ImGui::GetFont();
-            const std::pair<const char*, ImVec2> labels[2] = {
-                {"左 · 移动", sticks.leftC},
-                {"右 · 转向", sticks.rightC},
-            };
-            for (const auto& lb : labels) {
-                const ImVec2 sz = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, lb.first);
-                fg->AddText(font, fs,
-                            ImVec2(lb.second.x - sz.x * 0.5f, lb.second.y + sticks.radius + 8.0f),
-                            dim, lb.first);
-            }
-        }
+        go2::drawUi(mgr, ui);  // ★ 与桌面同一份界面代码（摇杆由它画到前景层，不再这里重复画）
 
         ImGui::Render();
         int w = 0, h = 0;

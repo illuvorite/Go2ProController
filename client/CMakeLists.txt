@@ -154,9 +154,10 @@ endif()
 add_executable(motion_test tests/motion_test.cpp)
 target_include_directories(motion_test PRIVATE core)
 
-# 断点布局的**编译期**自测：makeLayout 是 constexpr 纯函数，各机型档位的预期值
-# 用 static_assert 钉死 —— 改了断点常量忘了同步预期，编译就会失败。
-# 注意：layout_test.cpp 直接 #include 了 ../ui/layout.cpp（constexpr 求值需要函数体可见），
-# 所以这里**不能**再链 go2_ui，否则符号重复。它只依赖 ImGui 之外的东西，也不需要图形环境。
-add_executable(layout_test tests/layout_test.cpp)
+# 断点布局的自测：makeLayout 是 constexpr 纯函数，各机型档位的预期值用 static_assert
+# 钉死 —— 改了断点常量忘了同步预期，编译就会失败。
+# ★ 必须把 ui/layout.cpp 一起编进来：这样它同时是**跨 TU 链接测试**。
+#   曾经 makeLayout 声明成 constexpr 但定义在 .cpp，单文件语法检查全过，
+#   直到链接才报 undefined symbol —— 只编译不链接是抓不到这类问题的。
+add_executable(layout_test tests/layout_test.cpp ui/layout.cpp)
 target_include_directories(layout_test PRIVATE ui)

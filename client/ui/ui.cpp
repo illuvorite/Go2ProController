@@ -359,30 +359,9 @@ std::string maskIps(const std::string& text, bool on) {
     return std::regex_replace(text, ipRe, "$1.$2.*.***");
 }
 
-/// 虚拟摇杆：圆形底座 + 可拖动旋钮。
-/// @return 是否正在被拖动；outX/outY 归一化到 -1..1（y 向下为正，带死区）
-bool drawJoystick(const char* id, float radius, float* outX, float* outY) {
-    const ImVec2 pad = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton(id, ImVec2(radius * 2.0f, radius * 2.0f));
-    const bool active = ImGui::IsItemActive();
-
-    float x = 0.0f, y = 0.0f;
-    if (active) {
-        const ImVec2 m = ImGui::GetIO().MousePos;
-        const float limit = radius - 18.0f;  // 留出旋钮半径
-        x = (m.x - (pad.x + radius)) / limit;
-        y = (m.y - (pad.y + radius)) / limit;
-        const float len = std::sqrt(x * x + y * y);
-        if (len > 1.0f) { x /= len; y /= len; }   // 限制在圆内
-        if (len < 0.08f) { x = 0.0f; y = 0.0f; }  // 死区
-    }
-    *outX = x;
-    *outY = y;
-
-    drawJoystickAt(id, ImGui::GetWindowDrawList(), pad.x + radius, pad.y + radius, radius, x, y,
-                   active);
-    return active;
-}
+// 注：原来这里有个"内嵌在面板里的摇杆"（drawJoystick）。改造后摇杆**永远悬浮在两下角**
+// 且要盖在所有窗口/弹窗之上，所以改由 joystickHitArea（透明命中区）+ 前景层绘制实现，
+// 那个内嵌版本已无调用方，删掉避免留死代码。
 
 // ---- 下面这个函数要被触屏入口（main_android.cpp）调用 → 必须在匿名命名空间**之外**，
 //      否则是内部链接，链接期报 undefined symbol（踩过一次）。
@@ -554,44 +533,82 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
 
 }  // namespace
 
-// ============================================================ 主界面
-void drawUi(RobotManager& mgr, UiState& ui) {
-    ui.sideHold = 0;  // 每帧重置：只有"按住侧移按钮"的那一帧会被置位
+// ============================================================================
+// 界面：遥控为主 + 两下角悬浮摇杆 + 四个弹窗（设备 / 动作库 / 设置 / 日志）
+//
+// ★ 设计要点（2026-09-24 按用户反馈重做）：
+//   · 双摇杆**永远悬浮在屏幕两个下角**，画在**前景层** —— 任何面板、任何弹窗都盖不住它，
+//     也不该有任何页面"影响"到它（数值由平台层触屏或多点触控驱动）
+//   · 主界面只有遥控；设备 / 动作库 / 设置 / 日志 全部是顶栏按钮 → 弹窗
+//   · 动作库在弹窗里**一排排按钮平铺**，不再用折叠面板
+// ============================================================================
 
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(vp->WorkPos);
-    ImGui::SetNextWindowSize(vp->WorkSize);
+namespace {
 
-    ImGui::Begin("Go2 控制管理台", nullptr,
-                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
+// 弹窗 ID（同一个 ID 栈里要唯一）
+constexpr const char* kIdDevices = "设备##dlg";
+constexpr const char* kIdActions = "动作库##dlg";
+constexpr const char* kIdSettings = "设置##dlg";
+constexpr const char* kIdLog = "日志##dlg";
 
-    // ============================================================ 断点布局
-    // 每帧按「视口尺寸 + 输入方式 + 安全区」重算一次（纯函数，带 8dp 滞回，幂等）。
-    // 注意：这里拿到的 DisplaySize 必须是**已按设备密度归一**的逻辑尺寸（dp），
-    // 否则 3x 屏上按钮实际只有 18dp，48dp 的触摸下限就成了摆设
-    // —— 归一由平台入口负责，见 apps/android/native/main_android.cpp。
-    {
-        const ImVec2 ds = ImGui::GetIO().DisplaySize;
-        ui.layout = makeLayout(ds.x, ds.y, ui.touchInput, ui.safe,
-                               ui.layout.viewW > 0.0f ? &ui.layout : nullptr);
-        setUiFontSizes(ui.layout.fontTitle, ui.layout.fontBody, ui.layout.fontSmall);
-        applyUiScale(ui.layout.styleScale);  // 内部从基线重算，不会累乘
+// 弹窗统一去掉标题栏：标题 + 关闭按钮由各面板自己的 header() 画，
+// 否则模态框自带的标题栏会和它重复（视觉上出现两个"设备"）。
+constexpr ImGuiWindowFlags kPopupFlags = ImGuiWindowFlags_NoResize |
+                                         ImGuiWindowFlags_NoMove |
+                                         ImGuiWindowFlags_NoTitleBar |
+                                         ImGuiWindowFlags_NoSavedSettings;
+
+// ---------------------------------------------------------------- 顶栏
+// 品牌 + 受控状态 + 四个入口按钮（设备 / 动作库 / 设置 / 日志）
+void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
+    (void)mgr;
+    ImGui::BeginChild("top", ImVec2(0, L.topBarH), ImGuiChildFlags_Borders);
+
+    if (L.showBrand) {
+        FontScope fs = fontTitle();
+        ImGui::TextUnformatted("Go2 控制台");
+        ImGui::SameLine();
     }
-    const LayoutSpec& L = ui.layout;
-    const bool single = (L.mode == LayoutMode::SingleColumn);
-    const bool twoCol = (L.mode == LayoutMode::TwoColumn);
+    {
+        const int sel = ui.selectedCount();
+        const int total = static_cast<int>(ui.robots.size());
+        const std::string s = std::to_string(sel) + "/" + std::to_string(total) + " 台受控";
+        chip(s.c_str(), sel > 0 ? col::kAccent : col::kIdle);
+        ImGui::SameLine();
+    }
 
-    // 单栏模式：遥控 / 控制台 / 日志 变成"一页一屏"，由底部页签或侧滑抽屉切换。
-    // 「控制台」这一页内部仍用 TabBar 分 设备 / 动作库 / 设置 —— 这样不用把三块内容拆散，
-    // 也不会出现"底部页签和页内 TabBar 显示同一组项"的重复导航。
-    const bool showLeft = !single || (ui.mobilePage == 1);
-    const bool showCtrl = !single || (ui.mobilePage == 0);
-    const bool showLog = single ? (ui.mobilePage == 2) : L.logInline;
-    // 单栏 + 底部页签：内容区高度要让出页签（负值 = 可用高度减去该值）
-    const float singleRowH = (single && L.nav == NavKind::BottomTab) ? -L.tabH : 0.0f;
+    // 四个入口按钮靠右排
+    const float need = L.topBtnW * 4.0f + 24.0f;
+    const float avail = ImGui::GetContentRegionAvail().x;
+    if (avail > need) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - need);
 
-    // ---- 发现 / 连接：顶栏与「设备」页共用（顶栏压成 1 行时这些按钮挪到设备页）----
+    const ImVec2 bs(L.topBtnW, L.topBtnH);
+    // 按钮只登记"一次性请求"，真正的 OpenPopup 由 drawUi 在主窗口层级做 ——
+    // 在子窗口里直接 OpenPopup 会因为 ID 栈前缀不同而和 BeginPopupModal 对不上。
+    const auto entry = [&](const char* label, int req, bool open, ImVec4 tint) {
+        if (open) ImGui::PushStyleColor(ImGuiCol_Button, tint);
+        const bool hit = ImGui::Button(label, bs);
+        if (open) ImGui::PopStyleColor();
+        if (hit) ui.popupRequest = req;
+    };
+
+    entry("设备", 1, ui.showDevices,
+          ImVec4(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.75f));
+    ImGui::SameLine();
+    entry("动作库", 2, ui.showActions,
+          ImVec4(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.75f));
+    ImGui::SameLine();
+    entry("设置", 3, ui.showSettings,
+          ImVec4(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.75f));
+    ImGui::SameLine();
+    entry("日志", 4, ui.showLog, ImVec4(col::kWarn.x, col::kWarn.y, col::kWarn.z, 0.75f));
+
+    ImGui::EndChild();
+}
+
+// ---------------------------------------------------------------- 设备弹窗
+void drawDevicePanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
+    // ---- 发现 / 连接（这些按钮原来在顶栏第二行，现在收进设备弹窗）----
     const auto doAddManual = [&mgr, &ui] {
         // 支持一次粘贴多台（逗号 / 分号 / 空格分隔）
         std::vector<std::string> ips;
@@ -645,971 +662,903 @@ void drawUi(RobotManager& mgr, UiState& ui) {
         mgr.disconnectAll();
         ui.addLog("[UI] 已断开全部连接");
     };
-    // 动作库按钮宽/高/列数全部来自断点（改造前写死 150/214，栏一窄就溢出）
-    const float actW1 = L.actW1;
-    const float actW2 = L.actW2;
-    const float actW3 = L.actW3;
-    const float actH = L.actH;  // 0 = 沿用默认高度
 
-    // ============================================================ 顶栏
-    ImGui::BeginChild("top", ImVec2(0, L.topBarH), ImGuiChildFlags_Borders);
-
-    // ---- 第一行：品牌 + 受控数量 + 隐私开关 ----
-    // 窄屏（1 行顶栏）只留最必要的：品牌缩写 + 状态 + 隐私 + 日志入口；
-    // 发现/连接那几个按钮挪到「设备」页里，避免顶栏第二行在手机上被挤出屏幕。
-    if (L.topRows == 1 && single && L.nav == NavKind::Drawer) {
-        if (ImGui::Button("≡", ImVec2(L.btnH > 0.0f ? 46.0f : 0.0f, L.btnH)))
-            ui.drawerOpen = !ui.drawerOpen;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("设备 / 动作库 / 设置");
-        ImGui::SameLine();
-    }
-    {
-        FontScope fs = fontTitle();
-        ImGui::TextUnformatted(L.topRows == 1 ? "Go2 控制台" : "Unitree Go2");
-    }
-    if (L.topRows >= 2) {
-        ImGui::SameLine();
-        FontScope fs = fontSmall();
-        ImGui::TextColored(col::kDim, "控制管理台  ·  局域网发现 / 单控·群控 / 双摇杆 / 动作库");
-    }
-    ImGui::SameLine();
-    {
-        const int sel = ui.selectedCount();
-        const int total = static_cast<int>(ui.robots.size());
-        const std::string s = std::to_string(sel) + " / " + std::to_string(total) + " 台受控";
-        // 右侧这组（受控数 / 隐私 / 日志入口）统一靠右
-        const float need = single ? 230.0f : 320.0f;
-        const float avail = ImGui::GetContentRegionAvail().x;
-        if (avail > need) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - need);
-        chip(s.c_str(), sel > 0 ? col::kAccent : col::kIdle);
-        ImGui::SameLine();
-        if (single) {
-            // 窄屏省字：勾选框只留「隐私」，并给一个日志入口（单栏模式下日志是一整页）
-            ImGui::Checkbox("隐私", &ui.privacyMode);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("勾选后界面把 IP 等敏感信息打码（仅显示层，不影响功能）");
-            ImGui::SameLine();
-            if (ImGui::Button("日志", ImVec2(0, L.btnH))) ui.mobilePage = 2;
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("运行日志（失败=红 · 成功=绿 · 急停=橙）");
-        } else {
-            ImGui::Checkbox("隐私模式", &ui.privacyMode);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("勾选后界面把 IP 等敏感信息打码（仅显示层，不影响功能）");
-        }
-    }
-
-    ImGui::Spacing();
-
-    // ---- 第二行：发现与连接（顶栏只有 1 行时，这些按钮在「设备」页里）----
-    if (L.topRows >= 2) {
+    const float bh = L.btnH;
     if (ui.scanning.load()) {
         ImGui::BeginDisabled();
-        bigButton("扫描中...", ImVec2(126, 34));
+        bigButton("扫描中...", ImVec2(-1, bh));
         ImGui::EndDisabled();
-    } else if (accentButton("扫描局域网", ImVec2(126, 34))) {
+    } else if (accentButton("扫描局域网", ImVec2(-1, bh))) {
         startScan(mgr, ui);
     }
 
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##manual", "手动添加 IP（可逗号分隔多台）", ui.manualIp,
+                             sizeof(ui.manualIp));
+    const float third = (ImGui::GetContentRegionAvail().x - 16.0f) / 3.0f;
+    if (bigButton("添加", ImVec2(third, bh))) doAddManual();
     ImGui::SameLine();
-    {
-        // 输入框宽度自适应：先给后面 3 个按钮（64+96+96+间距）与尾部提示留够位置，
-        // 免得「全部断开」被挤出屏幕 —— 改造前写死 250，屏宽 < 700dp 就点不到它。
-        const float avail = ImGui::GetContentRegionAvail().x;
-        const float w = avail - (64.0f + 96.0f + 96.0f + 48.0f) - 190.0f;
-        ImGui::SetNextItemWidth(std::max(130.0f, std::min(250.0f, w)));
-    }
-    ImGui::InputTextWithHint("##manual", "手动添加 IP（可逗号分隔多台）",
-                             ui.manualIp, sizeof(ui.manualIp));
+    if (bigButton("全部连接", ImVec2(third, bh))) doConnectAll();
     ImGui::SameLine();
-    if (bigButton("添加", ImVec2(64, 34))) doAddManual();
+    if (bigButton("全部断开", ImVec2(third, bh))) doDisconnectAll();
 
-    ImGui::SameLine();
-    if (bigButton("全部连接", ImVec2(96, 34))) doConnectAll();
-
-    ImGui::SameLine();
-    if (bigButton("全部断开", ImVec2(96, 34))) doDisconnectAll();
-
-    ImGui::SameLine();
-    {
-        FontScope fs = fontSmall();
-        if (ImGui::GetContentRegionAvail().x > 210.0f)
-            ImGui::TextDisabled("勾选 = 受控（1 台单控 / 多台群控）");
-    }
-    }  // ← if (L.topRows >= 2)：顶栏只有 1 行时，发现/连接按钮在「设备」页里
-
-    // ---- 第三行：本地钥匙（data2=3 新固件的每设备 AES key；纯本地、不联网）----
-    // 顶栏压成 1~2 行时这一行整体移到「设置」页（那边本来就有钥匙库）
-    if (L.topRows >= 3) {
     ImGui::Separator();
-    {
-        FontScope fs = fontSmall();
-        chip(("本地钥匙 " + std::to_string(ui.localKeyCount) + " 把").c_str(),
-             ui.localKeyCount > 0 ? col::kOk : col::kWarn);
-        ImGui::SameLine();
-    }
-    if (ImGui::Button("重载钥匙")) {
-        auto lk = go2::loadLocalAesKeys();
-        ui.localKeyCount = int(lk.keys.size());
-        if (lk.keys.empty()) {
-            ui.addLog("[钥匙] 未找到本地钥匙：请把 32 位 hex key 写进 keys.json");
-        } else {
-            mgr.setAesKeys(lk.keys);
-            ui.addLog("[钥匙] 已加载 " + std::to_string(lk.keys.size()) + " 把（" +
-                      lk.source + "），重试连接失败的机器狗 ...");
-            std::vector<RobotEntry> snapshot;
-            {
-                std::lock_guard<std::mutex> lock(ui.robotsMutex);
-                snapshot = ui.robots;
-            }
-            for (const auto& e : snapshot)
-                if (auto* c = mgr.find(e.ip);
-                    c && c->state() == ConnState::Failed)
-                    mgr.connect(e.ip);
+    drawDeviceList(mgr, ui);
+}
+
+// ---------------------------------------------------------------- 动作库弹窗
+// 一排排按钮平铺：分组只作为小标题，不再折叠收起
+void drawActionLibrary(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
+    const float actW1 = L.actW1;
+    const float actW2 = L.actW2;
+    const float actW3 = L.actW3;
+    const float actH = L.actH;
+// ---- 宇树动作库（全量指令，见 sport_library.cpp）----
+sectionTitle("宇树动作库");
+ImGui::SameLine();
+ImGui::Checkbox("MCF 固件", &ui.mcfMode);
+if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("Go2 Pro 等 MCF 固件使用另一套 api_id（如后空翻 2043 vs 1044）；\n"
+                      "选错也没关系：被拒后会用另一套 id 自动重试一次");
+ImGui::SameLine();
+ImGui::Checkbox("隐藏不支持的", &ui.hideUnsupported);
+if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("隐藏「试过且被该固件拒绝（code=3203）」的动作，\n"
+                      "避免反复点到不存在的指令；取消勾选即可重新显示");
+
+// 当前指令集没有这条（如 MCF 专属指令）时，用另一套 id 兜底，避免"整条动作根本点不到"
+auto resolveId = [&ui](const SportAction& a, bool* fellBack) {
+    int id = apiIdFor(a, ui.mcfMode);
+    bool fb = false;
+    if (id == 0) {
+        const int alt = ui.mcfMode ? a.normalId : a.mcfId;
+        if (alt != 0) {
+            id = alt;
+            fb = true;
         }
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled(
-        "|  keys.json: {\"IP\":\"32位hex\"} 或 [\"key1\",\"key2\"]；换 WiFi / 换网段无需改动");
-    }  // ← if (L.topRows >= 3)
-    ImGui::EndChild();
+    if (fellBack) *fellBack = fb;
+    return id;
+};
 
-    // ============================================================ 左：设备 / 动作库 / 设置（分页，避免堆成一条长列表）
-    // 单栏模式下只有在「设备/动作库/设置」页才显示，且铺满整屏
-    if (showLeft) {
-    ImGui::BeginChild("left", ImVec2(single ? 0.0f : L.leftW, singleRowH),
-                      ImGuiChildFlags_Borders);
-    if (ImGui::BeginTabBar("##leftTabs", ImGuiTabBarFlags_None)) {
-        // ---------------- 设备 ----------------
-        if (ImGui::BeginTabItem("设备")) {
-            ImGui::Spacing();
-            // 顶栏压成 1 行时（手机竖屏 / 横屏矮屏），发现与连接按钮放在这里 ——
-            // 顶栏一行放不下 126+输入框+64+96+96 这一串
-            if (L.topRows == 1) {
-                const float bh = L.btnH > 0.0f ? L.btnH : 0.0f;
-                if (ui.scanning.load()) {
-                    ImGui::BeginDisabled();
-                    bigButton("扫描中...", ImVec2(-1, bh));
-                    ImGui::EndDisabled();
-                } else if (accentButton("扫描局域网", ImVec2(-1, bh))) {
-                    startScan(mgr, ui);
-                }
-                ImGui::SetNextItemWidth(-1);
-                ImGui::InputTextWithHint("##manualM", "手动添加 IP（可逗号分隔多台）",
-                                         ui.manualIp, sizeof(ui.manualIp));
-                const float third = (ImGui::GetContentRegionAvail().x - 16.0f) / 3.0f;
-                if (bigButton("添加", ImVec2(third, bh))) doAddManual();
-                ImGui::SameLine();
-                if (bigButton("全部连接", ImVec2(third, bh))) doConnectAll();
-                ImGui::SameLine();
-                if (bigButton("全部断开", ImVec2(third, bh))) doDisconnectAll();
-                ImGui::Separator();
-            }
-            drawDeviceList(mgr, ui);
-            ImGui::EndTabItem();
-        }
+// 动作按钮标题：* = MCF 下 id 不同，† = 用了另一套指令集，✓/✗ = 上次执行结果
+auto actionLabel = [&ui](const SportAction& a, int id, bool fellBack) {
+    std::string t = a.label;
+    if (differsInMcf(a)) t += "*";
+    if (fellBack) t += "†";
+    int code = 0;
+    std::string note;
+    if (ui.apiResult(id, &code, &note)) t += (code == 0 ? "  ✓" : "  ✗");
+    return t;
+};
+// 悬停显示上次结果与失败原因
+auto actionTip = [&ui](int id) {
+    int code = 0;
+    std::string note;
+    if (!ui.apiResult(id, &code, &note) || !ImGui::IsItemHovered()) return;
+    if (code == 0) {
+        ImGui::SetTooltip("上次执行：成功（api %d）", id);
+    } else {
+        ImGui::SetTooltip("上次执行失败（api %d，code=%d）\n%s\n\n"
+                          "再点一次可重试；指令集不匹配会自动换另一套 api_id",
+                          id, code, note.empty() ? "（无更多信息）" : note.c_str());
+    }
+};
 
-        // ---------------- 动作库 ----------------
-        if (ImGui::BeginTabItem("动作库")) {
-            ImGui::Spacing();
-    // ---- 宇树动作库（全量指令，见 sport_library.cpp）----
-    sectionTitle("宇树动作库");
-    ImGui::SameLine();
-    ImGui::Checkbox("MCF 固件", &ui.mcfMode);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Go2 Pro 等 MCF 固件使用另一套 api_id（如后空翻 2043 vs 1044）；\n"
-                          "选错也没关系：被拒后会用另一套 id 自动重试一次");
-    ImGui::SameLine();
-    ImGui::Checkbox("隐藏不支持的", &ui.hideUnsupported);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("隐藏「试过且被该固件拒绝（code=3203）」的动作，\n"
-                          "避免反复点到不存在的指令；取消勾选即可重新显示");
-
-    // 当前指令集没有这条（如 MCF 专属指令）时，用另一套 id 兜底，避免"整条动作根本点不到"
-    auto resolveId = [&ui](const SportAction& a, bool* fellBack) {
-        int id = apiIdFor(a, ui.mcfMode);
+// 可用性一览：点过的动作会累计成功/失败，方便"哪些动作能用"一眼看清
+{
+    int tried = 0, ok = 0, fail = 0;
+    for (const auto& a : sportActions()) {
         bool fb = false;
-        if (id == 0) {
-            const int alt = ui.mcfMode ? a.normalId : a.mcfId;
-            if (alt != 0) {
-                id = alt;
-                fb = true;
-            }
-        }
-        if (fellBack) *fellBack = fb;
-        return id;
-    };
-
-    // 动作按钮标题：* = MCF 下 id 不同，† = 用了另一套指令集，✓/✗ = 上次执行结果
-    auto actionLabel = [&ui](const SportAction& a, int id, bool fellBack) {
-        std::string t = a.label;
-        if (differsInMcf(a)) t += "*";
-        if (fellBack) t += "†";
+        const int id = resolveId(a, &fb);
+        if (id == 0) continue;
         int code = 0;
         std::string note;
-        if (ui.apiResult(id, &code, &note)) t += (code == 0 ? "  ✓" : "  ✗");
-        return t;
-    };
-    // 悬停显示上次结果与失败原因
-    auto actionTip = [&ui](int id) {
-        int code = 0;
-        std::string note;
-        if (!ui.apiResult(id, &code, &note) || !ImGui::IsItemHovered()) return;
-        if (code == 0) {
-            ImGui::SetTooltip("上次执行：成功（api %d）", id);
-        } else {
-            ImGui::SetTooltip("上次执行失败（api %d，code=%d）\n%s\n\n"
-                              "再点一次可重试；指令集不匹配会自动换另一套 api_id",
-                              id, code, note.empty() ? "（无更多信息）" : note.c_str());
-        }
-    };
-
-    // 可用性一览：点过的动作会累计成功/失败，方便"哪些动作能用"一眼看清
-    {
-        int tried = 0, ok = 0, fail = 0;
-        for (const auto& a : sportActions()) {
-            bool fb = false;
-            const int id = resolveId(a, &fb);
-            if (id == 0) continue;
-            int code = 0;
-            std::string note;
-            if (!ui.apiResult(id, &code, &note)) continue;
-            ++tried;
-            (code == 0 ? ok : fail)++;
-        }
-        if (tried > 0)
-            ImGui::Text("可用性: 已试 %d 条 / 成功 %d / 失败 %d", tried, ok, fail);
-        else
-            ImGui::TextDisabled("可用性: 点过的动作会自动标注 ✓ / ✗（悬停看失败原因）");
+        if (!ui.apiResult(id, &code, &note)) continue;
+        ++tried;
+        (code == 0 ? ok : fail)++;
     }
+    if (tried > 0)
+        ImGui::Text("可用性: 已试 %d 条 / 成功 %d / 失败 %d", tried, ok, fail);
+    else
+        ImGui::TextDisabled("可用性: 点过的动作会自动标注 ✓ / ✗（悬停看失败原因）");
+}
 
-    ImGui::BeginDisabled(ui.selectedCount() == 0);
+ImGui::BeginDisabled(ui.selectedCount() == 0);
 
-    // 发送一条动作：解析指令集 id + 组装参数 + 群控分发
-    // flagValue 只对 Flag 类生效（开关型指令传 false 就是"关闭"）
-    auto sendAction = [&](const SportAction& a, bool flagValue = true) {
+// 发送一条动作：解析指令集 id + 组装参数 + 群控分发
+// flagValue 只对 Flag 类生效（开关型指令传 false 就是"关闭"）
+auto sendAction = [&](const SportAction& a, bool flagValue = true) {
+    bool fellBack = false;
+    const int id = resolveId(a, &fellBack);
+    const std::string key = a.key;
+    float realVal = ui.bodyHeight;
+    if (key == "FootRaiseHeight") realVal = ui.footRaise;
+    const int intVal = (key == "SwitchGait") ? ui.gaitType : ui.speedLevel;
+    nlohmann::json p = buildSportParam(a, intVal, realVal, ui.eulerX, ui.eulerY,
+                                       ui.eulerZ, std::string(ui.rawJson));
+    if (a.param == SportParam::Flag) {
+        p = nlohmann::json::object();
+        p["data"] = flagValue;   // 开关型：{"data": true|false}
+    }
+    const int n = forEachSelected(
+        mgr, ui, [&](RobotClient& c) { return c.sendSportCommand(id, p); });
+    ui.addLog("[动作库] " + std::string(a.label) +
+              (a.toggle ? (flagValue ? " 开启" : " 关闭") : "") + " (api " +
+              std::to_string(id) + (fellBack ? "，当前指令集无此条，用另一套 id" : "") +
+              ") → " + std::to_string(n) + " 台");
+};
+
+struct GroupDef {
+    SportGroup g;
+    const char* title;
+};
+static const GroupDef kGroups[] = {
+    {SportGroup::Basic, "基础姿态"},
+    {SportGroup::Show, "表演动作"},
+    {SportGroup::Gait, "步态 / 速度 / 身高"},
+    {SportGroup::Stunt, "跳跃特技（危险）"},
+    {SportGroup::Query, "状态查询"},
+    {SportGroup::Advanced, "其他 / 进阶"},
+};
+
+for (const auto& gd : kGroups) {
+    // 基础姿态默认展开：最常用的 站立 / 平衡站立 / 趴下 / 停止移动 都在这一组
+    // 分组只作小标题：不折叠，按钮直接一排排平铺
+    ImGui::Spacing();
+    {
+        FontScope fs = fontBody();
+        ImGui::TextColored(col::kAccent, "%s", gd.title);
+    }
+    int col = 0;
+    for (const auto& a : sportActions()) {
+        if (a.group != gd.g) continue;
         bool fellBack = false;
         const int id = resolveId(a, &fellBack);
-        const std::string key = a.key;
-        float realVal = ui.bodyHeight;
-        if (key == "FootRaiseHeight") realVal = ui.footRaise;
-        const int intVal = (key == "SwitchGait") ? ui.gaitType : ui.speedLevel;
-        nlohmann::json p = buildSportParam(a, intVal, realVal, ui.eulerX, ui.eulerY,
-                                           ui.eulerZ, std::string(ui.rawJson));
-        if (a.param == SportParam::Flag) {
-            p = nlohmann::json::object();
-            p["data"] = flagValue;   // 开关型：{"data": true|false}
+        if (id == 0) continue;  // 两套指令集都没有这条
+        // 阻尼（Damp）只在中间「遥控」面板保留一个按钮 → 这里跳过，避免同一个功能两处按钮
+        if (std::strcmp(a.key, "Damp") == 0) continue;
+        if (ui.hideUnsupported) {
+            int code = 0;
+            std::string note;
+            if (ui.apiResult(id, &code, &note) && code != 0) continue;  // 隐藏已确认不支持的
         }
-        const int n = forEachSelected(
-            mgr, ui, [&](RobotClient& c) { return c.sendSportCommand(id, p); });
-        ui.addLog("[动作库] " + std::string(a.label) +
-                  (a.toggle ? (flagValue ? " 开启" : " 关闭") : "") + " (api " +
-                  std::to_string(id) + (fellBack ? "，当前指令集无此条，用另一套 id" : "") +
-                  ") → " + std::to_string(n) + " 台");
-    };
+        ImGui::PushID(a.key);
 
-    struct GroupDef {
-        SportGroup g;
-        const char* title;
-    };
-    static const GroupDef kGroups[] = {
-        {SportGroup::Basic, "基础姿态"},
-        {SportGroup::Show, "表演动作"},
-        {SportGroup::Gait, "步态 / 速度 / 身高"},
-        {SportGroup::Stunt, "跳跃特技（危险）"},
-        {SportGroup::Query, "状态查询"},
-        {SportGroup::Advanced, "其他 / 进阶"},
-    };
+        const std::string label = actionLabel(a, id, fellBack);
 
-    for (const auto& gd : kGroups) {
-        // 基础姿态默认展开：最常用的 站立 / 平衡站立 / 趴下 / 停止移动 都在这一组
-        const ImGuiTreeNodeFlags hdrFlags = gd.g == SportGroup::Basic
-                                                ? ImGuiTreeNodeFlags_DefaultOpen
-                                                : ImGuiTreeNodeFlags_None;
-        if (!ImGui::CollapsingHeader(gd.title, hdrFlags)) continue;
-        int col = 0;
-        for (const auto& a : sportActions()) {
-            if (a.group != gd.g) continue;
-            bool fellBack = false;
-            const int id = resolveId(a, &fellBack);
-            if (id == 0) continue;  // 两套指令集都没有这条
-            // 阻尼（Damp）只在中间「遥控」面板保留一个按钮 → 这里跳过，避免同一个功能两处按钮
-            if (std::strcmp(a.key, "Damp") == 0) continue;
-            if (ui.hideUnsupported) {
-                int code = 0;
-                std::string note;
-                if (ui.apiResult(id, &code, &note) && code != 0) continue;  // 隐藏已确认不支持的
-            }
-            ImGui::PushID(a.key);
-
-            const std::string label = actionLabel(a, id, fellBack);
-
-            // ---- 开关型（持续模式）：画成 开/关 按钮，再点一次即关闭 ----
-            // 这类指令是 on/off 语义、会一直生效；StopMove 停不掉，必须带 false 关闭。
-            if (a.toggle) {
-                bool& on = ui.toggles[a.key];
-                if (on)
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.55f, 0.28f, 1.0f));
-                const std::string t = label + (on ? "  [开]" : "  [关]");
-                if (ImGui::Button((t + "##b").c_str(), ImVec2(actW1, actH))) {
-                    on = !on;
-                    sendAction(a, on);
-                    // 记录"真正开过的开关"（含另一套指令集的 id），急停时只关这些
-                    std::vector<int> ids{id};
-                    for (int alt : alternateApiIds(id)) ids.push_back(alt);
-                    for (int tid : ids) {
-                        if (on) ui.activeToggleIds.insert(tid);
-                        else ui.activeToggleIds.erase(tid);
-                    }
+        // ---- 开关型（持续模式）：画成 开/关 按钮，再点一次即关闭 ----
+        // 这类指令是 on/off 语义、会一直生效；StopMove 停不掉，必须带 false 关闭。
+        if (a.toggle) {
+            bool& on = ui.toggles[a.key];
+            if (on)
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.55f, 0.28f, 1.0f));
+            const std::string t = label + (on ? "  [开]" : "  [关]");
+            if (ImGui::Button((t + "##b").c_str(), ImVec2(actW1, actH))) {
+                on = !on;
+                sendAction(a, on);
+                // 记录"真正开过的开关"（含另一套指令集的 id），急停时只关这些
+                std::vector<int> ids{id};
+                for (int alt : alternateApiIds(id)) ids.push_back(alt);
+                for (int tid : ids) {
+                    if (on) ui.activeToggleIds.insert(tid);
+                    else ui.activeToggleIds.erase(tid);
                 }
-                actionTip(id);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("持续模式开关（开启后会一直生效，StopMove 停不掉）\n"
-                                      "点一下切换开/关；急停会自动把所有开关关掉");
-                if (on) ImGui::PopStyleColor();
-                col = 0;
-                ImGui::PopID();
-                continue;
             }
-
-            if (a.param == SportParam::Int || a.param == SportParam::Real) {
-                const std::string key = a.key;
-                if (a.param == SportParam::Int) {
-                    int* v = (key == "SwitchGait") ? &ui.gaitType : &ui.speedLevel;
-                    ImGui::SetNextItemWidth(90);
-                    ImGui::SliderInt("##v", v, 0, (key == "SwitchGait") ? 4 : 2);
-                } else {
-                    float* v =
-                        (key == "FootRaiseHeight") ? &ui.footRaise : &ui.bodyHeight;
-                    ImGui::SetNextItemWidth(90);
-                    ImGui::SliderFloat("##v", v, 0.0f, 0.35f, "%.2f");
-                }
-                ImGui::SameLine();
-                if (ImGui::Button((label + "##b").c_str(), ImVec2(actW2, actH))) sendAction(a);
-                actionTip(id);
-                col = 0;
-                ImGui::PopID();
-                continue;
-            }
-
-            if (a.param == SportParam::Euler) {
-                ImGui::SetNextItemWidth(62);
-                ImGui::SliderFloat("roll##e", &ui.eulerX, -0.5f, 0.5f, "%.2f");
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(62);
-                ImGui::SliderFloat("pitch##e", &ui.eulerY, -0.5f, 0.5f, "%.2f");
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(62);
-                ImGui::SliderFloat("yaw##e", &ui.eulerZ, -0.6f, 0.6f, "%.2f");
-                if (ImGui::Button((label + "##b").c_str(), ImVec2(-1, 0))) sendAction(a);
-                actionTip(id);
-                col = 0;
-                ImGui::PopID();
-                continue;
-            }
-
-            if (a.param == SportParam::Json) {
-                ImGui::SetNextItemWidth(180);
-                ImGui::InputText("##json", ui.rawJson, sizeof(ui.rawJson));
-                ImGui::SameLine();
-                if (ImGui::Button((label + "##b").c_str(), ImVec2(actW3, actH))) sendAction(a);
-                actionTip(id);
-                col = 0;
-                ImGui::PopID();
-                continue;
-            }
-
-            if (L.actCols > 1 && (col % L.actCols) != 0) ImGui::SameLine();
-            ++col;
-            if (a.risky)
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.20f, 0.15f, 1.0f));
-            if (ImGui::Button((label + "##b").c_str(), ImVec2(actW1, actH))) sendAction(a);
             actionTip(id);
-            if (a.risky) ImGui::PopStyleColor();
-
-            ImGui::PopID();
-        }
-    }
-    ImGui::TextDisabled("* = MCF 固件下 api_id 不同   † = 当前指令集无此条，自动用另一套 id");
-    ImGui::TextDisabled("✓ = 上次成功   ✗ = 上次失败（悬停看原因；指令集不匹配会自动换一套 id 重试）");
-
-    // ---- 官方 App 常用动作快捷（高度 / 姿态 / 侧移 / 模式 / 舞蹈编排）----
-    // 这些在 App 里是"参数类"操作（不是独立 api_id）：用现有的 1013/1007/1008 带不同参数实现
-    ImGui::Spacing();
-    ImGui::Separator();
-    if (ImGui::CollapsingHeader("官方 App 快捷（高度 / 姿态 / 模式 / 舞蹈）",
-                                ImGuiTreeNodeFlags_DefaultOpen)) {
-        auto sendJson = [&](int apiId, const nlohmann::json& p, const char* what) {
-            const int n = forEachSelected(
-                mgr, ui, [&](RobotClient& c) { return c.sendSportCommand(apiId, p); });
-            ui.addLog(std::string("[App] ") + what + " (api " + std::to_string(apiId) + ") → " +
-                      std::to_string(n) + " 台");
-        };
-        auto jsonData = [](float v) {
-            nlohmann::json p;
-            p["data"] = v;
-            return p;
-        };
-
-        // 机身高度三档（BodyHeight 1013；单位米）
-        ImGui::TextDisabled("机身高度");
-        if (ImGui::Button("机身最低 0.22")) sendJson(1013, jsonData(0.22f), "机身最低");
-        ImGui::SameLine();
-        if (ImGui::Button("机身正常 0.28")) sendJson(1013, jsonData(0.28f), "机身正常");
-        ImGui::SameLine();
-        if (ImGui::Button("机身最高 0.33")) sendJson(1013, jsonData(0.33f), "机身最高");
-        ImGui::SameLine();
-        ImGui::TextDisabled("(MCF 固件无 1013，会回复 3203)");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("机身高度 = BodyHeight(1013)，MCF 固件的指令表里没有它\n"
-                              "→ 会被拒（3203）。等 id 确定后再补 MCF 的高度指令。");
-
-        // 姿态（Euler 1007；x=roll 左正, y=pitch 低头为负）
-        // 实测要点：左倾/低头这类姿态操作**只在"摆姿势(Pose 1028)"模式下生效**
-        // （参考实现注明 "Pose (exit via StopMove)"），而且进入该模式有约 0.5s 的切换时间，
-        // 紧跟着发 Euler 会被丢掉 → 所以「进模式 → 等 0.7s → 下发姿态角」放进后台线程。
-        ImGui::TextDisabled("姿态（自动进入摆姿势模式后下发，幅度 0.25）");
-        auto euler = [&](float roll, float pitch, const char* what, bool exitPose = false) {
-            const auto ips = ui.selectedIps();
-            ui.addLog(std::string("[App] ") + what + "：进入摆姿势 → 0.7s 后下发姿态角");
-            std::thread([&mgr, ips, roll, pitch, exitPose] {
-                nlohmann::json poseOn;
-                poseOn["data"] = true;
-                for (const auto& ip : ips)
-                    if (auto* c = mgr.find(ip); c && c->isReady())
-                        c->sendSportCommand(1028, poseOn);
-                std::this_thread::sleep_for(std::chrono::milliseconds(700));
-                nlohmann::json p;
-                p["x"] = roll;
-                p["y"] = pitch;
-                p["z"] = 0.0f;
-                for (const auto& ip : ips)
-                    if (auto* c = mgr.find(ip); c && c->isReady()) c->sendSportCommand(1007, p);
-                if (exitPose) {  // 方向回正：再等 0.4s 用 StopMove 退出摆姿势模式
-                    std::this_thread::sleep_for(std::chrono::milliseconds(400));
-                    for (const auto& ip : ips)
-                        if (auto* c = mgr.find(ip); c && c->isReady()) c->stopMove();
-                }
-            }).detach();
-        };
-        if (ImGui::Button("左倾")) euler(0.25f, 0.0f, "左倾");
-        ImGui::SameLine();
-        if (ImGui::Button("右倾")) euler(-0.25f, 0.0f, "右倾");
-        ImGui::SameLine();
-        if (ImGui::Button("低头")) euler(0.0f, -0.25f, "低头");
-        ImGui::SameLine();
-        if (ImGui::Button("抬头")) euler(0.0f, 0.25f, "抬头");
-        ImGui::SameLine();
-        if (ImGui::Button("方向回正")) euler(0.0f, 0.0f, "方向回正", true);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("姿态角 = Euler(1007)，只在「摆姿势」模式下生效（已自动进入）。\n"
-                              "若回 code=0 但狗没动 = 该固件忽略姿态角；\n"
-                              "符号方向若相反（点左倾往右倒）告诉我，对调即可");
-
-        // 侧移（官方 App 的"左移 / 右移"）：**按住不放持续横移，松开立即停**
-        // 与左摇杆的横向轴是同一个功能，但这里保留 App 同款按住式按钮，手感更直观
-        ImGui::TextDisabled("侧移（按住不放，松开即停）");
-        ImGui::Button("◀ 左移（按住）", ImVec2(122, 0));
-        if (ImGui::IsItemActive()) ui.sideHold = 1;
-        ImGui::SameLine();
-        ImGui::Button("右移（按住）▶", ImVec2(122, 0));
-        if (ImGui::IsItemActive()) ui.sideHold = -1;
-
-        // 运动模式（motion_switcher）
-        ImGui::TextDisabled("运动模式");
-        if (ImGui::Button("正常模式")) {
-            const int n = forEachSelected(
-                mgr, ui, [](RobotClient& c) { return c.setMotionMode("normal"); });
-            ui.addLog("[App] 正常模式 → " + std::to_string(n) + " 台");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("ai 模式")) {
-            const int n = forEachSelected(
-                mgr, ui, [](RobotClient& c) { return c.setMotionMode("ai"); });
-            ui.addLog("[App] ai 模式 → " + std::to_string(n) + " 台");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("mcf 模式")) {
-            const int n = forEachSelected(
-                mgr, ui, [](RobotClient& c) { return c.setMotionMode("mcf"); });
-            ui.addLog("[App] mcf 模式 → " + std::to_string(n) + " 台");
-        }
-
-        // 舞蹈编排：舞 1 → 舞 2 连播
-        if (ImGui::Button("舞蹈编排：舞 1 → 舞 2")) {
-            const auto ips = ui.selectedIps();
-            const int n = forEachSelected(
-                mgr, ui, [](RobotClient& c) { return c.sendSportCommand(1022); });
-            ui.addLog("[App] 舞蹈编排：舞 1 开始 → " + std::to_string(n) + " 台（12 秒后接舞 2）");
-            std::thread([&mgr, ips] {
-                std::this_thread::sleep_for(std::chrono::seconds(12));
-                for (const auto& ip : ips)
-                    if (auto* c = mgr.find(ip); c && c->isReady()) c->sendSportCommand(1023);
-            }).detach();
-        }
-
-        // 待验证动作候选探测：App 上有、但 id 未知的动作，逐个试并报告回执
-        ImGui::TextDisabled("待验证动作（App 有、id 未知）：拜年 / 直立行走 / 并腿跑 / 原地踏步 / 翻身");
-        if (ImGui::Button("候选探测（会依次尝试，狗可能有动作）")) {
-            const auto ips = ui.selectedIps();
-            ui.addLog("[App] 候选探测开始：确保机器狗周围安全、地面平坦");
-            std::thread([&mgr, ips, &ui] {
-                struct Cand {
-                    int id;
-                    const char* note;
-                };
-                static const Cand kCands[] = {
-                    {1029, "拜年候选1=作揖(Scrape)"}, {1037, "拜年候选2"}, {1038, "拜年候选3"},
-                    {1040, "直立行走候选1"},          {1041, "直立行走候选2"},
-                    {1052, "直立行走/踏步候选"},      {1053, "并腿跑候选1"},
-                    {1054, "并腿跑候选2"},            {1055, "并腿跑候选3"},
-                    {1303, "原地踏步候选=单边踏步"},  {1006, "翻身候选1=恢复站立"},
-                    {1300, "翻身候选2"},
-                };
-                for (const auto& cd : kCands) {
-                    for (const auto& ip : ips) {
-                        if (auto* c = mgr.find(ip); c && c->isReady())
-                            c->sendSportCommand(cd.id);
-                    }
-                    ui.addLog(std::string("[App] 探测 ") + cd.note + " (api " +
-                              std::to_string(cd.id) + ")");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1800));
-                }
-                ui.addLog("[App] 候选探测结束：回执 code=0 的即为该动作的真实 id");
-            }).detach();
-        }
-        ImGui::TextDisabled("　（探测结果看日志：code=0 就是命中；3203 = 该 id 不存在）");
-    }
-
-            ImGui::EndDisabled();
-            ImGui::EndTabItem();
-        }  // ← 动作库 分页结束
-
-        // ---------------- 设置 ----------------
-        if (ImGui::BeginTabItem("设置")) {
-            ImGui::Spacing();
-            // ---- 本地钥匙库（data2=3 新固件；纯本地，不依赖云）----
-            sectionTitle("本地钥匙");
-            ImGui::SetNextItemWidth(235);
-            ImGui::InputTextWithHint("##key", "32 位 hex（AES-128 key）", ui.manualKey,
-                                     sizeof(ui.manualKey));
-            ImGui::SameLine();
-            if (ImGui::Button("存入")) {
-                std::string k(ui.manualKey);
-                while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.pop_back();
-                for (auto& ch : k)
-                    if (ch >= 'A' && ch <= 'F') ch += 32;
-                if (!isHex32(k)) {
-                    ui.addLog("[钥匙] 需要 32 位 hex（AES-128 key）");
-                } else {
-                    std::ofstream f("keys.txt", std::ios::app);
-                    f << k << "\n";
-                    ui.manualKey[0] = '\0';
-                    ui.addLog("[钥匙] 已保存到本地 keys.txt");
-                    reloadKeysAndRetry(mgr, ui);
-                }
-            }
-            {
-                FontScope fs = fontSmall();
-                ImGui::TextDisabled("每台新固件狗提取一次，永久保存；当前已加载 %d 把",
-                                    ui.localKeyCount);
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            sectionTitle("说明");
-            {
-                FontScope fs = fontSmall();
-                ImGui::TextDisabled("· 空格键 = 急停（锁定式；双杆回中后可解除）");
-                ImGui::TextDisabled("· 动作被拒会给出原因；指令集不匹配会自动换另一套 id 重试");
-                ImGui::TextDisabled("· 「隐藏不支持的」可过滤掉该固件没有的动作");
-                ImGui::TextDisabled("· 阻尼 / 急停在中间「遥控」面板");
-            }
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
-
-    ImGui::EndChild();
-    }  // ← if (showLeft)
-
-    // ============================================================ 中：遥控
-    // 三栏 → 遥控栏按断点定宽；双栏 → 遥控在上、日志在下（同一列，不换行）；
-    // 单栏 → 遥控铺满整屏（日志变成独立一页 / 浮层）
-    if (showCtrl) {
-    if (showLeft) ImGui::SameLine();
-    float ctrlH = 0.0f;
-    if (twoCol) {
-        // 平板竖屏：右栏上下分，遥控占上方（最少 420dp），日志占下方剩余
-        const float availH = ImGui::GetContentRegionAvail().y;
-        ctrlH = std::max(420.0f, (availH - 16.0f) * 0.62f);
-    }
-    ImGui::BeginChild("ctrl", ImVec2(single ? 0.0f : (twoCol ? 0.0f : L.ctrlW),
-                                      single ? singleRowH : ctrlH),
-                      ImGuiChildFlags_Borders);
-
-    sectionTitle("遥控");
-    ImGui::SameLine();
-    {
-        FontScope fs = fontSmall();
-        ImGui::TextDisabled("左杆移动 · 右杆转向 · 松手即停");
-    }
-    ImGui::Spacing();
-
-    // 急停：**锁定式**。按下后停全部就绪的机器狗（不只勾选的），
-    // 并在解除前让摇杆/快捷步彻底失效 —— 否则下一帧的 10Hz Move 重发会把车又"开起来"。
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 11.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.78f, 0.16f, 0.16f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.22f, 0.22f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1.00f, 0.32f, 0.32f, 1.0f));
-    // 急停是安全关键操作：**永远全宽、永远在视口内**，高度按断点给（矮屏 72 / 竖屏 88 / 多栏 56~64）。
-    // 断线状态下也要能按 —— 所以这里不依赖任何连接状态。
-    const bool estopClicked =
-        bigButton(single ? "■  急停" : "■  急停（全部停车 / 空格键）", ImVec2(-1, L.estopH));
-    // 记下安全操作区的屏幕矩形：触屏入口拿它做摇杆抓取互斥（手指落在急停上不能被摇杆吃掉）
-    ui.safetyMinX = ImGui::GetItemRectMin().x;
-    ui.safetyMinY = ImGui::GetItemRectMin().y;
-    ui.safetyMaxX = ImGui::GetItemRectMax().x;
-    ui.safetyMaxY = ImGui::GetItemRectMax().y;
-    ImGui::PopStyleColor(3);
-    ImGui::PopStyleVar();
-    // 键盘急停：空格（正在输入框里打字时不触发）
-    const bool estopHotkey =
-        !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false);
-
-    if (estopClicked || estopHotkey) {
-        ui.estop = true;
-        std::vector<RobotEntry> snapshot;
-        {
-            std::lock_guard<std::mutex> lock(ui.robotsMutex);
-            snapshot = ui.robots;
-        }
-        // 直接（同步、最快）：先停速度
-        int n = 0;
-        for (const auto& e : snapshot)
-            if (auto* c = mgr.find(e.ip); c && c->isReady() && c->stopMove()) ++n;
-
-        // 只关"我们真正打开过"的开关 —— 连按急停也不会把通道灌爆
-        // （上一版每次关 20 个，连按十几次 → 260 条指令把 SCTP 队列打满，指令反而被丢）
-        const std::vector<int> toClose(ui.activeToggleIds.begin(), ui.activeToggleIds.end());
-        if (!ui.estopBusy.exchange(true)) {
-            std::thread([&mgr, &ui, snapshot, toClose] {
-                // 狗在执行动作时可能吞掉第一条 StopMove → 补发两次
-                for (int round = 0; round < 2; ++round) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(330));
-                    for (const auto& e : snapshot)
-                        if (auto* c = mgr.find(e.ip); c && c->isReady()) c->stopMove();
-                }
-                if (!toClose.empty())
-                    for (const auto& e : snapshot)
-                        if (auto* c = mgr.find(e.ip); c && c->isReady())
-                            c->disablePersistentModes(toClose);
-                ui.estopBusy = false;
-            }).detach();
-        }
-        for (auto& kv : ui.toggles) kv.second = false;
-        ui.activeToggleIds.clear();
-        ui.movingSent = false;
-        ui.addLog("[急停] 已锁定：停车 " + std::to_string(n) + " 台 + 关闭 " +
-                  std::to_string(toClose.size()) + " 个已开启的模式；连按不会叠加");
-    }
-
-    // 兜底：狗仍在自走时，阻尼是唯一能"立即停住"的手段 —— 狗会软腿趴下，需二次确认
-    // 阻尼与急停保持 ≥12dp 间距（靠 ItemSpacing 缩放后天然满足），避免误触
-    {
-        if (!ui.dampArmed) {
-            if (ImGui::Button("强制阻尼 (Damp)…", ImVec2(-1, L.dampH)))
-                ui.dampArmed = true;
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("兜底手段：切断电机力矩，狗会立刻软腿趴下\n"
-                                  "（地面上安全；在桌上/台阶边别用）");
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.35f, 0.10f, 1.0f));
-            if (ImGui::Button("确认：立即阻尼（狗会趴下）", ImVec2(-1, L.dampH))) {
-                int m = 0;
-                std::vector<RobotEntry> snap;
-                {
-                    std::lock_guard<std::mutex> lock(ui.robotsMutex);
-                    snap = ui.robots;
-                }
-                for (const auto& e : snap)
-                    if (auto* c = mgr.find(e.ip); c && c->isReady() && c->damp()) ++m;
-                ui.addLog("[急停] 强制阻尼 → " + std::to_string(m) + " 台");
-                ui.dampArmed = false;
+                ImGui::SetTooltip("持续模式开关（开启后会一直生效，StopMove 停不掉）\n"
+                                  "点一下切换开/关；急停会自动把所有开关关掉");
+            if (on) ImGui::PopStyleColor();
+            col = 0;
+            ImGui::PopID();
+            continue;
+        }
+
+        if (a.param == SportParam::Int || a.param == SportParam::Real) {
+            const std::string key = a.key;
+            if (a.param == SportParam::Int) {
+                int* v = (key == "SwitchGait") ? &ui.gaitType : &ui.speedLevel;
+                ImGui::SetNextItemWidth(90);
+                ImGui::SliderInt("##v", v, 0, (key == "SwitchGait") ? 4 : 2);
+            } else {
+                float* v =
+                    (key == "FootRaiseHeight") ? &ui.footRaise : &ui.bodyHeight;
+                ImGui::SetNextItemWidth(90);
+                ImGui::SliderFloat("##v", v, 0.0f, 0.35f, "%.2f");
             }
-            ImGui::PopStyleColor();
             ImGui::SameLine();
-            if (ImGui::SmallButton("取消")) ui.dampArmed = false;
+            if (ImGui::Button((label + "##b").c_str(), ImVec2(actW2, actH))) sendAction(a);
+            actionTip(id);
+            col = 0;
+            ImGui::PopID();
+            continue;
         }
-        // 阻尼按钮也算安全操作区（它是"狗仍在自走"时唯一能立即停住的手段）
-        ui.safetyMaxY = std::max(ui.safetyMaxY, ImGui::GetItemRectMax().y);
+
+        if (a.param == SportParam::Euler) {
+            ImGui::SetNextItemWidth(62);
+            ImGui::SliderFloat("roll##e", &ui.eulerX, -0.5f, 0.5f, "%.2f");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(62);
+            ImGui::SliderFloat("pitch##e", &ui.eulerY, -0.5f, 0.5f, "%.2f");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(62);
+            ImGui::SliderFloat("yaw##e", &ui.eulerZ, -0.6f, 0.6f, "%.2f");
+            if (ImGui::Button((label + "##b").c_str(), ImVec2(-1, 0))) sendAction(a);
+            actionTip(id);
+            col = 0;
+            ImGui::PopID();
+            continue;
+        }
+
+        if (a.param == SportParam::Json) {
+            ImGui::SetNextItemWidth(180);
+            ImGui::InputText("##json", ui.rawJson, sizeof(ui.rawJson));
+            ImGui::SameLine();
+            if (ImGui::Button((label + "##b").c_str(), ImVec2(actW3, actH))) sendAction(a);
+            actionTip(id);
+            col = 0;
+            ImGui::PopID();
+            continue;
+        }
+
+        if (L.actCols > 1 && (col % L.actCols) != 0) ImGui::SameLine();
+        ++col;
+        if (a.risky)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.20f, 0.15f, 1.0f));
+        if (ImGui::Button((label + "##b").c_str(), ImVec2(actW1, actH))) sendAction(a);
+        actionTip(id);
+        if (a.risky) ImGui::PopStyleColor();
+
+        ImGui::PopID();
+    }
+}
+ImGui::TextDisabled("* = MCF 固件下 api_id 不同   † = 当前指令集无此条，自动用另一套 id");
+ImGui::TextDisabled("✓ = 上次成功   ✗ = 上次失败（悬停看原因；指令集不匹配会自动换一套 id 重试）");
+
+// ---- 官方 App 常用动作快捷（高度 / 姿态 / 侧移 / 模式 / 舞蹈编排）----
+// 这些在 App 里是"参数类"操作（不是独立 api_id）：用现有的 1013/1007/1008 带不同参数实现
+ImGui::Spacing();
+ImGui::Separator();
+{  // 官方 App 快捷：同样平铺，不折叠
+    auto sendJson = [&](int apiId, const nlohmann::json& p, const char* what) {
+        const int n = forEachSelected(
+            mgr, ui, [&](RobotClient& c) { return c.sendSportCommand(apiId, p); });
+        ui.addLog(std::string("[App] ") + what + " (api " + std::to_string(apiId) + ") → " +
+                  std::to_string(n) + " 台");
+    };
+    auto jsonData = [](float v) {
+        nlohmann::json p;
+        p["data"] = v;
+        return p;
+    };
+
+    // 机身高度三档（BodyHeight 1013；单位米）
+    ImGui::TextDisabled("机身高度");
+    if (ImGui::Button("机身最低 0.22")) sendJson(1013, jsonData(0.22f), "机身最低");
+    ImGui::SameLine();
+    if (ImGui::Button("机身正常 0.28")) sendJson(1013, jsonData(0.28f), "机身正常");
+    ImGui::SameLine();
+    if (ImGui::Button("机身最高 0.33")) sendJson(1013, jsonData(0.33f), "机身最高");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(MCF 固件无 1013，会回复 3203)");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("机身高度 = BodyHeight(1013)，MCF 固件的指令表里没有它\n"
+                          "→ 会被拒（3203）。等 id 确定后再补 MCF 的高度指令。");
+
+    // 姿态（Euler 1007；x=roll 左正, y=pitch 低头为负）
+    // 实测要点：左倾/低头这类姿态操作**只在"摆姿势(Pose 1028)"模式下生效**
+    // （参考实现注明 "Pose (exit via StopMove)"），而且进入该模式有约 0.5s 的切换时间，
+    // 紧跟着发 Euler 会被丢掉 → 所以「进模式 → 等 0.7s → 下发姿态角」放进后台线程。
+    ImGui::TextDisabled("姿态（自动进入摆姿势模式后下发，幅度 0.25）");
+    auto euler = [&](float roll, float pitch, const char* what, bool exitPose = false) {
+        const auto ips = ui.selectedIps();
+        ui.addLog(std::string("[App] ") + what + "：进入摆姿势 → 0.7s 后下发姿态角");
+        std::thread([&mgr, ips, roll, pitch, exitPose] {
+            nlohmann::json poseOn;
+            poseOn["data"] = true;
+            for (const auto& ip : ips)
+                if (auto* c = mgr.find(ip); c && c->isReady())
+                    c->sendSportCommand(1028, poseOn);
+            std::this_thread::sleep_for(std::chrono::milliseconds(700));
+            nlohmann::json p;
+            p["x"] = roll;
+            p["y"] = pitch;
+            p["z"] = 0.0f;
+            for (const auto& ip : ips)
+                if (auto* c = mgr.find(ip); c && c->isReady()) c->sendSportCommand(1007, p);
+            if (exitPose) {  // 方向回正：再等 0.4s 用 StopMove 退出摆姿势模式
+                std::this_thread::sleep_for(std::chrono::milliseconds(400));
+                for (const auto& ip : ips)
+                    if (auto* c = mgr.find(ip); c && c->isReady()) c->stopMove();
+            }
+        }).detach();
+    };
+    if (ImGui::Button("左倾")) euler(0.25f, 0.0f, "左倾");
+    ImGui::SameLine();
+    if (ImGui::Button("右倾")) euler(-0.25f, 0.0f, "右倾");
+    ImGui::SameLine();
+    if (ImGui::Button("低头")) euler(0.0f, -0.25f, "低头");
+    ImGui::SameLine();
+    if (ImGui::Button("抬头")) euler(0.0f, 0.25f, "抬头");
+    ImGui::SameLine();
+    if (ImGui::Button("方向回正")) euler(0.0f, 0.0f, "方向回正", true);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("姿态角 = Euler(1007)，只在「摆姿势」模式下生效（已自动进入）。\n"
+                          "若回 code=0 但狗没动 = 该固件忽略姿态角；\n"
+                          "符号方向若相反（点左倾往右倒）告诉我，对调即可");
+
+    // 侧移（官方 App 的"左移 / 右移"）：**按住不放持续横移，松开立即停**
+    // 与左摇杆的横向轴是同一个功能，但这里保留 App 同款按住式按钮，手感更直观
+    ImGui::TextDisabled("侧移（按住不放，松开即停）");
+    ImGui::Button("◀ 左移（按住）", ImVec2(122, 0));
+    if (ImGui::IsItemActive()) ui.sideHold = 1;
+    ImGui::SameLine();
+    ImGui::Button("右移（按住）▶", ImVec2(122, 0));
+    if (ImGui::IsItemActive()) ui.sideHold = -1;
+
+    // 运动模式（motion_switcher）
+    ImGui::TextDisabled("运动模式");
+    if (ImGui::Button("正常模式")) {
+        const int n = forEachSelected(
+            mgr, ui, [](RobotClient& c) { return c.setMotionMode("normal"); });
+        ui.addLog("[App] 正常模式 → " + std::to_string(n) + " 台");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("ai 模式")) {
+        const int n = forEachSelected(
+            mgr, ui, [](RobotClient& c) { return c.setMotionMode("ai"); });
+        ui.addLog("[App] ai 模式 → " + std::to_string(n) + " 台");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("mcf 模式")) {
+        const int n = forEachSelected(
+            mgr, ui, [](RobotClient& c) { return c.setMotionMode("mcf"); });
+        ui.addLog("[App] mcf 模式 → " + std::to_string(n) + " 台");
     }
 
-    if (ui.estop) {
-        const bool centered = std::fabs(ui.joyLx) < 0.02f && std::fabs(ui.joyLy) < 0.02f &&
-                              std::fabs(ui.joyRx) < 0.02f;
-        ImGui::TextColored(kRed, "⛔ 急停锁定中");
-        // 窄屏软换行：这行字不换行会横向溢出（改造前手机上直接看不到后半句）
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
-        ImGui::TextColored(kYellow,
-                           "　一次性动作（舞蹈/空翻/拜年）固件不接受打断；"
-                           "狗仍在动就点上面「强制阻尼」立即停住");
-        ImGui::PopTextWrapPos();
-        ImGui::BeginDisabled(!centered);
-        if (bigButton(single ? "解除急停" : "解除急停（需双杆回中）",
-                      ImVec2(-1, L.btnH > 0.0f ? L.btnH + 18.0f : 34.0f))) {
-            ui.estop = false;
-            ui.movingSent = false;
-            ui.addLog("[急停] 已解除，可以继续遥控");
-        }
+    // 舞蹈编排：舞 1 → 舞 2 连播
+    if (ImGui::Button("舞蹈编排：舞 1 → 舞 2")) {
+        const auto ips = ui.selectedIps();
+        const int n = forEachSelected(
+            mgr, ui, [](RobotClient& c) { return c.sendSportCommand(1022); });
+        ui.addLog("[App] 舞蹈编排：舞 1 开始 → " + std::to_string(n) + " 台（12 秒后接舞 2）");
+        std::thread([&mgr, ips] {
+            std::this_thread::sleep_for(std::chrono::seconds(12));
+            for (const auto& ip : ips)
+                if (auto* c = mgr.find(ip); c && c->isReady()) c->sendSportCommand(1023);
+        }).detach();
+    }
+
+    // 待验证动作候选探测：App 上有、但 id 未知的动作，逐个试并报告回执
+    ImGui::TextDisabled("待验证动作（App 有、id 未知）：拜年 / 直立行走 / 并腿跑 / 原地踏步 / 翻身");
+    if (ImGui::Button("候选探测（会依次尝试，狗可能有动作）")) {
+        const auto ips = ui.selectedIps();
+        ui.addLog("[App] 候选探测开始：确保机器狗周围安全、地面平坦");
+        std::thread([&mgr, ips, &ui] {
+            struct Cand {
+                int id;
+                const char* note;
+            };
+            static const Cand kCands[] = {
+                {1029, "拜年候选1=作揖(Scrape)"}, {1037, "拜年候选2"}, {1038, "拜年候选3"},
+                {1040, "直立行走候选1"},          {1041, "直立行走候选2"},
+                {1052, "直立行走/踏步候选"},      {1053, "并腿跑候选1"},
+                {1054, "并腿跑候选2"},            {1055, "并腿跑候选3"},
+                {1303, "原地踏步候选=单边踏步"},  {1006, "翻身候选1=恢复站立"},
+                {1300, "翻身候选2"},
+            };
+            for (const auto& cd : kCands) {
+                for (const auto& ip : ips) {
+                    if (auto* c = mgr.find(ip); c && c->isReady())
+                        c->sendSportCommand(cd.id);
+                }
+                ui.addLog(std::string("[App] 探测 ") + cd.note + " (api " +
+                          std::to_string(cd.id) + ")");
+                std::this_thread::sleep_for(std::chrono::milliseconds(1800));
+            }
+            ui.addLog("[App] 候选探测结束：回执 code=0 的即为该动作的真实 id");
+        }).detach();
+    }
+    ImGui::TextDisabled("　（探测结果看日志：code=0 就是命中；3203 = 该 id 不存在）");
+}
+
         ImGui::EndDisabled();
-        if (!centered)
-            ImGui::TextColored(kYellow, "  双杆回中后才能解除急停");
+}
+
+// ---------------------------------------------------------------- 设置弹窗
+void drawSettingsPanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
+// ---- 本地钥匙库（data2=3 新固件；纯本地，不依赖云）----
+sectionTitle("本地钥匙");
+ImGui::SetNextItemWidth(std::min(280.0f, L.popupW - 150.0f));
+ImGui::InputTextWithHint("##key", "32 位 hex（AES-128 key）", ui.manualKey,
+                         sizeof(ui.manualKey));
+ImGui::SameLine();
+if (ImGui::Button("存入")) {
+    std::string k(ui.manualKey);
+    while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.pop_back();
+    for (auto& ch : k)
+        if (ch >= 'A' && ch <= 'F') ch += 32;
+    if (!isHex32(k)) {
+        ui.addLog("[钥匙] 需要 32 位 hex（AES-128 key）");
+    } else {
+        std::ofstream f("keys.txt", std::ios::app);
+        f << k << "\n";
+        ui.manualKey[0] = '\0';
+        ui.addLog("[钥匙] 已保存到本地 keys.txt");
+        reloadKeysAndRetry(mgr, ui);
+    }
+}
+{
+    FontScope fs = fontSmall();
+    ImGui::TextDisabled("每台新固件狗提取一次，永久保存；当前已加载 %d 把",
+                        ui.localKeyCount);
+}
+
+ImGui::Spacing();
+ImGui::Separator();
+sectionTitle("说明");
+{
+    FontScope fs = fontSmall();
+    ImGui::TextDisabled("· 空格键 = 急停（锁定式；双杆回中后可解除）");
+    ImGui::TextDisabled("· 动作被拒会给出原因；指令集不匹配会自动换另一套 id 重试");
+    ImGui::TextDisabled("· 「隐藏不支持的」可过滤掉该固件没有的动作");
+    ImGui::TextDisabled("· 阻尼 / 急停在中间「遥控」面板");
+}
+}
+
+// ---------------------------------------------------------------- 遥控主体
+void drawRemotePanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
+    const bool compactLabel = (L.widthClass == WidthClass::Compact);
+    // 宽屏不把按钮拉得又长又扁：内容居中 + 宽度上限
+    const float availW = ImGui::GetContentRegionAvail().x;
+    if (availW > L.contentMaxW) {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - L.contentMaxW) * 0.5f);
+    }
+    // ★ 高度直接扣掉「摇杆区」（负值 = 可用高度 − 该值）：
+    //   这样内容**永远不会渲染到摇杆的地盘上**，两个下角永远留给摇杆。
+    //   早期版本只是在末尾加一个 Dummy 留白，内容照样会滚到摇杆下面、被压住。
+    ImGui::BeginChild("remote", ImVec2(L.contentMaxW, -L.joyReserve), ImGuiChildFlags_None);
+sectionTitle("遥控");
+ImGui::SameLine();
+{
+    FontScope fs = fontSmall();
+    ImGui::TextDisabled("左杆移动 · 右杆转向 · 松手即停");
+}
+ImGui::Spacing();
+
+// 急停：**锁定式**。按下后停全部就绪的机器狗（不只勾选的），
+// 并在解除前让摇杆/快捷步彻底失效 —— 否则下一帧的 10Hz Move 重发会把车又"开起来"。
+ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 11.0f);
+ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.78f, 0.16f, 0.16f, 1.0f));
+ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.22f, 0.22f, 1.0f));
+ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1.00f, 0.32f, 0.32f, 1.0f));
+// 急停是安全关键操作：**永远全宽、永远在视口内**，高度按断点给（矮屏 72 / 竖屏 88 / 多栏 56~64）。
+// 断线状态下也要能按 —— 所以这里不依赖任何连接状态。
+const bool estopClicked =
+    bigButton(compactLabel ? "■  急停" : "■  急停（全部停车 / 空格键）", ImVec2(-1, L.estopH));
+// 记下安全操作区的屏幕矩形：触屏入口拿它做摇杆抓取互斥（手指落在急停上不能被摇杆吃掉）
+ui.safetyMinX = ImGui::GetItemRectMin().x;
+ui.safetyMinY = ImGui::GetItemRectMin().y;
+ui.safetyMaxX = ImGui::GetItemRectMax().x;
+ui.safetyMaxY = ImGui::GetItemRectMax().y;
+ImGui::PopStyleColor(3);
+ImGui::PopStyleVar();
+// 键盘急停：空格（正在输入框里打字时不触发）
+const bool estopHotkey =
+    !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false);
+
+if (estopClicked || estopHotkey) {
+    ui.estop = true;
+    std::vector<RobotEntry> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(ui.robotsMutex);
+        snapshot = ui.robots;
+    }
+    // 直接（同步、最快）：先停速度
+    int n = 0;
+    for (const auto& e : snapshot)
+        if (auto* c = mgr.find(e.ip); c && c->isReady() && c->stopMove()) ++n;
+
+    // 只关"我们真正打开过"的开关 —— 连按急停也不会把通道灌爆
+    // （上一版每次关 20 个，连按十几次 → 260 条指令把 SCTP 队列打满，指令反而被丢）
+    const std::vector<int> toClose(ui.activeToggleIds.begin(), ui.activeToggleIds.end());
+    if (!ui.estopBusy.exchange(true)) {
+        std::thread([&mgr, &ui, snapshot, toClose] {
+            // 狗在执行动作时可能吞掉第一条 StopMove → 补发两次
+            for (int round = 0; round < 2; ++round) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(330));
+                for (const auto& e : snapshot)
+                    if (auto* c = mgr.find(e.ip); c && c->isReady()) c->stopMove();
+            }
+            if (!toClose.empty())
+                for (const auto& e : snapshot)
+                    if (auto* c = mgr.find(e.ip); c && c->isReady())
+                        c->disablePersistentModes(toClose);
+            ui.estopBusy = false;
+        }).detach();
+    }
+    for (auto& kv : ui.toggles) kv.second = false;
+    ui.activeToggleIds.clear();
+    ui.movingSent = false;
+    ui.addLog("[急停] 已锁定：停车 " + std::to_string(n) + " 台 + 关闭 " +
+              std::to_string(toClose.size()) + " 个已开启的模式；连按不会叠加");
+}
+
+// 兜底：狗仍在自走时，阻尼是唯一能"立即停住"的手段 —— 狗会软腿趴下，需二次确认
+// 阻尼与急停保持 ≥12dp 间距（靠 ItemSpacing 缩放后天然满足），避免误触
+{
+    if (!ui.dampArmed) {
+        if (ImGui::Button("强制阻尼 (Damp)…", ImVec2(-1, L.dampH)))
+            ui.dampArmed = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("兜底手段：切断电机力矩，狗会立刻软腿趴下\n"
+                              "（地面上安全；在桌上/台阶边别用）");
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.35f, 0.10f, 1.0f));
+        if (ImGui::Button("确认：立即阻尼（狗会趴下）", ImVec2(-1, L.dampH))) {
+            int m = 0;
+            std::vector<RobotEntry> snap;
+            {
+                std::lock_guard<std::mutex> lock(ui.robotsMutex);
+                snap = ui.robots;
+            }
+            for (const auto& e : snap)
+                if (auto* c = mgr.find(e.ip); c && c->isReady() && c->damp()) ++m;
+            ui.addLog("[急停] 强制阻尼 → " + std::to_string(m) + " 台");
+            ui.dampArmed = false;
+        }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::SmallButton("取消")) ui.dampArmed = false;
+    }
+    // 阻尼按钮也算安全操作区（它是"狗仍在自走"时唯一能立即停住的手段）
+    ui.safetyMaxY = std::max(ui.safetyMaxY, ImGui::GetItemRectMax().y);
+}
+
+if (ui.estop) {
+    const bool centered = std::fabs(ui.joyLx) < 0.02f && std::fabs(ui.joyLy) < 0.02f &&
+                          std::fabs(ui.joyRx) < 0.02f;
+    ImGui::TextColored(kRed, "⛔ 急停锁定中");
+    // 窄屏软换行：这行字不换行会横向溢出（改造前手机上直接看不到后半句）
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+    ImGui::TextColored(kYellow,
+                       "　一次性动作（舞蹈/空翻/拜年）固件不接受打断；"
+                       "狗仍在动就点上面「强制阻尼」立即停住");
+    ImGui::PopTextWrapPos();
+    ImGui::BeginDisabled(!centered);
+    if (bigButton(compactLabel ? "解除急停" : "解除急停（需双杆回中）",
+                  ImVec2(-1, L.btnH > 0.0f ? L.btnH + 18.0f : 34.0f))) {
+        ui.estop = false;
+        ui.movingSent = false;
+        ui.addLog("[急停] 已解除，可以继续遥控");
+    }
+    ImGui::EndDisabled();
+    if (!centered)
+        ImGui::TextColored(kYellow, "  双杆回中后才能解除急停");
+}
+
+ImGui::Spacing();
+
+const bool canMove = ui.selectedCount() > 0;
+
+ImGui::Spacing();
+// ---- 参数：宽屏常显；矮屏 / 单栏收进「参数」折叠区，把纵向空间让给急停和摇杆 ----
+// （「步速」滑条在下面的快捷区里，那里本来就要跟方向键放一起，所以不重复）
+const auto drawParamSliders = [&] {
+    ImGui::BeginDisabled(!canMove);
+    ImGui::SetNextItemWidth(L.sliderW);
+    ImGui::SliderFloat("线速度上限", &ui.maxLinSpeed, 0.05f, 1.5f, "%.2f m/s");
+    ImGui::SetNextItemWidth(L.sliderW);
+    ImGui::SliderFloat("转向角速度", &ui.yawRate, 0.2f, 2.0f, "%.2f rad/s");
+    ImGui::EndDisabled();
+};
+if (L.paramInline) {
+    drawParamSliders();
+} else if (ImGui::CollapsingHeader("参数（线速度 / 角速度）")) {
+    drawParamSliders();
+}
+
+// ---- 快捷单步（急停锁定期间不可用）----
+ImGui::Spacing();
+ImGui::TextDisabled("快捷（一次下发，速度持续到下一条指令）");
+ImGui::BeginDisabled(!canMove || ui.estop);
+{
+    const float halfW = (ImGui::GetContentRegionAvail().x - 9.0f) * 0.5f;
+    // 触摸时按钮高按断点给（≥48dp）；鼠标保持原来的 38
+    const ImVec2 bs(halfW, L.btnH > 0.0f ? L.btnH + 6.0f : 38.0f);
+    if (ImGui::Button("▲  前进", bs)) {
+        const int n = forEachSelected(mgr, ui,
+            [v = ui.speedScale](RobotClient& c) { return c.move(v, 0, 0); });
+        ui.addLog("[群控] 前进 → " + std::to_string(n) + " 台");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("◀  左转", bs)) {
+        const int n = forEachSelected(mgr, ui,
+            [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, v); });
+        ui.addLog("[群控] 左转 → " + std::to_string(n) + " 台");
+    }
+    if (ImGui::Button("▼  后退", bs)) {
+        const int n = forEachSelected(mgr, ui,
+            [v = ui.speedScale](RobotClient& c) { return c.move(-v, 0, 0); });
+        ui.addLog("[群控] 后退 → " + std::to_string(n) + " 台");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("右转  ▶", bs)) {
+        const int n = forEachSelected(mgr, ui,
+            [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, -v); });
+        ui.addLog("[群控] 右转 → " + std::to_string(n) + " 台");
+    }
+    ImGui::SetNextItemWidth(std::min(150.0f, L.sliderW * 0.6f));
+    ImGui::SliderFloat("步速", &ui.speedScale, 0.05f, 1.5f, "%.2f");
+}
+ImGui::EndDisabled();
+
+// ---- 当前指令与发送节拍 ----
+// 决策全部交给纯函数 planMotion（急停语义有单元测试保证，见 tests/motion_test.cpp）
+// 侧移按钮（按住）折算成左杆的横向分量：协议 y 左为正 → 按住"左移" = vy>0
+float lxEff = ui.joyLx;
+if (ui.sideHold != 0 && std::fabs(ui.joyLx) < 1e-3f) lxEff = -0.55f * float(ui.sideHold);
+const MotionPlan plan = planMotion(lxEff, ui.joyLy, ui.joyRx, ui.joyRy, ui.estop,
+                                   ui.maxLinSpeed, ui.yawRate, ui.movingSent);
+const int mask = (std::fabs(lxEff) > 1e-3f || std::fabs(ui.joyLy) > 1e-3f ? 1 : 0) |
+                 (std::fabs(ui.joyRx) > 1e-3f ? 2 : 0);
+ui.cmdVx = plan.vx;
+ui.cmdVy = plan.vy;
+ui.cmdVz = plan.vz;
+
+ImGui::Spacing();
+{
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "vx %+.2f   vy %+.2f   vz %+.2f", plan.vx, plan.vy,
+                  plan.vz);
+    const char* state = ui.estop ? "急停锁定 · 未下发"
+                                 : (plan.send ? "下发中 · 10Hz" : "松手即停");
+    const ImVec4 sc = ui.estop ? col::kErr : (plan.send ? col::kOk : col::kIdle);
+    readout(state, buf, sc);
+}
+
+if (canMove) {
+    const double now = ImGui::GetTime();
+    const bool sticksChanged = (mask != ui.activeMask);  // 松手/换杆：立即生效，不等下一个节拍
+    if (plan.send && (sticksChanged || now - ui.lastMoveSend >= 0.1)) {  // 10 Hz 群发
+        const float vx = plan.vx, vy = plan.vy, vz = plan.vz;
+        const int n = forEachSelected(mgr, ui,
+            [vx, vy, vz](RobotClient& c) { return c.move(vx, vy, vz); });
+        ui.lastMoveSend = now;
+        if (n == 0) ui.movingSent = false;
+    }
+    if (plan.stop) {
+        const int n = forEachSelected(mgr, ui,
+            [](RobotClient& c) { return c.stopMove(); });  // 松手/急停 → 勾选的狗全部停车
+        if (n > 0)
+            ui.addLog(std::string(ui.estop ? "[急停] 停车 → " : "[群控] 松开摇杆，停车 → ") +
+                      std::to_string(n) + " 台");
+    }
+    ui.movingSent = plan.send;
+    ui.activeMask = mask;
+} else {
+    ui.movingSent = false;
+    ui.activeMask = 0;
+}
+
+// 单栏模式：底部给两个**悬浮**摇杆留出空间，免得面板内容被它们压住看不见。
+// 预留高度来自 layout（与摇杆圆心同一个公式算出来），不再是写死的 250 ——
+// 改造前这两处是两套算法，屏幕一变就错位（矮屏上摇杆压住「快捷」按钮）。
+    // 内容区高度已经扣掉了摇杆区（见 drawRemotePanel 的 BeginChild），
+    // 所以这里不再需要末尾留白 —— 内容根本不会进入两个下角。
+    ImGui::EndChild();
+}
+
+// ---------------------------------------------------------------- 日志弹窗
+void drawLogPanel(UiState& ui, const LayoutSpec& L) {
+    (void)L;
+{
+    FontScope fs = fontSmall();
+    ImGui::Checkbox("自动滚动", &ui.autoScroll);
+    ImGui::SameLine();
+    ImGui::Checkbox("只看异常", &ui.logErrorsOnly);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("清空")) {
+        std::lock_guard<std::mutex> lock(ui.logMutex);
+        ui.logs.clear();
+    }
+}
+ImGui::Spacing();
+// 窄栏/单栏不再用横向滚动条（滚来滚去根本没法读），改成软换行
+const bool wrapLog = true;  // 弹窗里一律软换行
+ImGui::BeginChild("logscroll", ImVec2(0, 0), ImGuiChildFlags_None,
+                  wrapLog ? ImGuiWindowFlags_None : ImGuiWindowFlags_HorizontalScrollbar);
+{
+    std::lock_guard<std::mutex> lock(ui.logMutex);
+    FontScope fs = fontSmall();
+    for (const auto& rawLine : ui.logs) {
+        const std::string line = maskIps(rawLine, ui.privacyMode);
+        if (ui.logErrorsOnly && !isProblemLine(line)) continue;
+        ImGui::PushStyleColor(ImGuiCol_Text, logColor(line));
+        if (wrapLog) ImGui::TextWrapped("%s", line.c_str());
+        else ImGui::TextUnformatted(line.c_str());
+        ImGui::PopStyleColor();
+    }
+}
+if (ui.autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f)
+    ImGui::SetScrollHereY(1.0f);
+ImGui::EndChild();
+}
+
+// ---------------------------------------------------------------- 四个弹窗
+void drawPopups(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
+    const ImVec2 ds = ImGui::GetIO().DisplaySize;
+    const auto place = [&] {
+        ImGui::SetNextWindowPos(
+            ImVec2((ds.x - L.popupW) * 0.5f, (ds.y - L.popupH) * 0.5f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(L.popupW, L.popupH), ImGuiCond_Always);
+    };
+    const auto header = [&](const char* title) {
+        {
+            FontScope fs = fontTitle();
+            ImGui::TextUnformatted(title);
+        }
+        ImGui::SameLine();
+        const float w = 100.0f;
+        const float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > w) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - w);
+        if (ImGui::Button("关闭", ImVec2(w, L.btnH))) ImGui::CloseCurrentPopup();
+        ImGui::Separator();
+    };
+
+    place();
+    if (ImGui::BeginPopupModal(kIdDevices, &ui.showDevices, kPopupFlags)) {
+        header("设备");
+        drawDevicePanel(mgr, ui, L);
+        ImGui::EndPopup();
     }
 
-    ImGui::Spacing();
+    place();
+    if (ImGui::BeginPopupModal(kIdActions, &ui.showActions, kPopupFlags)) {
+        header("动作库");
+        drawActionLibrary(mgr, ui, L);
+        ImGui::EndPopup();
+    }
 
-    // ---- 双摇杆：左杆 = 平移，右杆 = 转向（可同时操作，松手即停）----
-    // 摇杆内嵌在遥控栏（宽屏 / 平板）；单栏模式改为**悬浮在屏幕两下角**，
-    // 由触屏入口画到前景层（见 drawJoystickAt），数值也由它写入 ——
-    // 这里必须跳过赋值，否则会把触屏算好的值覆盖成 0。
-    float lx = 0.0f, ly = 0.0f, rx = 0.0f, ry = 0.0f;
-    const bool canMove = ui.selectedCount() > 0;
-    if (L.joyInline) {
-    ImGui::BeginDisabled(!canMove);
-    {
-        const float radius = L.joyRadius;
-        const float gap = 24.0f;
-        const float totalW = radius * 4.0f + gap;
-        const float avail = ImGui::GetContentRegionAvail().x;
-        const ImVec2 base = ImGui::GetCursorPos();
-        ImGui::SetCursorPosX(base.x + (avail - totalW) * 0.5f);
-        const ImVec2 start = ImGui::GetCursorPos();
+    place();
+    if (ImGui::BeginPopupModal(kIdSettings, &ui.showSettings, kPopupFlags)) {
+        header("设置");
+        drawSettingsPanel(mgr, ui, L);
+        ImGui::EndPopup();
+    }
 
-        // 左杆：平移
-        ImGui::SetCursorPos(start);
-        drawJoystick("##joyL", radius, &lx, &ly);
-        ImGui::SetCursorPos(ImVec2(start.x, start.y + radius * 2.0f + 2.0f));
-        ImGui::TextDisabled("左杆 · 移动");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("上=前进 下=后退 左=左移 右=右移（可斜向）");
+    place();
+    if (ImGui::BeginPopupModal(kIdLog, &ui.showLog, kPopupFlags)) {
+        header("运行日志");
+        drawLogPanel(ui, L);
+        ImGui::EndPopup();
+    }
+}
 
-        // 右杆：转向
-        ImGui::SetCursorPos(ImVec2(start.x + radius * 2.0f + gap, start.y));
-        drawJoystick("##joyR", radius, &rx, &ry);
-        ImGui::SetCursorPos(
-            ImVec2(start.x + radius * 2.0f + gap, start.y + radius * 2.0f + 2.0f));
-        ImGui::TextDisabled("右杆 · 转向");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("左=左转 右=右转（角速度随幅度变化）；纵向暂未启用");
+// ---------------------------------------------------------------- 悬浮双摇杆
+// 只在鼠标输入时用这个（安卓触屏由平台层接管手指事件，那边自己算）
+bool joystickHitArea(const char* id, ImVec2 center, float radius, float* x, float* y) {
+    ImGui::SetNextWindowPos(ImVec2(center.x - radius, center.y - radius), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(radius * 2.0f, radius * 2.0f), ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin(id, nullptr,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus);
+    ImGui::SetCursorPos(ImVec2(0.0f, 0.0f));
+    ImGui::InvisibleButton("##hit", ImVec2(radius * 2.0f, radius * 2.0f));
+    const bool active = ImGui::IsItemActive();
 
+    if (active) {
+        const ImVec2 m = ImGui::GetIO().MousePos;
+        const float limit = radius - 18.0f;  // 留出旋钮半径
+        float nx = (m.x - center.x) / limit;
+        float ny = (m.y - center.y) / limit;
+        const float len = std::sqrt(nx * nx + ny * ny);
+        if (len > 1.0f) { nx /= len; ny /= len; }   // 限制在圆内
+        if (len < 0.08f) { nx = 0.0f; ny = 0.0f; }  // 死区
+        *x = nx;
+        *y = ny;
+    } else {
+        *x = 0.0f;  // 松手即停
+        *y = 0.0f;
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    return active;
+}
+
+/// 画两个摇杆 + 处理鼠标输入。**必须在主窗口 End() 之后调用**。
+/// 视觉画到前景层（GetForegroundDrawList）—— 永远盖在所有窗口与弹窗之上。
+void drawJoysticks(UiState& ui, const LayoutSpec& L) {
+    float lx = ui.joyLx, ly = ui.joyLy, rx = ui.joyRx, ry = ui.joyRy;
+    bool lActive = ui.joyLActive, rActive = ui.joyRActive;
+
+    if (!ui.joysticksByPlatform) {
+        // 鼠标：两个小透明窗口当命中区；安卓那边手指事件在进 ImGui 之前就被平台层消费了
+        const bool canMove = ui.selectedCount() > 0;
+        ImGui::BeginDisabled(!canMove);
+        lActive = joystickHitArea("##joyLhit", ImVec2(L.joyInsetX, L.joyCenterY), L.joyRadius,
+                                  &lx, &ly);
+        rActive = joystickHitArea("##joyRhit",
+                                  ImVec2(L.screenW - L.joyInsetX, L.joyCenterY), L.joyRadius,
+                                  &rx, &ry);
+        ImGui::EndDisabled();
         ui.joyLx = lx;
         ui.joyLy = ly;
         ui.joyRx = rx;
         ui.joyRy = ry;
     }
-    ImGui::EndDisabled();
-    }  // ← if (L.joyInline)
 
-    ImGui::Spacing();
-    // ---- 参数：宽屏常显；矮屏 / 单栏收进「参数」折叠区，把纵向空间让给急停和摇杆 ----
-    // （「步速」滑条在下面的快捷区里，那里本来就要跟方向键放一起，所以不重复）
-    const auto drawParamSliders = [&] {
-        ImGui::BeginDisabled(!canMove);
-        ImGui::SetNextItemWidth(L.sliderW);
-        ImGui::SliderFloat("线速度上限", &ui.maxLinSpeed, 0.05f, 1.5f, "%.2f m/s");
-        ImGui::SetNextItemWidth(L.sliderW);
-        ImGui::SliderFloat("转向角速度", &ui.yawRate, 0.2f, 2.0f, "%.2f rad/s");
-        ImGui::EndDisabled();
-    };
-    if (L.paramInline) {
-        drawParamSliders();
-    } else if (ImGui::CollapsingHeader("参数（线速度 / 角速度）")) {
-        drawParamSliders();
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    const float cxL = L.joyInsetX;
+    const float cxR = L.screenW - L.joyInsetX;
+    drawJoystickAt("##joyL", fg, cxL, L.joyCenterY, L.joyRadius, lx, ly, lActive);
+    drawJoystickAt("##joyR", fg, cxR, L.joyCenterY, L.joyRadius, rx, ry, rActive);
+
+    // 杆下方的极简标签
+    const ImU32 dim = ImGui::GetColorU32(ImVec4(1, 1, 1, 0.38f));
+    const float fs = ImGui::GetFontSize() * 0.95f;
+    ImFont* font = ImGui::GetFont();
+    const char* labels[2] = {"左 · 移动", "右 · 转向"};
+    const float xs[2] = {cxL, cxR};
+    for (int i = 0; i < 2; ++i) {
+        const ImVec2 sz = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, labels[i]);
+        fg->AddText(font, fs,
+                    ImVec2(xs[i] - sz.x * 0.5f, L.joyCenterY + L.joyRadius + 8.0f), dim,
+                    labels[i]);
     }
+}
 
-    // ---- 快捷单步（急停锁定期间不可用）----
-    ImGui::Spacing();
-    ImGui::TextDisabled("快捷（一次下发，速度持续到下一条指令）");
-    ImGui::BeginDisabled(!canMove || ui.estop);
+}  // namespace
+
+// ============================================================ 主界面
+void drawUi(RobotManager& mgr, UiState& ui) {
+    ui.sideHold = 0;  // 每帧重置：只有"按住侧移按钮"的那一帧会被置位
+
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->WorkPos);
+    ImGui::SetNextWindowSize(vp->WorkSize);
+    ImGui::Begin("Go2 控制管理台", nullptr,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    // ---- 断点布局：每帧按「视口 + 输入方式 + 安全区」重算（纯函数，带 8dp 滞回，幂等）----
+    // 注意：DisplaySize 必须是**已按设备密度归一**的逻辑尺寸（dp），
+    // 否则 3x 屏上按钮实际只有 18dp —— 归一由平台入口负责。
     {
-        const float halfW = (ImGui::GetContentRegionAvail().x - 9.0f) * 0.5f;
-        // 触摸时按钮高按断点给（≥48dp）；鼠标保持原来的 38
-        const ImVec2 bs(halfW, L.btnH > 0.0f ? L.btnH + 6.0f : 38.0f);
-        if (ImGui::Button("▲  前进", bs)) {
-            const int n = forEachSelected(mgr, ui,
-                [v = ui.speedScale](RobotClient& c) { return c.move(v, 0, 0); });
-            ui.addLog("[群控] 前进 → " + std::to_string(n) + " 台");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("◀  左转", bs)) {
-            const int n = forEachSelected(mgr, ui,
-                [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, v); });
-            ui.addLog("[群控] 左转 → " + std::to_string(n) + " 台");
-        }
-        if (ImGui::Button("▼  后退", bs)) {
-            const int n = forEachSelected(mgr, ui,
-                [v = ui.speedScale](RobotClient& c) { return c.move(-v, 0, 0); });
-            ui.addLog("[群控] 后退 → " + std::to_string(n) + " 台");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("右转  ▶", bs)) {
-            const int n = forEachSelected(mgr, ui,
-                [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, -v); });
-            ui.addLog("[群控] 右转 → " + std::to_string(n) + " 台");
-        }
-        ImGui::SetNextItemWidth(std::min(150.0f, L.sliderW * 0.6f));
-        ImGui::SliderFloat("步速", &ui.speedScale, 0.05f, 1.5f, "%.2f");
+        const ImVec2 ds = ImGui::GetIO().DisplaySize;
+        ui.layout = makeLayout(ds.x, ds.y, ui.touchInput, ui.safe,
+                               ui.layout.viewW > 0.0f ? &ui.layout : nullptr);
+        setUiFontSizes(ui.layout.fontTitle, ui.layout.fontBody, ui.layout.fontSmall);
+        applyUiScale(ui.layout.styleScale);  // 内部从基线重算，不会累乘
     }
-    ImGui::EndDisabled();
+    const LayoutSpec& L = ui.layout;
 
-    // ---- 当前指令与发送节拍 ----
-    // 决策全部交给纯函数 planMotion（急停语义有单元测试保证，见 tests/motion_test.cpp）
-    // 侧移按钮（按住）折算成左杆的横向分量：协议 y 左为正 → 按住"左移" = vy>0
-    float lxEff = ui.joyLx;
-    if (ui.sideHold != 0 && std::fabs(ui.joyLx) < 1e-3f) lxEff = -0.55f * float(ui.sideHold);
-    const MotionPlan plan = planMotion(lxEff, ui.joyLy, ui.joyRx, ui.joyRy, ui.estop,
-                                       ui.maxLinSpeed, ui.yawRate, ui.movingSent);
-    const int mask = (std::fabs(lxEff) > 1e-3f || std::fabs(ui.joyLy) > 1e-3f ? 1 : 0) |
-                     (std::fabs(ui.joyRx) > 1e-3f ? 2 : 0);
-    ui.cmdVx = plan.vx;
-    ui.cmdVy = plan.vy;
-    ui.cmdVz = plan.vz;
+    drawTopBar(mgr, ui, L);       // 顶栏：品牌 + 状态 + 四个入口按钮
+    drawRemotePanel(mgr, ui, L);  // 主界面：遥控（居中 + 宽度上限）
 
-    ImGui::Spacing();
-    {
-        char buf[96];
-        std::snprintf(buf, sizeof(buf), "vx %+.2f   vy %+.2f   vz %+.2f", plan.vx, plan.vy,
-                      plan.vz);
-        const char* state = ui.estop ? "急停锁定 · 未下发"
-                                     : (plan.send ? "下发中 · 10Hz" : "松手即停");
-        const ImVec4 sc = ui.estop ? col::kErr : (plan.send ? col::kOk : col::kIdle);
-        readout(state, buf, sc);
+    // 弹窗要在**主窗口层级**打开：顶栏按钮画在子窗口里，而 ImGui 的弹窗 ID 会带上
+    // 子窗口的 ID 栈前缀，直接在子窗口里 OpenPopup 会与这里的 BeginPopupModal 对不上
+    //（症状：点按钮没反应，弹窗永远不出现 —— 真机上踩过一次）。
+    switch (ui.popupRequest) {
+        case 1: ImGui::OpenPopup(kIdDevices);  ui.showDevices = true;  break;
+        case 2: ImGui::OpenPopup(kIdActions);  ui.showActions = true;  break;
+        case 3: ImGui::OpenPopup(kIdSettings); ui.showSettings = true; break;
+        case 4: ImGui::OpenPopup(kIdLog);      ui.showLog = true;      break;
+        default: break;
     }
-
-    if (canMove) {
-        const double now = ImGui::GetTime();
-        const bool sticksChanged = (mask != ui.activeMask);  // 松手/换杆：立即生效，不等下一个节拍
-        if (plan.send && (sticksChanged || now - ui.lastMoveSend >= 0.1)) {  // 10 Hz 群发
-            const float vx = plan.vx, vy = plan.vy, vz = plan.vz;
-            const int n = forEachSelected(mgr, ui,
-                [vx, vy, vz](RobotClient& c) { return c.move(vx, vy, vz); });
-            ui.lastMoveSend = now;
-            if (n == 0) ui.movingSent = false;
-        }
-        if (plan.stop) {
-            const int n = forEachSelected(mgr, ui,
-                [](RobotClient& c) { return c.stopMove(); });  // 松手/急停 → 勾选的狗全部停车
-            if (n > 0)
-                ui.addLog(std::string(ui.estop ? "[急停] 停车 → " : "[群控] 松开摇杆，停车 → ") +
-                          std::to_string(n) + " 台");
-        }
-        ui.movingSent = plan.send;
-        ui.activeMask = mask;
-    } else {
-        ui.movingSent = false;
-        ui.activeMask = 0;
-    }
-
-    // 单栏模式：底部给两个**悬浮**摇杆留出空间，免得面板内容被它们压住看不见。
-    // 预留高度来自 layout（与摇杆圆心同一个公式算出来），不再是写死的 250 ——
-    // 改造前这两处是两套算法，屏幕一变就错位（矮屏上摇杆压住「快捷」按钮）。
-    if (!L.joyInline) ImGui::Dummy(ImVec2(0, L.joyReserve));
-
-    ImGui::EndChild();
-    }  // ← if (showCtrl)
-
-    // ============================================================ 右：日志
-    // 三栏 → 常驻右栏；双栏 → 在遥控下方同一列；单栏 → 独立一页
-    if (showLog) {
-    if (L.mode == LayoutMode::ThreeColumn) ImGui::SameLine();
-    // 双栏：EndChild 后光标回到左边界，要手动挪回右栏
-    if (twoCol) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + L.leftW + 16.0f);
-    ImGui::BeginChild("log", ImVec2(0, single ? singleRowH : 0.0f), ImGuiChildFlags_Borders);
-    sectionTitle("运行日志");
-    ImGui::SameLine();
-    {
-        FontScope fs = fontSmall();
-        ImGui::Checkbox("自动滚动", &ui.autoScroll);
-        ImGui::SameLine();
-        ImGui::Checkbox("只看异常", &ui.logErrorsOnly);
-        ImGui::SameLine();
-        if (ImGui::SmallButton("清空")) {
-            std::lock_guard<std::mutex> lock(ui.logMutex);
-            ui.logs.clear();
-        }
-        if (!single) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("| 失败=红 · 成功=绿 · 急停=橙 · 指令=灰");
-        }
-    }
-    ImGui::Spacing();
-    // 窄栏/单栏不再用横向滚动条（滚来滚去根本没法读），改成软换行
-    const bool wrapLog = single || twoCol || L.logW < 420.0f;
-    ImGui::BeginChild("logscroll", ImVec2(0, 0), ImGuiChildFlags_None,
-                      wrapLog ? ImGuiWindowFlags_None : ImGuiWindowFlags_HorizontalScrollbar);
-    {
-        std::lock_guard<std::mutex> lock(ui.logMutex);
-        FontScope fs = fontSmall();
-        for (const auto& rawLine : ui.logs) {
-            const std::string line = maskIps(rawLine, ui.privacyMode);
-            if (ui.logErrorsOnly && !isProblemLine(line)) continue;
-            ImGui::PushStyleColor(ImGuiCol_Text, logColor(line));
-            if (wrapLog) ImGui::TextWrapped("%s", line.c_str());
-            else ImGui::TextUnformatted(line.c_str());
-            ImGui::PopStyleColor();
-        }
-    }
-    if (ui.autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f)
-        ImGui::SetScrollHereY(1.0f);
-    ImGui::EndChild();
-    ImGui::EndChild();
-    }  // ← if (showLog)
-
-    // ============================================================ 单栏模式：底部页签 / 侧滑抽屉
-    // 竖屏有纵向空间 → 底部页签；横屏矮屏 → 侧滑抽屉，把纵向空间全留给遥控
-    if (single) {
-        if (L.nav == NavKind::BottomTab) {
-            // 底部页签：遥控 / 控制台 / 日志。三个项足够，避免和页内 TabBar 重复导航。
-            ImGui::BeginChild("mobileTabBar", ImVec2(0, L.tabBarH), ImGuiChildFlags_Borders);
-            static const char* kNames[3] = {"遥控", "控制台", "日志"};
-            const float w = (ImGui::GetContentRegionAvail().x - 16.0f) / 3.0f;
-            for (int i = 0; i < 3; ++i) {
-                if (i > 0) ImGui::SameLine();
-                const bool on = (ui.mobilePage == i);
-                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.29f, 0.56f, 0.99f, 0.85f));
-                if (ImGui::Button(kNames[i], ImVec2(w, L.btnH > 0.0f ? L.btnH : 40.0f)))
-                    ui.mobilePage = i;
-                if (on) ImGui::PopStyleColor();
-            }
-            ImGui::EndChild();
-        } else if (ui.drawerOpen) {
-            // 侧滑抽屉：设备 / 动作库 / 设置（复用左栏内容），铺在内容之上
-            const ImVec2 ds = ImGui::GetIO().DisplaySize;
-            ImGui::SetNextWindowPos(ImVec2(0.0f, L.safe.top));
-            ImGui::SetNextWindowSize(ImVec2(L.drawerW, ds.y - L.safe.top - L.safe.bottom));
-            ImGui::Begin("##drawer", nullptr,
-                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
-            if (ImGui::Button("关闭", ImVec2(-1, L.btnH))) ui.drawerOpen = false;
-            ImGui::Spacing();
-            if (ImGui::BeginTabBar("##drawerTabs", ImGuiTabBarFlags_None)) {
-                if (ImGui::BeginTabItem("设备")) {
-                    ImGui::Spacing();
-                    drawDeviceList(mgr, ui);
-                    ImGui::EndTabItem();
-                }
-                if (ImGui::BeginTabItem("设置")) {
-                    ImGui::Spacing();
-                    ImGui::TextDisabled("钥匙 / 参数等设置请看「控制台」页");
-                    ImGui::EndTabItem();
-                }
-                ImGui::EndTabBar();
-            }
-            ImGui::End();
-        }
-    }
+    ui.popupRequest = 0;
+    drawPopups(mgr, ui, L);       // 设备 / 动作库 / 设置 / 日志
 
     ImGui::End();
+
+    // ★ 摇杆在最后画、且画到前景层：任何窗口与弹窗都盖不住它
+    drawJoysticks(ui, L);
 }
 
 }  // namespace go2

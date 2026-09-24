@@ -67,21 +67,30 @@ struct UiState {
 
     /// 断点布局参数（每帧由 makeLayout 算出，见 layout.hpp）。
     ///
-    /// 取代了原来的 `bool mobileLayout` —— 那种"桌面 / 手机"二选一在真实设备上两头不讨好：
-    /// 1920dp 宽的大平板被当成手机（把日志整栏砍掉、摇杆浮到两角），
-    /// 而 390dp 宽的手机竖屏因为左栏写死 452dp 直接溢出屏幕。
+    /// 取代了原来的 `bool mobileLayout` —— 那种"桌面 / 手机"二选一在真实设备上两头不讨好。
+    /// 现在主界面只有遥控 + 两下角悬浮摇杆，其余功能全走弹窗。
     LayoutSpec layout;
     /// 设备安全区（刘海 / 圆角 / 手势条），由平台入口填
     SafeArea safe;
-    /// 输入方式：最近一次操作是手指 → true，决定按钮最小尺寸（触摸 48dp / 鼠标 34dp）。
+    /// 输入方式：最近一次操作是手指 → true，决定按钮最小尺寸（触摸 50dp / 鼠标 34dp）。
     /// **按输入方式判定而不是按平台** —— 触屏笔记本、平板接外接鼠标都能自动适配。
     bool touchInput = false;
-    /// 单栏模式下当前选中的页面：0=遥控 1=控制台（设备/动作库/设置，内部再用 TabBar 分页）2=日志
-    int mobilePage = 0;
-    /// 单栏模式下侧滑抽屉是否打开
-    bool drawerOpen = false;
-    /// 日志浮层是否打开（矮屏 / 单栏模式用）
-    bool logOverlayOpen = false;
+
+    // ---- 弹窗（顶栏四个入口按钮）----
+    // 注意：顶栏按钮是在**子窗口**里画的，而 ImGui 的弹窗 ID 会带 ID 栈前缀 ——
+    // 在子窗口里直接 OpenPopup 会和主窗口层级的 BeginPopupModal 对不上（弹窗打不开）。
+    // 所以按钮只写一次性请求，由 drawUi 在主窗口层级统一 OpenPopup。
+    int popupRequest = 0;  ///< 一次性请求：0=无 1=设备 2=动作库 3=设置 4=日志
+    bool showDevices = false;   ///< 弹窗开关（作为 BeginPopupModal 的 p_open）
+    bool showActions = false;   ///< 动作库：一排排按钮平铺（不折叠）
+    bool showSettings = false;  ///< 设置：钥匙库 / 隐私 / 说明
+    bool showLog = false;       ///< 运行日志
+
+    /// 摇杆数值是否由平台层驱动（安卓触屏多点触控）：
+    /// true → 平台层负责画到前景层，ui 侧只读不写（否则会把触屏算好的值覆盖成 0）
+    bool joysticksByPlatform = false;
+    bool joyLActive = false;  ///< 左杆正在被操作（平台层回填，用于高亮）
+    bool joyRActive = false;  ///< 右杆正在被操作
 
     /// 安全操作区（急停 / 阻尼按钮的屏幕矩形，每帧由 drawUi 写入）。
     /// 悬浮摇杆的抓取范围**不得覆盖**这里 —— 否则手指落在急停上会被摇杆吃掉，
