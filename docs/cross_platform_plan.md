@@ -172,7 +172,7 @@ CI（GitHub Actions）矩阵：`windows-latest / macos-14 / ubuntu-22.04` 三端
 ## 5. 目标架构
 
 ```
-network_get/
+Go2ProController/
 ├── core/                       # ★ 纯 C++17，禁止出现 POSIX/Win32 头
 │   ├── crypto/                 #   AES-GCM / RSA / MD5 / Base64（仅依赖 OpenSSL）
 │   ├── protocol/               #   9991 / 8081 信令编解码、SDP 处理

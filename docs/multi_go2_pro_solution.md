@@ -377,7 +377,7 @@ grep -c "重试\|连接失败" verify_1800s.log     # 期望 0 或个位数
 它是**另一套完全独立的 WebRTC 协议栈（aiortc）**，用来区分"机器人问题"还是"我们客户端问题"非常有效：
 
 ```bash
-cd /mnt/d/code/project/network_get
+cd /mnt/d/code/project/Go2ProController
 .venv/bin/python tools/diag_pro.py 192.168.2.107     # 打印运动状态/模式 + 各动作原始回执
 ```
 

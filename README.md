@@ -1,4 +1,4 @@
-# network_get · Unitree Go2 控制与网络诊断工具集
+# Go2ProController · Unitree Go2 控制与网络诊断工具集
 
 面向 **Unitree Go2 系列机器狗**（Air / Pro / EDU）的二次开发工具集，包含两个可独立使用的组件：
 
@@ -112,8 +112,8 @@
 ### 1. 获取代码
 
 ```bash
-git clone <repo-url> network_get
-cd network_get
+git clone <repo-url> Go2ProController
+cd Go2ProController
 ```
 
 ### 2. 构建控制台
@@ -204,7 +204,7 @@ sudo .venv/bin/python main.py quicktest
 ## 目录结构
 
 ```
-network_get/
+Go2ProController/
 ├── client/                          # ★ Go2 控制管理台（C++17 + Dear ImGui，分层架构）
 │   ├── CMakeLists.txt               # 构建：go2_core(静态库) + go2_remote(界面) + 自测
 │   ├── CMakePresets.json            # 预设：linux / windows-msvc(vcpkg) / macos-universal / android-arm64

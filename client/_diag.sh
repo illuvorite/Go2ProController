@@ -6,7 +6,7 @@ pkill -9 -f "go2_remote" 2>/dev/null
 sleep 1
 ps aux | grep -E "ninja|cmake|go2_remote" | grep -v grep || echo "(已清理干净)"
 echo "=== 重新构建 ==="
-cd /mnt/d/code/project/network_get/client || exit 1
+cd /mnt/d/code/project/Go2ProController/client || exit 1
 ninja -C build 2>&1 | tail -4
 echo "ninja 退出码: $?"
 echo "=== 回归测试（25s）==="

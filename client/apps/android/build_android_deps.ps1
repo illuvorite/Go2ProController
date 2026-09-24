@@ -13,7 +13,7 @@ $env:ALL_PROXY      = "127.0.0.1:7897"
 $env:https_proxy    = "127.0.0.1:7897"
 $env:http_proxy     = "127.0.0.1:7897"
 
-$base = "d:\code\project\network_get\client\apps\android"
+$base = "d:\code\project\Go2ProController\client\apps\android"
 $env:PATH = "$base\_sdk\cmake\3.22.1\bin;$env:PATH"
 $env:ANDROID_NDK_HOME = "$base\_sdk\ndk\26.1.10909125"
 $env:ANDROID_NDK      = $env:ANDROID_NDK_HOME

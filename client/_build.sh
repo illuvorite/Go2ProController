@@ -1,6 +1,6 @@
 #!/bin/bash
 # 临时构建+回归脚本
-cd /mnt/d/code/project/network_get/client || exit 1
+cd /mnt/d/code/project/Go2ProController/client || exit 1
 echo "=== build ==="
 cmake --build build 2>&1 | tail -4
 echo "=== regression (25s) ==="

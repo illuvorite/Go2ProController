@@ -16,8 +16,8 @@
 # ============================================================================
 $ErrorActionPreference = "Continue"
 
-$base     = "d:\code\project\network_get\client\apps\android"
-$client   = "d:\code\project\network_get\client"
+$base     = "d:\code\project\Go2ProController\client\apps\android"
+$client   = "d:\code\project\Go2ProController\client"
 $prefix   = "$base\_deps_arm64"
 $ndk      = "$base\_sdk\ndk\26.1.10909125"
 $cmakeBin = "$base\_sdk\cmake\3.22.1\bin"

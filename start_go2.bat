@@ -15,7 +15,7 @@ timeout /t 3 /nobreak >nul
 
 echo [3/5] Starting Go2 GUI (this window stays while the GUI is open) ...
 echo step3: launch app >> "%TRACE%"
-wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/d/code/project/network_get/client && stdbuf -o0 ./build/go2_remote 2>&1 | tee /mnt/d/code/project/network_get/last_run.log" >> "%TRACE%" 2>&1
+wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/d/code/project/Go2ProController/client && stdbuf -o0 ./build/go2_remote 2>&1 | tee /mnt/d/code/project/Go2ProController/last_run.log" >> "%TRACE%" 2>&1
 echo step3 exit=%errorlevel% >> "%TRACE%"
 
 echo [4/5] App exited.
