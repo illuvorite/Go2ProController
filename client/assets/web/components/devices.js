@@ -1,6 +1,6 @@
 // 设备弹窗：改名 / 单控 / 连接 / 删除 / 手动添加 + 群控·取消受控
 import { ref } from 'vue'
-import { store, cmd } from '../store.js'
+import { store, cmd, maskIp } from '../store.js'
 import { ICON } from '../icons.js'
 
 export default {
@@ -21,12 +21,14 @@ export default {
       newIp.value = ''
     }
     return {
-      ICON, store, newIp, renaming, newName, doRename, addIp,
+      ICON, store, newIp, renaming, newName, doRename, addIp, maskIp,
       close: () => { store.modal = '' },
       one: (ip) => cmd({ cmd: 'select', mode: 'one', ip }),
       all: () => cmd({ cmd: 'select', mode: 'all' }),
       none: () => cmd({ cmd: 'select', mode: 'none' }),
       connect: (ip) => cmd({ cmd: 'connect', ip }),
+      connectAll: () => cmd({ cmd: 'connectall' }),
+      disconnectAll: () => cmd({ cmd: 'disconnectall' }),
       remove: (ip) => cmd({ cmd: 'remove', ip }),
       scan: () => cmd({ cmd: 'scan' }),
       batteryText: (v) => (v >= 0 ? Math.round(v) + '%' : '—'),
@@ -56,7 +58,7 @@ export default {
                      @keyup.esc="renaming = ''" />
             </div>
             <div v-else>
-              <div class="nm">{{ r.label }}</div>
+              <div class="nm">{{ maskIp(r.label) }}</div>
               <div class="ip">{{ r.state }}<span v-if="r.battery >= 0"> · {{ batteryText(r.battery) }} · 模式 {{ r.mode }}</span></div>
             </div>
           </div>
@@ -75,6 +77,10 @@ export default {
       </div>
 
       <div class="modal-foot">
+        <div class="row">
+          <button class="ghost" @click="connectAll()"><span class="ic">{{ ICON.link }}</span>全部连接</button>
+          <button class="ghost" @click="disconnectAll()">全部断开</button>
+        </div>
         <div class="row">
           <button class="ghost" @click="all()"><span class="ic">{{ ICON.users }}</span>群控（全选）</button>
           <button class="ghost" @click="none()">取消受控</button>

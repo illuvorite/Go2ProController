@@ -6,7 +6,8 @@ import { ICON } from '../icons.js'
 export default {
   name: 'SettingsModal',
   setup() {
-    const probeIp = ref('')  // 空 = 后端自动取设备列表第一台
+    const probeIp = ref('')     // 空 = 后端自动取设备列表第一台
+    const manualKey = ref('')   // 手动粘贴 32 位 hex（与 ImGui 设置页同一功能）
 
     function toggle(name) {
       const v = !param(name)
@@ -14,11 +15,15 @@ export default {
       post({ cmd: 'param', name, value: v })
     }
     function probe() { post({ cmd: 'keyprobe', ip: probeIp.value.trim() }) }
-    function apply(k) { cmd({ cmd: 'keyapply', key: k, ip: probeIp.value.trim() }) }
+    function apply(k) {
+      cmd({ cmd: 'keyapply', key: k, ip: probeIp.value.trim() })
+      if (k === manualKey.value) manualKey.value = ''
+    }
+    function applyManual() { if (manualKey.value.trim()) apply(manualKey.value.trim()) }
 
     const scan = () => store.st.keyScan || {}
     return {
-      ICON, store, param, toggle, probe, apply, probeIp, scan,
+      ICON, store, param, toggle, probe, apply, applyManual, probeIp, manualKey, scan,
       running: () => scan().running === true,
       note: () => scan().note || '',
       candidates: () => scan().candidates || [],
@@ -73,6 +78,12 @@ export default {
         <div v-for="k in candidates()" :key="k" class="keyscan-cand">
           <span class="mono">{{ k }}</span>
           <button class="ghost sm" @click="apply(k)">采用</button>
+        </div>
+        <div class="keyscan-row" style="margin-top:12px">
+          <input v-model="manualKey" placeholder="手动粘贴 32 位 hex 钥匙" @keyup.enter="applyManual()" />
+          <button class="sm" :disabled="!manualKey.trim()" @click="applyManual()">
+            <span class="ic">{{ ICON.key }}</span>保存
+          </button>
         </div>
         <p class="tip">
           采用后写入本地 <span class="mono">keys.txt</span> 并绑定到该 IP，下次连接自动生效；

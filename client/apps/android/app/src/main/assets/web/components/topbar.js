@@ -2,7 +2,7 @@
 // 设备 / 页面切换（遥控⇄动作库）/ ⋯更多（设置·日志）/ ■急停
 // ⚠ 与 ImGui 端保持一致：不要返回键，「设备」必须在顶栏（不埋进菜单）
 import { computed } from 'vue'
-import { store, cmd } from '../store.js'
+import { store, cmd, maskIp } from '../store.js'
 import { ICON } from '../icons.js'
 
 export default {
@@ -17,7 +17,7 @@ export default {
     function open(m) { store.modal = m; store.menu = false }
 
     return {
-      ICON, store, isRemote, unread, battery, togglePage, toPage, open,
+      ICON, store, isRemote, unread, battery, togglePage, toPage, open, maskIp,
       estop: () => cmd({ cmd: 'estop' }),
       batteryText: (v) => (v >= 0 ? Math.round(v) + '%' : '—'),
     }
@@ -28,7 +28,7 @@ export default {
       <span class="brand"><span class="ic">{{ ICON.dog }}</span>Go2 控制台</span>
       <span class="chip" :class="{on: store.st.selectedCount > 0}">
         <span class="ic">{{ store.st.selectedCount > 1 ? ICON.users : ICON.user }}</span>
-        {{ store.st.target || '未选择受控' }}
+        {{ maskIp(store.st.target) || '未选择受控' }}
       </span>
       <span class="chip">
         <span class="ic">{{ ICON.battery }}</span>{{ batteryText(battery) }}

@@ -1,7 +1,7 @@
 // 摇杆带：双摇杆恒悬浮两下角 + 中间「单控 / 群控」面板
 // 对应 ImGui 端的 drawJoysticks：摇杆半径 clamp(min(viewW,viewH)*0.15, 52, 88)，矮屏（<760）上限 70
 import { computed, ref, onMounted, onUnmounted, watchEffect } from 'vue'
-import { store, cmd, post, param } from '../store.js'
+import { store, cmd, post, param, maskIp } from '../store.js'
 import { planMotion } from '../motion.js'
 import { ICON } from '../icons.js'
 import Joystick from './joystick.js'
@@ -78,7 +78,7 @@ export default {
     function pick(ip) { store.picker = false; cmd({ cmd: 'select', mode: 'one', ip }) }
     function pickNone() { store.picker = false; cmd({ cmd: 'select', mode: 'none' }) }
 
-    return { ICON, store, radius, lx, ly, rx, onChange, toggleSel, toggleAll, pick, pickNone,
+    return { ICON, store, radius, lx, ly, rx, onChange, toggleSel, toggleAll, pick, pickNone, maskIp,
              batteryText: (v) => (v >= 0 ? Math.round(v) + '%' : '—') }
   },
   template: `
@@ -91,13 +91,13 @@ export default {
       <div class="dog-row">
         <!-- 用 label 包 card：点卡片任意处 = 点右上角的选择框（一次 change，不会双触发） -->
         <label v-for="r in store.st.robots" :key="r.ip" class="dog-card" :class="{sel: r.selected}"
-               :title="r.ip + ' · ' + r.state">
+               :title="maskIp(r.ip) + ' · ' + r.state">
           <input type="checkbox" class="dog-ck" :checked="r.selected" @change="toggleSel(r)" />
           <span class="dog-dot" :class="{ready: r.ready}"></span>
           <!-- 宇树 Go2 实拍图（Wikimedia Commons，CC BY 3.0，署名见 img/CREDITS.txt） -->
           <img class="dog-img" src="./img/go2.jpg" alt="Unitree Go2"
                srcset="./img/go2.jpg 1x, ./img/go2@2x.jpg 2x" />
-          <span class="dog-nm">{{ r.label }}</span>
+          <span class="dog-nm">{{ maskIp(r.label) }}</span>
           <span class="dog-bt">
             <span class="ic">{{ ICON.battery }}</span>{{ batteryText(r.battery) }}
             <span class="dog-st" :class="{ok: r.ready}">· {{ r.state }}</span>
@@ -126,7 +126,7 @@ export default {
         <button v-for="r in store.st.robots" :key="r.ip" class="picker-item"
                 :class="{sel: r.selected}" @click="pick(r.ip)">
           <span class="dot" :class="{ready: r.ready}"></span>
-          <span class="nm">{{ r.label }}</span>
+          <span class="nm">{{ maskIp(r.label) }}</span>
           <span class="st">{{ r.state }}</span>
           <span class="bt">{{ batteryText(r.battery) }}</span>
         </button>

@@ -206,10 +206,14 @@ button.icon-btn { padding: 9px 12px; position: relative; }
 .dot.ready { background: var(--ok); box-shadow: 0 0 9px rgba(63, 178, 87, .8); }
 
 /* ---------------- 动作库 ---------------- */
+.act-header { display: flex; gap: 18px; flex-wrap: wrap; padding: 10px 14px; }
+.act-opt { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-size: 13.5px; }
+.act-opt .ck { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
 .group { margin-bottom: 0; }
 .group .title { margin-bottom: 7px; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 7px; }
 .tile {
+  position: relative;
   flex-direction: column; gap: 4px; padding: 9px 4px 7px; border-radius: 10px;
   background: var(--card); transition: transform .12s, box-shadow .12s, background .12s;
 }
@@ -217,6 +221,12 @@ button.icon-btn { padding: 9px 12px; position: relative; }
 .tile .ico { font-family: 'Phosphor', sans-serif; font-size: 19px; line-height: 1; opacity: .95; }
 .tile .nm { font-size: 11px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .tile .tag { font-size: 10px; color: var(--dim); }
+.tile .tag.ack { position: absolute; top: 3px; right: 5px; font-size: 10px; }
+.tile .tag.ack.ok { color: var(--ok); }
+.tile .tag.ack.bad { color: #ff8b82; }
+.log-tools { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.log-opt { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--dim); cursor: pointer; }
+.log-opt input { width: auto; accent-color: var(--accent); }
 .tile.risky { border-color: rgba(224, 52, 43, .55); }
 .tile.on { border-color: rgba(77, 147, 255, .6); background: rgba(77, 147, 255, .12); }
 

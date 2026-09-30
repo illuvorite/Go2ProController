@@ -79,3 +79,10 @@ export async function post(body) {
     store.err = e.message
   }
 }
+
+/// 隐私模式：把文本里的 IPv4 中间两段打码（与 ImGui 端 maskIps 同一规则）。
+/// 隐私开关关闭时原样返回。
+export function maskIp(text) {
+  if (!param('privacy') || !text) return text
+  return String(text).replace(/\b(\d{1,3}\.\d{1,3})\.(\d{1,3}\.\d{1,3})\b/g, '$1.*.***')
+}

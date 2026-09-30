@@ -273,7 +273,7 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
                    {"speedScale", ui.speedScale},  {"bodyHeight", ui.bodyHeight},
                    {"footRaise", ui.footRaise},    {"speedLevel", ui.speedLevel},
                    {"gaitType", ui.gaitType},      {"mcf", ui.mcfMode},
-                   {"privacy", ui.privacyMode}};
+                   {"privacy", ui.privacyMode},    {"hideUnsupported", ui.hideUnsupported}};
     j["cmd"] = {{"vx", ui.cmdVx}, {"vy", ui.cmdVy}, {"vz", ui.cmdVz}};
     nlohmann::json tg = nlohmann::json::object();
     for (const auto& kv : ui.toggles) tg[kv.first] = kv.second;
@@ -299,6 +299,12 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
         o["group"] = static_cast<int>(a.group);
         o["risky"] = a.risky;
         o["toggle"] = a.toggle;
+        // 可用性标注（与 ImGui 端一致）：上次回执 code（0=成功，3203=该固件没有此指令）
+        int id = apiIdFor(a, ui.mcfMode);
+        if (id == 0) id = apiIdFor(a, !ui.mcfMode);
+        int code = -1;
+        std::string note;
+        if (id != 0 && ui.apiResult(id, &code, &note)) o["ack"] = code;
         acts.push_back(o);
     }
     j["actions"] = acts;
@@ -451,6 +457,7 @@ bool startWebUi(RobotManager& mgr, UiState& ui, int port) {
                 else if (name == "gaitType") ui.gaitType = std::clamp(in.value("value", 0), 0, 4);
                 else if (name == "mcf") ui.mcfMode = in.value("value", false);
                 else if (name == "privacy") ui.privacyMode = in.value("value", false);
+                else if (name == "hideUnsupported") ui.hideUnsupported = in.value("value", false);
                 else { out["ok"] = false; out["error"] = "未知参数：" + name; }
                 if (!out.contains("ok")) out["ok"] = true;
             } else if (cmd == "damp") {
@@ -515,6 +522,26 @@ bool startWebUi(RobotManager& mgr, UiState& ui, int port) {
                               "（下次连接生效；握手成功即为正确钥匙）");
                     out["ok"] = true;
                 }
+            } else if (cmd == "connectall") {
+                // 与 ImGui 设备弹窗的「全部连接」同一语义：列表内全部错峰连接
+                std::vector<std::string> ips;
+                {
+                    std::lock_guard<std::mutex> lock(ui.robotsMutex);
+                    for (const auto& e : ui.robots) ips.push_back(e.ip);
+                }
+                if (!ips.empty()) mgr.connectAll(ips, 600);
+                ui.addLog("[WebUI] 全部连接 → " + std::to_string(ips.size()) + " 台");
+                out["ok"] = true;
+            } else if (cmd == "disconnectall") {
+                mgr.disconnectAll();
+                ui.addLog("[WebUI] 全部断开");
+                out["ok"] = true;
+            } else if (cmd == "clearlog") {
+                {
+                    std::lock_guard<std::mutex> lock(ui.logMutex);
+                    ui.logs.clear();
+                }
+                out["ok"] = true;
             } else if (cmd == "scan") {
                 // 与桌面端同一份实现（ui.cpp 的 startScan：网段 TCP 探测 + SN 多播 + 自动连接）
                 startScan(mgr, ui);
