@@ -29,15 +29,17 @@ export default {
   },
   template: `
   <section class="page">
-    <!-- 安全行：急停（大头）+ 强制阻尼（小头，两步确认）—— 同一行省高度，急停依然最显眼 -->
-    <div class="safe-row">
-      <button class="estop-big" :class="{armed: store.st.estop}" @click="estop()">
-        <span class="ic">{{ ICON.estop }}</span>急停（全部停车）
-      </button>
-      <button v-if="!store.dampArmed" class="damp" @click="store.dampArmed = true">
-        <span class="ic">{{ ICON.lock }}</span>强制阻尼…
-      </button>
-      <button v-else class="damp-go" @click="damp()">确认阻尼？</button>
+    <!-- 急停：永远全宽、永远可见（安全关键，断线也要能按）；阻尼单独一行（与 ImGui 端同构） -->
+    <button class="estop-big" :class="{armed: store.st.estop}" @click="estop()">
+      <span class="ic">{{ ICON.estop }}</span>急停（全部停车 / 空格键）
+    </button>
+
+    <div v-if="!store.dampArmed" class="damp" @click="store.dampArmed = true">
+      <span class="ic">{{ ICON.lock }}</span>强制阻尼 (Damp)…
+    </div>
+    <div v-else class="damp-confirm">
+      <button class="damp-go" @click="damp()">确认：立即阻尼（狗会趴下）</button>
+      <button class="ghost" @click="store.dampArmed = false">取消</button>
     </div>
 
     <div v-if="store.st.estop" class="estop-box">
@@ -54,13 +56,13 @@ export default {
       <div class="card pad">
         <p class="title"><span class="ic">{{ ICON.sliders }}</span>参数</p>
         <IosSlider label="线速度上限" :value="param('maxLinSpeed')" :min="0.05" :max="1.5"
-                   :step="0.01" unit=" m/s" :disabled="!canMove"
+                   :step="0.01" unit=" m/s" :def="0.60" :disabled="!canMove"
                    @update="v => onSlide('maxLinSpeed', v)" @commit="v => onCommit('maxLinSpeed', v)" />
         <IosSlider label="转向角速度" :value="param('yawRate')" :min="0.2" :max="2.0"
-                   :step="0.01" unit=" rad/s" :disabled="!canMove"
+                   :step="0.01" unit=" rad/s" :def="1.20" :disabled="!canMove"
                    @update="v => onSlide('yawRate', v)" @commit="v => onCommit('yawRate', v)" />
         <IosSlider label="快捷步速" :value="param('speedScale')" :min="0.05" :max="1.5"
-                   :step="0.01" unit="" :disabled="!canMove"
+                   :step="0.01" unit="" :def="0.50" :disabled="!canMove"
                    @update="v => onSlide('speedScale', v)" @commit="v => onCommit('speedScale', v)" />
       </div>
 

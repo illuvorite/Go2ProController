@@ -130,10 +130,6 @@ button.icon-btn { padding: 9px 12px; position: relative; }
 .empty { color: var(--dim); font-size: 13px; padding: 10px 2px; }
 
 /* ---------------- 遥控页 ---------------- */
-/* 安全行：急停占大头，强制阻尼占小头（同一行省高度，急停依然最显眼） */
-.safe-row { display: flex; gap: 10px; align-items: stretch; }
-.safe-row .estop-big { flex: 2; }
-.safe-row .damp, .safe-row .damp-go { flex: 1; }
 .estop-big {
   width: 100%; height: 56px; font-size: 16px; font-weight: 650; letter-spacing: .5px;
   border-radius: 14px;
@@ -154,10 +150,19 @@ button.icon-btn { padding: 9px 12px; position: relative; }
 .estop-title { font-weight: 650; color: #ff9a92; margin-bottom: 6px; }
 .estop-tip { font-size: 12.5px; color: var(--dim); margin-bottom: 10px; }
 .unestop { width: 100%; height: 46px; }
-.damp { width: 100%; }
+/* 强制阻尼：全宽一行（div 伪装成按钮，样式与 button 一致） */
+.damp {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; height: 52px; font-size: 14.5px; cursor: pointer; color: var(--text);
+  border-radius: 12px; border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .10), rgba(255, 255, 255, .05));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .12) inset, 0 4px 12px rgba(0, 0, 0, .28);
+  transition: transform .12s, background .12s;
+}
+.damp:hover { background: linear-gradient(180deg, rgba(255, 255, 255, .15), rgba(255, 255, 255, .07)); transform: translateY(-1px); }
 .damp-confirm { display: flex; gap: 8px; }
 .damp-go {
-  flex: 1; background: linear-gradient(180deg, #ff8a3d, #d1560c);
+  flex: 1; height: 52px; background: linear-gradient(180deg, #ff8a3d, #d1560c);
   border-color: #ffab6b; box-shadow: 0 1px 0 rgba(255, 255, 255, .25) inset, 0 6px 18px rgba(255, 138, 61, .3);
 }
 
@@ -186,6 +191,7 @@ button.icon-btn { padding: 9px 12px; position: relative; }
 }
 .slider-knob.grab { transform: scale(1.08); }
 .slider-value { width: 74px; flex: 0 0 auto; text-align: right; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: var(--dim); }
+.slider-reset { flex: 0 0 auto; padding: 3px 8px; font-size: 11.5px; border-radius: 8px; }
 
 /* D-pad */
 .dpad { display: flex; flex-direction: column; gap: 8px; }

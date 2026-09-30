@@ -12,6 +12,7 @@ export default {
     step: { type: Number, default: 0.01 },
     unit: { type: String, default: '' },
     digits: { type: Number, default: 2 },
+    def: { type: Number, default: null },  // 默认值：给了就显示「重置」（对齐 ImGui paramRowF）
     disabled: Boolean,
   },
   emits: ['update', 'commit'],
@@ -24,6 +25,8 @@ export default {
       return Math.max(0, Math.min(1, t)) * 100
     })
     const text = computed(() => Number(props.value).toFixed(props.digits) + props.unit)
+    const showReset = computed(() =>
+      props.def !== null && Math.abs(props.value - props.def) > 1e-9)
 
     function valueAt(clientX) {
       const r = el.value.getBoundingClientRect()
@@ -51,7 +54,12 @@ export default {
       emit('commit', props.value)
     }
 
-    return { el, dragging, pct, text, down, move, up }
+    function reset() {
+      emit('update', props.def)
+      emit('commit', props.def)
+    }
+
+    return { el, dragging, pct, text, showReset, reset, down, move, up }
   },
   template: `
   <div class="slider-row" :class="{off:disabled}">
@@ -62,6 +70,7 @@ export default {
       <div class="slider-knob" :class="{grab:dragging}" :style="{left: pct + '%'}"></div>
     </div>
     <div class="slider-value">{{ text }}</div>
+    <button v-if="showReset" class="ghost sm slider-reset" @pointerdown.stop @click="reset()">重置</button>
   </div>
   `,
 }
