@@ -32,6 +32,21 @@ public class MainActivity extends SDLActivity {
         return new String[]{"SDL2", "main"};
     }
 
+    /**
+     * ★ 网页界面常驻：本 Activity 是 singleInstance（SDL 要求任务独占），
+     * 从桌面再点图标时系统会把本 Activity 提到前台、把盖在上面的 WebUiActivity 压到后面
+     * —— 表现为"回到应用变成 ImGui"。这里在回到前台时检查：
+     * 网页界面若是"被切后台"（而非用户按返回键关掉）→ 立刻重新盖上来。
+     */
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // ⚠ WebUiActivity 的 onStop（在另一个任务里）可能晚于本 onResume 才执行
+        //   → 延迟一点再检查，不然标志还没置位、检查扑空
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                () -> com.go2.remote.WebUiActivity.reopenIfBackgrounded(this), 300);
+    }
+
     /** 原生侧调用：申请组播锁 */
     public void acquireMulticastLock() {
         if (multicastLock != null) return;

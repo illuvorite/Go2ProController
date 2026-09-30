@@ -122,9 +122,11 @@
         </activity>
 
         <!-- 网页界面（Vue3）：指向本进程 C++ 起的 127.0.0.1 本机服务。
-             返回键 finish() → 回到上面的 ImGui 界面，两套界面共存。 -->
+             返回键 finish() → 回到上面的 ImGui 界面，两套界面共存。
+             singleTop：native 轮询与 MainActivity.onResume 都可能开它，别叠两个实例。 -->
         <activity android:name="com.go2.remote.WebUiActivity"
             android:label="@string/app_name"
+            android:launchMode="singleTop"
             android:screenOrientation="fullSensor"
             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:exported="false" >

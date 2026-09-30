@@ -29,8 +29,21 @@ public class WebUiActivity extends Activity {
     /// WebView 盖在 SDL 界面上时，**不算切后台**（连接要保持，网页界面才能控制狗）
     private static volatile boolean sShowing = false;
 
+    /// ★ 网页界面**没被关掉**却离开了前台（按 Home / 锁屏 / 切到别的应用）时置位。
+    /// MainActivity.onResume 会消费它 → 重新把 WebView 盖上来（用户要求：网页界面常驻）。
+    /// 按**返回键**离开时不置位（isFinishing=true）—— 那是用户明确要回 ImGui 界面。
+    private static volatile boolean sWentBackgrounded = false;
+
     /// native 侧查询（JNI）
     public static boolean isShowing() { return sShowing; }
+
+    /// MainActivity.onResume 调用：网页界面是"被切后台"而非"被关掉"时，重新盖上来
+    public static void reopenIfBackgrounded(Context ctx) {
+        if (sWentBackgrounded) {
+            sWentBackgrounded = false;
+            open(ctx, null);   // url 为空 → 用 WebUiActivity 里记住的地址
+        }
+    }
 
     /// 从 SDL 线程调用也安全：post 到主线程再 startActivity（UI 操作必须在主线程）
     public static void open(final Context ctx, final String url) {
@@ -38,8 +51,12 @@ public class WebUiActivity extends Activity {
             @Override
             public void run() {
                 Intent i = new Intent(ctx, WebUiActivity.class);
-                i.putExtra("url", url);
-                i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                if (url != null) i.putExtra("url", url);
+                // ★ NEW_TASK：MainActivity 是 singleInstance（任务独占），WebView 开在**另一个任务**里。
+                //   只用 REORDER_TO_FRONT 只会在 WebView 自己的任务内重排，**任务本身上不来** ——
+                //   MainActivity 的任务还盖在上面，表现为"怎么都不回到网页界面"（踩过）。
+                //   NEW_TASK 把 WebView 所在任务整个提到前台；SINGLE_TOP 复用已有实例不叠加。
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                 ctx.startActivity(i);
             }
         });
@@ -78,12 +95,21 @@ public class WebUiActivity extends Activity {
     protected void onResume() {
         super.onResume();
         sShowing = true;
+        sWentBackgrounded = false;   // 已经回到网页界面了，别再让 MainActivity 重复开一次
     }
 
     @Override
     protected void onPause() {
         sShowing = false;
         super.onPause();
+    }
+
+    @Override
+    protected void onStop() {
+        // 没被 finish 却离开前台 = 按了 Home / 锁屏 / 切走 → 记下来，
+        // 等 MainActivity.onResume 时把网页重新盖上来（用户要求网页界面常驻）
+        if (!isFinishing()) sWentBackgrounded = true;
+        super.onStop();
     }
 
     @Override
