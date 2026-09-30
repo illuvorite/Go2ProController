@@ -14,6 +14,8 @@
 | `con_notify.py` | 读 `con_notify` 明文，判断固件/是否需要每设备钥匙 | `python3 con_notify.py <IP>` |
 | `dds_raw.py` | DDS 侧原始探测（bashrunner / programming_actuator 线索） | 见文件头注释 |
 | `pcap_viewer.py` | 抓包文件（pcap）查看与统计 | `python3 pcap_viewer.py <file.pcap>` |
+| `icons/gen_icons.py` | 生成 Phosphor 图标字形常量（`client/ui/icons.hpp` 与网页端 `icons.js`） | 见文件头注释（码点从同目录 phosphor.css 解析） |
+| `web_preview.py` | 网页界面预览服务器（Windows 上跑，假数据顶掉 /api/state 与 /api/command） | `python -X utf8 web_preview.py [端口]` → http://127.0.0.1:8123 |
 
 > ⚠️ `unitree_cloud.py` 会访问宇树官方服务器，请自行确认后手动执行。
 > ⚠️ 钥匙文件（`keys.json` / `keys.txt` / `*_keys*.json`）一律不要提交到版本库。

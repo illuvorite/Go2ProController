@@ -32,8 +32,6 @@ bool loadUiFontsFromMemory(const void* data, int dataSize, float fontScale = 1.0
 /// 此时界面里的图标位置会退化成手绘简笔形状（见 ui.cpp 的 drawTileIcon），功能不受影响。
 bool iconFontLoaded();
 
-const UiFonts& uiFonts();
-
 /// 按断点设置三档字号（运行时可变）
 void setUiFontSizes(float title, float body, float small);
 

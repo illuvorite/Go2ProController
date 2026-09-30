@@ -1,13 +1,15 @@
 # Go2 遥控客户端（C++ / 跨平台）
 
-Unitree Go2 的桌面**控制管理台**。原生代码、跨平台（Windows / Linux / macOS），
+Unitree Go2 的**控制管理台**。原生代码、跨平台（Windows / Linux / macOS），
 通过机器狗 WiFi 上的 **WebRTC 数据通道**下发运动指令。
+有两套界面：**ImGui 桌面/安卓原生界面** 与 **Vue3 网页界面**（见 [`assets/web/README.md`](assets/web/README.md)）。
 
 支持：
 - **局域网自动发现**：并行探测本机所有 /24 网段的 9991 信令端口，并经 `/con_notify`
-  （base64 JSON，含 data1/data2）确认是 Go2
+  （base64 JSON，含 data1/data2）确认是 Go2；另有 SN 多播发现
 - **手动添加**：输入 IP 加入列表
 - **单控 / 群控**：设备列表勾选——勾 1 台单控，勾多台群控；每台独立 WebRTC 连接
+- **双摇杆遥控 / 完整动作库 / 急停（含持续模式关闭）/ 强制阻尼**（详见下文「界面功能」）
 
 > 协议细节见 [`../docs/go2_webrtc_protocol.md`](../docs/go2_webrtc_protocol.md)。
 
@@ -16,10 +18,11 @@ Unitree Go2 的桌面**控制管理台**。原生代码、跨平台（Windows / 
 | 组件 | 选型 | 说明 |
 |---|---|---|
 | 语言 | C++17 | 原生机器码，便于加壳加固 |
-| GUI | Dear ImGui + GLFW + OpenGL3 | 轻量、单 exe、MIT 授权 |
+| GUI（原生） | Dear ImGui + GLFW + OpenGL3 | 轻量、单 exe、MIT 授权 |
+| GUI（网页） | Vue3（免构建）+ cpp-httplib 本机服务 | 同一份 core，见 `assets/web/README.md` |
 | WebRTC | libdatachannel | 轻量 C++ WebRTC，主打 DataChannel |
 | 加密 | OpenSSL | AES-128/256-GCM、AES-256-ECB、RSA-PKCS1v15、MD5 |
-| HTTP | cpp-httplib | 9991 信令 |
+| HTTP | cpp-httplib | 9991 信令 + 网页界面服务 |
 | JSON | nlohmann/json | — |
 
 ## 依赖安装
@@ -139,31 +142,30 @@ cmake --build build
 ## 云账号与 data2=3 新固件（Go2 ≥ 1.1.15）
 
 固件 ≥ 1.1.15 的 Go2 在 `con_notify` 里返回 `data2=3`：握手公钥改用**每设备 AES-128 key**
-（32 位 hex）加密，不再用静态 key。该 key 绑定机器狗 SN，**只能用官方 App 绑定的
-宇树账号从云端获取**：
+（32 位 hex）加密，不再用静态 key。该 key 绑定机器狗 SN，获取途径：
 
-1. 界面顶栏「云账号」：选区（global=海外账号 / cn=国内账号），填邮箱和密码
-2. 点「登录获取钥匙」→ 走官方同款 API（`login/email` + `device/bind/list`）拉取
-   账号绑定的设备与每设备 key，装载为候选钥匙
-3. 对失败的新固件机器狗点「连」（或等自动重试）——连接时逐个尝试候选 key，
-   GCM 校验通过的那个即为这台机器的钥匙
+1. **云账号**（正路）：`core/unitree_cloud.{hpp,cpp}` 是完整实现（`login/email` +
+   `device/bind/list`，与官方 App 同款 API），配套自测 `tests/cloud_test.cpp`；
+   命令行版见 [`../tools/unitree_cloud.py`](../tools/unitree_cloud.py)。
+   ⚠ 会访问宇树官方服务器，且第三方客户端可能被 TLS 指纹风控（HTTP 567），请自行评估。
+   界面里的登录表单**未实现** —— 拿到钥匙后粘进设置页或写进 `keys.json` 即可。
+2. **从狗的内网提取**（不连电脑）：设置页「从机器狗找钥匙」（网页界面）扫狗的端口抓取候选。
+3. **电脑 adb / 狗侧脚本**：见 [`../docs/multi_go2_pro_solution.md`](../docs/multi_go2_pro_solution.md)。
 
-安全说明：密码仅以 MD5 形式经 TLS 发给宇树官方 API（与官方 App 行为一致），
-本地不落盘、不做其他用途。
+对失败的新固件机器狗点「连」（或等自动重试）——连接时逐个尝试候选 key，
+GCM 校验通过的那个即为这台机器的钥匙，并按 IP 记入 `go2_keys_cache.json`。
 
-云连通性自测（无需账号）：`tests/cloud_test.cpp`。
-
-## 界面功能
+## 界面功能（ImGui 原生界面）
 
 界面自上而下分两块：**页面区**（遥控 / 动作库，都铺满整屏宽）与 **摇杆带**（两个下角悬浮摇杆）。
 
-- **顶栏**（一行 6 个按钮）：`遥控` `动作库` 页签 · `设备` `设置` `日志` 弹窗入口 ·
+- **顶栏**（一行 4 个按钮）：`设备` 弹窗 · `页面切换`（遥控 / 动作库）· `⋯更多`（设置 / 日志，带异常角标）·
   **`■ 急停`**（两个页面都能一眼看到，`空格键` 同样有效）
-- **遥控页**：红色全宽急停（发给**所有**就绪机器狗，最安全）、强制阻尼、
+- **遥控页**：红色全宽急停（发给**所有**就绪机器狗，最安全）、强制阻尼（二次确认）、
   「参数 | 快捷」两栏（苹果风格滑条 + D-pad 方向键）、实时速度读数、**受控设备一览**
 - **动作库页（常驻整屏，不是弹窗）**：固定页眉（指令发给谁 / MCF 固件 / 隐藏不支持的）+ 可滚动动作网格；
-  按整屏宽度自动分列（最多 8 列）；组顺序 = 基础姿态 / 表演动作 / 跳跃特技 / 状态查询 / 其他进阶 /
-  **步态·速度·身高（带滑条，放最后）**；参数类一行两个、滑条撑满格子
+  按整屏宽度自动分列（最多 8 列）；组顺序 = 基础姿态 / 表演动作 / 跳跃特技 / 状态查询 / 其他进阶；
+  每个动作带 Phosphor 图标（`icons.hpp`）
 - **摇杆带**：双摇杆恒在屏幕两个下角（任何页面都盖不住）；**两杆中间是「单控 / 群控」面板** ——
   点「单控」弹出设备列表挑一台，点「群控」全选，下面显示当前受控对象；
   **弹窗打开时整条摇杆带被盖住**（不画、不响应、数值清零）
@@ -173,6 +175,8 @@ cmake --build build
 - **改名**：设备卡片「改名」按钮，名字持久化在 `robot_names.json`（应用运行目录），
   显示在设备卡片、受控设备一览与摇杆带面板上；留空 = 恢复显示 IP
 - **触摸**：按住任意位置拖动即可滚动（不用去抓右边滚动条）；滑条/按钮按断点放大到 ≥44dp
+
+> 网页界面（Vue3）的功能与此对应但交互不同（狗卡片勾选受控等），见 [`assets/web/README.md`](assets/web/README.md)。
 
 ### 两个踩过的坑（改这里必读）
 
@@ -218,19 +222,26 @@ cmake --build build
 
 ```
 client/
-├── CMakeLists.txt
-├── patches/               # libdatachannel 的 Go2 兼容补丁（FetchContent 自动应用）
-├── src/
-│   ├── main.cpp           # GLFW + ImGui 主循环，多机回调接线
-│   ├── crypto.{hpp,cpp}   # base64 / MD5 / AES-GCM / AES-ECB / RSA
-│   ├── signaling.{hpp,cpp}# 9991 信令握手 + 指纹裁剪
-│   ├── robot_client.{hpp,cpp} # 单台 WebRTC 通道 + 校验 + 心跳 + 指令
-│   ├── robot_manager.{hpp,cpp}# 多机管理（每台一个 client）
-│   ├── discovery.{hpp,cpp}# 局域网扫描 + Go2 确认
-│   └── ui.{hpp,cpp}       # ImGui 界面（设备列表 / 单控群控 / 摇杆）
-└── tests/
-    ├── crypto_test.cpp    # 加密自测（用真实抓包数据）
-    └── discovery_test.cpp # 发现模块自测（需在机器狗局域网内）
+├── CMakeLists.txt          # go2_core(静态库) + go2_remote(exe) + 自测目标
+├── core/                   # ★ 纯逻辑层（禁止平台头）
+│   ├── robot_client.{hpp,cpp}   # 单台 WebRTC 通道 + 校验 + 心跳 + 指令
+│   ├── robot_manager.{hpp,cpp}  # 多机管理（每台一个 client + 钥匙绑定）
+│   ├── signaling.{hpp,cpp}      # 9991/8081 信令握手 + 指纹裁剪
+│   ├── crypto.{hpp,cpp}         # base64 / MD5 / AES-GCM / AES-ECB / RSA
+│   ├── discovery.{hpp,cpp}      # 局域网扫描 + SN 多播 + Go2 确认
+│   ├── sport_library.{hpp,cpp}  # 宇树动作指令表（normal / MCF 双指令集）
+│   ├── motion.hpp               # 双摇杆 + 急停决策（纯函数）
+│   ├── local_keys.{hpp,cpp}     # 每设备钥匙加载（项目外安全存储）
+│   └── unitree_cloud.{hpp,cpp}  # 宇树云接口（云账号取钥匙路线）
+├── platform/net.hpp        # 平台网络层唯一接缝（POSIX / Winsock）
+├── ui/                     # ImGui 界面层 + 网页界面后端（见上「界面功能」与 web_bridge）
+├── apps/
+│   ├── desktop/main.cpp    # 桌面入口（GUI / 无界面验证 / 内建网页服务）
+│   └── android/            # 安卓端（见 apps/android/README.md）
+├── assets/                 # fonts/ + web/（Vue3 前端）
+├── patches/                # libdatachannel 的 Go2 兼容补丁（FetchContent 自动应用）
+├── third_party/            # 手放的单头库（httplib.h / nlohmann）
+└── tests/                  # crypto / motion / discovery / cloud 自测
 ```
 
 ## 跨平台（Windows / Linux / macOS）
@@ -245,8 +256,9 @@ client/
 | Windows + WSL | ✅ 现用方式 | 双击 `../start_go2.bat`（已含 WSLg 重置，避免窗口空白） |
 
 平台相关代码集中在两处：
-- `src/discovery.cpp`：网段枚举（Windows 用 `GetAdaptersAddresses`，POSIX 用 `getifaddrs`）、端口探测（Winsock / BSD socket）
-- `src/local_keys.cpp`：钥匙文件目录（Windows `%USERPROFILE%`，POSIX `$HOME`）
+- `core/discovery.cpp`：网段枚举（Windows 用 `GetAdaptersAddresses`，POSIX 用 `getifaddrs`）、端口探测（Winsock / BSD socket）
+- `core/local_keys.cpp`：钥匙文件目录（Windows `%USERPROFILE%`，POSIX `$HOME`）
+- `platform/net.hpp`：socket 创建 / 关闭 / poll 等的归一化 helper（新增网络代码一律走这里）
 
 ### 钥匙文件位置（按平台自动查找，均**在项目之外**）
 

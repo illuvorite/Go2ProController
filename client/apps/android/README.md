@@ -1,23 +1,31 @@
-# Android 端（P3）
+# Android 端
 
-把控制台搬到 Android：**SDL2 + OpenGL ES 3 + Dear ImGui**，`core/` 与 `ui/` 与桌面**共用同一份源码**，
-差异只在窗口、渲染后端、输入与生命周期。
+把控制台搬到 Android：**SDL2 + OpenGL ES 3 + Dear ImGui**（原生界面）+ **WebView 网页界面**（Vue3），
+`core/` 与 `ui/` 与桌面**共用同一份源码**，差异只在窗口、渲染后端、输入与生命周期。
+
+启动流程：原生侧起本机网页服务（127.0.0.1:8123）→ 自动打开 `WebUiActivity`（WebView 显示 Vue3 界面）；
+**返回键回到 ImGui 界面**，两套界面共存。
 
 ```
 client/apps/android/
 ├── setup.sh                  # 一键装配：下载 SDL2/ImGui → 展开 Gradle 工程 → 注入配置
+├── _run_gradle.bat           # Windows 前台构建（日志 _build.log）
+├── build_deps_arm64.ps1      # 现场编译 arm64 依赖（libdatachannel/OpenSSL）
 ├── native/
-│   ├── CMakeLists.txt        # 原生构建：go2_core + go2_ui + main_android.cpp + SDL2 + ImGui
-│   └── main_android.cpp      # SDL2 入口：GLES3 上下文 + ImGui(SDL2/OpenGL3) + drawUi() 主循环
+│   ├── CMakeLists.txt        # 原生构建：go2_core + go2_ui(含 web_bridge) + main_android.cpp + SDL2 + ImGui
+│   └── main_android.cpp      # SDL2 入口：GLES3 + ImGui 主循环 + 触屏双摇杆 + 网页界面启动
 ├── build.gradle / settings.gradle / gradlew     # Gradle 顶层（由 SDL 模板展开）
 └── app/                      # Gradle 模块
     ├── build.gradle          # applicationId=com.go2.remote, minSdk=26, 走 CMake
     ├── jni/CMakeLists.txt    # → include(native/CMakeLists.txt)
     └── src/main/
-        ├── AndroidManifest.xml          # 网络/组播/WiFi 权限，横屏
-        ├── java/org/libsdl/app/*.java   # SDL 模板 Java 类
-        │   └── MainActivity.java        # + MulticastLock（组播发现必需）
-        └── assets/fonts/                # 放中文字体（否则中文显示为方块）
+        ├── AndroidManifest.xml            # 网络/组播/WiFi 权限；四方向；usesCleartextTraffic（WebView 访问 127.0.0.1）
+        ├── java/org/libsdl/app/*.java     # SDL 模板 Java 类
+        │   └── MainActivity.java          # + MulticastLock（组播发现必需）
+        ├── java/com/go2/remote/WebUiActivity.java   # 网页界面（WebView 外壳）
+        └── assets/
+            ├── fonts/                     # 中文字体（否则中文显示为方块）+ 图标字体
+            └── web/                       # ★ 网页前端副本（源在 client/assets/web，改前端要两处同步）
 ```
 
 ## 1. 前置条件
@@ -97,11 +105,14 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 | 项 | 说明 |
 |---|---|
-| 触摸操作 | 触摸被 ImGui 的 SDL2 后端映射成鼠标；双摇杆需要**两点同时按** —— 当前版本先用"单摇杆 + 转向按钮"，多点触控在后续版本做（见方案 P3 后续） |
-| 切后台 | **自动停车并断开**（`SDL_APP_WILLENTERBACKGROUND`），回前台自动重连 —— iOS/Android 都不允许后台持续遥控 |
+| 双界面 | 启动后自动打开 **WebView 网页界面**（Vue3）；返回键回到 ImGui 界面，两套共存随时可切 |
+| 触摸双摇杆 | ImGui 只有一个指针 → `main_android.cpp::TouchSticks` 自己接管 `SDL_FINGERDOWN/MOTION/UP`，**双杆可同时拖**；急停/阻尼等安全区登记为"摇杆抓取互斥区"（`ui.safetyRects` 多矩形） |
+| 切后台 | **自动停车并断开**（`SDL_APP_WILLENTERBACKGROUND`），回前台自动重连 —— WebView 盖在上面**不算**切后台（连接保持，网页界面才能控狗） |
 | 组播发现 | 由 `MainActivity` 持有 `WifiManager.MulticastLock`，否则 SN 多播（231.1.1.1:10131）收不到回包 |
-| 返回键 | 急停未锁定时提示"请先急停再退出"，已锁定才允许退出 |
-| 组播锁 | 原生侧通过 `SDL_AndroidGetActivity()` 反射调用 `acquireMulticastLock()` |
+| 返回键 | ImGui 界面：急停未锁定时提示"请先急停再退出"，已锁定才允许退出；WebView：直接回到 ImGui 界面 |
+| 图标字体 | `assets/fonts/Phosphor.ttf` 启动时导出到应用目录（`extractIconFont()` + `GO2_ICON_FONT`）—— ImGui 的字体合并只认磁盘路径 |
+| 网页资源 | `assets/web/**` 启动时导出到应用目录（`extractWebAssets()`，按文件大小增量覆盖）；**新增前端文件要同步加进 `kWebFiles[]` 清单** |
+| 钥匙目录 | 应用专属外部目录 `/sdcard/Android/data/com.go2.remote/files`（chdir 过去 + `GO2_KEYS_FILE`），adb push 无需任何权限 |
 
 ## 7. 首次构建常见报错
 

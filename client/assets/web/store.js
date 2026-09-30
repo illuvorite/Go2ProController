@@ -79,12 +79,3 @@ export async function post(body) {
     store.err = e.message
   }
 }
-
-/// 已经在受控的设备（遥控页「受控设备」与单控选择器共用）
-export function selectedRobots() {
-  return (store.st.robots || []).filter((r) => r.selected)
-}
-
-export function batteryText(v) {
-  return v >= 0 ? Math.round(v) + '%' : '—'
-}

@@ -4,7 +4,7 @@
 
 | 组件 | 语言 | 作用 |
 |---|---|---|
-| **[`client/`](client/)** — Go2 控制管理台 | C++17 + Dear ImGui | 局域网自动发现、多机管理、**单控 / 群控**、双摇杆遥控、急停、完整动作库；编译为**单个可执行文件**，无运行时依赖 |
+| **[`client/`](client/)** — Go2 控制管理台 | C++17（ImGui 桌面端 + **Vue3 网页端**） | 局域网自动发现、多机管理、**单控 / 群控**、双摇杆遥控、急停、完整动作库；桌面编译为**单个可执行文件**，安卓为 APK（内置 WebView 网页界面），也可在任意浏览器打开 |
 | **[`go2_network_diag/`](go2_network_diag/)** + [`main.py`](main.py) — 网络诊断 CLI | Python 3.8+ | 连通性检测、抓包与 DDS/RTPS 分析、**WebRTC 控制链路体检**、HTML/JSON/TXT 报告 |
 
 > 背景：Go2 的控制链路在不同固件下差异很大（信令端口 9991 / 8081、`data2=1/2/3` 三种加密模式），
@@ -17,6 +17,7 @@
 ## 目录
 
 - [功能特性](#功能特性)
+- [网页界面（Vue3）](#网页界面vue3)
 - [环境要求](#环境要求)
 - [安装](#安装)
 - [使用说明](#使用说明)
@@ -60,37 +61,48 @@
 - **强制阻尼（Damp）**：兜底手段（狗会软腿趴下），二次确认
 - 断开连接前自动停车
 
-**界面布局（上下两块）**
+**界面布局（ImGui 桌面端 / 安卓端，上下两块）**
 
-- 上半 = **页面区**：顶栏页签在「遥控 / 动作库」两页间切换，**两页都铺满整屏宽**。
-  **动作库是常驻整屏页面**（不是弹窗）：按整屏宽度平铺按钮（最多 8 列）；
-  常用姿势/表演类动作在上，**步态 / 速度 / 身高（带滑条的那组）排在最下面**
+- 上半 = **页面区**：顶栏页签在「遥控 / 动作库」两页间切换，**两页都铺满整屏宽**
 - 下半 = **摇杆带**：双摇杆恒悬浮在屏幕两个下角（半径按短边 0.15 取、上限 88dp）；
   **两杆中间是「单控 / 群控」面板** —— 点「单控」弹出设备列表挑一台，点「群控」全选，
   下面一行显示当前受控对象（`单控 · 名字` / `群控 · N 台`）
-- 顶栏一行 6 个按钮：`遥控` `动作库` · `设备` `设置` `日志` · **`■ 急停`**
-  （急停在两个页面都能一眼看到；`空格键` 同样随时急停；窄屏自动拆两行）
+- 顶栏一行 4 个按钮：`设备` `页面切换(遥控/动作库)` `⋯更多` · **`■ 急停`**
+  （`空格键` 同样随时急停；窄屏自动拆两行）
 - 控件是**苹果风格滑条**：灰色胶囊轨道 + 主色填充段 + 白色圆形旋钮，数值居中显示
 - 其余弹窗（设备 / 设置 / 日志）打开时**盖住摇杆带**：摇杆不画、不响应、数值清零
   （避免"眼睛看弹窗、手指还推着摇杆"）
 - 触摸下**按住任意位置拖动即可滚动**（不用去抓右边的滚动条）
 
-**动作库**
+**动作库（ImGui 端）**
 
-- 宇树动作库 50+ 条指令，按 6 组分类（基础姿态 / 表演动作 / 步态·速度·身高 / 跳跃特技 / 状态查询 / 其他）
+- 宇树动作库 50+ 条指令，按 5 组分类（基础姿态 / 表演动作 / 跳跃特技 / 状态查询 / 其他·进阶），
+  图标用 [Phosphor Icons](https://phosphoricons.com)（MIT，与网页端同一套）
 - **normal 与 MCF 双指令集**自动匹配：发送错指令集被拒时**自动换另一套 api_id 重试一次**
 - 参数类型自适应（无参 / 开关 `{"data":bool}` / 整数 / 浮点 / 姿态角 / 自定义 JSON）
 - **可用性标注**：每条动作显示 ✓ / ✗（上次回执结果，悬停看失败原因）；「隐藏不支持的」可过滤固件没有的动作
-- 开关型指令（自由行走 / 经典步态 / 倒立 / 跳跃奔跑 …）画成 `[开] / [关]` 按钮，急停时自动全部关闭
-- **官方 App 快捷**：机身高度三档、姿态（左倾 / 右倾 / 低头 / 抬头 / 方向回正，自动进入"摆姿势"模式）、
-  运动模式（normal / ai / mcf）、舞蹈编排（舞 1 → 舞 2）
+- 开关型指令（自由行走 / 经典步态 / 倒立 / 跳跃奔跑 …）急停时自动全部关闭
 
 **其它**
 
-- 运行日志分级着色 + 「只看异常」过滤；界面主题集中在 [`client/src/theme.cpp`](client/src/theme.cpp)（深色 + 三级中文字号）
+- 运行日志分级着色 + 「只看异常」过滤；界面主题集中在 [`client/ui/theme.cpp`](client/ui/theme.cpp)（深色 + 三级中文字号）
 - 无界面验证模式：连接稳定性、动作回执校验、**动作可用性探测**（只发原地不动的安全指令）
 
-### 2. 网络诊断 CLI（`main.py`）
+### 2. 网页界面（Vue3，桌面 / 安卓 / 浏览器同一套）
+
+细节见 [`client/assets/web/README.md`](client/assets/web/README.md)。要点：
+
+- **同一份前端**跑在三处：桌面端启动时内建本机服务（默认 `http://localhost:8123`）、
+  安卓端 app 启动后自动打开内嵌 WebView、或任何设备浏览器直接访问
+- **只换界面、不碰协议**：协议 / 加密 / 钥匙库 / 指令表全在 C++（`client/ui/web_bridge.{hpp,cpp}`），
+  前端只做 `GET /api/state` + `POST /api/command`
+- 深色玻璃风：渐变背景 / 毛玻璃卡片 / 苹果风滑条 / 悬浮摇杆 / 弹窗毛玻璃遮罩
+- 摇杆带中间是**受控狗卡片行**（Go2 实拍图 + 名字 + 电量 + 勾选框，多台可横向滑动）——
+  勾一台控一台、勾多台即群控；另有「单控 / 群控」按钮
+- 设置页内置「**从机器狗找钥匙**」：不连电脑，扫描狗的内网端口并从 Web 服务抓取
+  32 位 hex 钥匙候选，一键采用（写入 keys.txt 并绑定 IP）
+
+### 3. 网络诊断 CLI（`main.py`）
 
 - **连通性**：ICMP Ping、TCP/UDP 端口扫描、路由表与网卡信息
 - **抓包分析**：实时抓包、RTPS/DDS 子消息解析与统计、双向流量对比
@@ -241,15 +253,19 @@ Go2ProController/
 │   ├── platform/
 │   │   └── net.hpp                  # ★ 平台网络层唯一接缝（POSIX / Winsock 分支 + 归一化 helper）
 │   ├── ui/                          # ★ 界面层
-│   │   ├── ui.{hpp,cpp}             #   设备卡片 / 双摇杆 / 动作库 / 日志
-│   │   └── theme.{hpp,cpp}          #   配色 / 圆角 / 三级中文字号
-│   ├── apps/desktop/main.cpp        # 桌面入口（图形界面 / 无界面验证模式）
-│   ├── apps/android/                # ★ Android 端（SDL2 + GLES3 + 同一份 core/ui）
+│   │   ├── ui.{hpp,cpp}             #   ImGui 界面：设备卡片 / 双摇杆 / 动作库 / 日志
+│   │   ├── layout.{hpp,cpp}         #   断点布局（constexpr，改常量须同步 tests/layout_test.cpp）
+│   │   ├── theme.{hpp,cpp}          #   配色 / 圆角 / 三级中文字号 / 图标字体合并
+│   │   ├── icons.hpp                #   Phosphor 图标字形常量（生成物，见 tools/icons）
+│   │   └── web_bridge.{hpp,cpp}     #   网页界面后端：本机 HTTP 服务 + /api/state + /api/command
+│   ├── apps/desktop/main.cpp        # 桌面入口（图形界面 / 无界面验证模式 / 内建网页服务）
+│   ├── apps/android/                # ★ Android 端（SDL2 + GLES3 + 同一份 core/ui + WebView 网页界面）
 │   │   ├── setup.sh                 #   一键装配（下载 SDL2/ImGui + 展开 Gradle 工程 + 注入配置）
 │   │   ├── native/                  #   main_android.cpp + 原生 CMake
 │   │   └── README.md                #   构建步骤 / 依赖（vcpkg arm64-android）/ 常见报错
+│   ├── assets/                      # 素材：fonts/Phosphor.ttf + web/（Vue3 前端，安卓 assets/web 为其副本）
 │   ├── patches/apply_go2_fix.cmake  # Go2 兼容补丁：DCEP ACK（构建时自动应用，幂等）
-│   ├── tests/                       # crypto / motion / discovery 自测
+│   ├── tests/                       # crypto / motion / discovery / cloud 自测
 │   └── README.md                    # 控制台详细说明
 ├── go2_network_diag/                 # ★ Python 诊断包
 │   ├── cli.py                        # 命令行接口（diagnose / webrtc / capture / monitor …）
@@ -262,15 +278,15 @@ Go2ProController/
 │   └── report_generator.py           # 报告生成（HTML / JSON / TXT）
 ├── docs/
 │   ├── go2_webrtc_protocol.md        # WebRTC 协议实测记录（信令 / SDP / 加密 / 指令格式）
-│   └── multi_go2_pro_solution.md     # 多机方案：原因分析 / 排查过程 / 钥匙路线 / 验证
+│   ├── multi_go2_pro_solution.md     # 多机方案：原因分析 / 排查过程 / 钥匙路线 / 验证
+│   └── usage.md                      # 历史存档：最初的需求文档（无线通讯异常排查）
 ├── examples/                         # 诊断工具示例配置（config.yaml / cyclonedds_wifi.xml）
 ├── scripts/                          # 部署辅助脚本（路由 / 防火墙 / 环境检查）
-├── tools/                            # 排查运维辅助脚本（非运行时依赖，见 tools/README.md）
+├── tools/                            # 排查运维辅助脚本 + 图标生成器（见 tools/README.md）
 ├── main.py                           # 诊断工具入口
 ├── setup.py / requirements.txt       # Python 打包与依赖
 ├── run.sh                            # 诊断工具快速启动脚本
 ├── start_go2.bat                     # Windows 一键启动控制台（含 WSLg 重置）
-├── usage.md                          # 原始需求文档（无线通讯异常排查）
 ├── reports/  captures/               # 运行产物（已 gitignore，可随时删除）
 └── README.md                         # 本文件
 ```
@@ -292,7 +308,7 @@ Go2ProController/
 ```json
 {
   "devices": [
-    { "sn": "B42D2000P6CDL807", "key": "<32位hex>", "verified": true, "lastIp": "192.168.0.169" }
+    { "sn": "B42D2000XXXXXXXX", "key": "<32位hex>", "verified": true, "lastIp": "192.168.0.169" }
   ]
 }
 ```
@@ -388,8 +404,10 @@ WSLg 呈现层退化（应用本身正常）。关掉残留窗口 → `wsl --shu
 （`start_go2.bat` 已内置重置）。在 WSL 里反复重启应用后容易出现。
 
 **Q7：怎么拿到 `data2=3` 固件的设备钥匙？**
-钥匙按设备的 AES-128，只有三个来源：① 绑定过这台狗的**宇树账号**（官方 App 能连上就说明本地有钥匙）；
-② 设备内 shell（需 root / UART）；③ 从**用户自己的**平板 App 数据里离线提取。
+三个来源：① 绑定过这台狗的**宇树账号**（官方 App 能连上就说明本地有钥匙）；
+② 设备内 shell（需 root / UART）；③ 从**用户自己的**平板 App 数据里离线提取（需电脑 adb）。
+**不连电脑**：设置页「从机器狗找钥匙」会扫狗的内网端口、从 Web 服务抓取钥匙候选（狗本地持有明文钥匙）；
+SSH / ADB / NFS 这几条入口仍需电脑上的 `sshpass` / `adb` / `mount`（见 [`tools/key_extract.py`](tools/)）。
 完整过程与工具见 [`docs/multi_go2_pro_solution.md`](docs/multi_go2_pro_solution.md) 与 [`tools/`](tools/)。
 > 注意：`tools/unitree_cloud.py` 会访问宇树官方服务器，请自行确认后手动执行。
 
@@ -405,8 +423,10 @@ WSLg 呈现层退化（应用本身正常）。关掉残留窗口 → `wsl --shu
 ## 辅助工具
 
 [`tools/`](tools/) 收录排查与运维脚本（**不参与构建**，用途与用法见 [tools/README.md](tools/README.md)）：
-钥匙验证（`key_try.py` / `key_verify.py`）、平板日志提取（`tab_dogs.py`）、对照诊断（`diag_pro.py`）、
-恢复流程（`recover.py`）、固件/`data2` 速查（`con_notify.py`）、抓包查看（`pcap_viewer.py`）、云接口（`unitree_cloud.py`）等。
+钥匙验证（`key_try.py` / `key_verify.py`）、狗内网钥匙提取（`key_extract.py`）、平板日志提取（`tab_dogs.py`）、
+对照诊断（`diag_pro.py`）、恢复流程（`recover.py`）、固件/`data2` 速查（`con_notify.py`）、抓包查看
+（`pcap_viewer.py`）、云接口（`unitree_cloud.py`）、图标生成器（`icons/gen_icons.py`）、
+网页界面预览服务器（`web_preview.py`）等。
 
 ---
 

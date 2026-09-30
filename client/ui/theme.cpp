@@ -136,8 +136,6 @@ bool loadUiFontsFromMemory(const void* data, int dataSize, float fontScale) {
     return g_fonts.font != nullptr;
 }
 
-const UiFonts& uiFonts() { return g_fonts; }
-
 bool iconFontLoaded() { return g_iconFont; }
 
 void setUiFontSizes(float title, float body, float small) {

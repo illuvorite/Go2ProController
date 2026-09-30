@@ -159,11 +159,8 @@ struct UiState {
     /// @return false = 还没试过；true 时写回上次结果
     bool apiResult(int apiId, int* code, std::string* note);
 
-    // ---- 云账号（可选；默认不用）----
-    int cloudRegionIdx = 0;          // 0=global 1=cn
-    char cloudEmail[128] = "";
-    char cloudPassword[128] = "";
-    std::atomic<bool> cloudBusy{false};
+    // （云账号字段已删：云登录表单从未实现；要拉云钥匙用 tools/unitree_cloud.py 走离线路线，
+    //   C++ 侧完整实现在 core/unitree_cloud.{hpp,cpp}，见 tests/cloud_test.cpp）
 
     // ---- 本地钥匙库（不依赖云；每行一个 32 位 hex，存 keys.txt）----
     char manualKey[80] = "";
