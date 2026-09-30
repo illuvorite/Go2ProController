@@ -129,11 +129,11 @@ constexpr float kHysteresis = 8.0f;
 constexpr float kJoyLabelSpace = 30.0f;
 
 /// 顶栏按钮个数（决定单行模式下的按钮宽）：
-/// 页签 2（遥控 / 动作库）+ 工具 3（设备 / 设置 / 日志）+ 急停 1
-/// ★「单控 / 群控」已挪到两个摇杆中间（摇杆带面板），不再占顶栏位置。
-constexpr int kTopBtnsSingleRow = 6;
-/// 两行模式下第二行的按钮个数：页签 2 + 工具 3
-constexpr int kTopBtnsRow2 = 5;
+/// 设备 1 + 页面切换 1（遥控 / 动作库）+ ⋯更多 1 + ■急停 1 = 4
+/// ★「单控 / 群控」在两个摇杆中间（摇杆带面板）；「设置 / 日志」收进「⋯更多」菜单。
+constexpr int kTopBtnsSingleRow = 4;
+/// 两行模式下第二行的按钮个数：设备 + 页面切换 + 更多 + 急停
+constexpr int kTopBtnsRow2 = 4;
 
 constexpr WidthClass rawWidthClass(float w) {
     if (w >= kWLarge) return WidthClass::Large;
@@ -186,7 +186,10 @@ constexpr void computeActionGrid(LayoutSpec& s) {
 
     int cols = static_cast<int>((avail + gap) / (minW + gap));
     if (cols < 1) cols = 1;
-    if (cols > 8) cols = 8;
+    // ★ 大屏（≥1600dp）放开到 10 列：铺满整屏时 8 列会把按钮拉得又宽又扁，
+    //   宽屏上多排两列更像官方那种密集瓷砖墙（手势/鼠标都够点）。
+    const int colsMax = (s.viewW >= 1600.0f) ? 10 : 8;
+    if (cols > colsMax) cols = colsMax;
     float w = (avail - gap * static_cast<float>(cols - 1)) / static_cast<float>(cols);
     if (w > idealW) {  // 太宽就加列（最多 8 列），否则按钮会又长又扁
         const int more = static_cast<int>(avail / (idealW + gap));
@@ -289,9 +292,12 @@ constexpr LayoutSpec makeLayout(float w, float h, bool touch, const SafeArea& sa
     }
 
     // ======================= 双摇杆（悬浮两下角）=======================
-    // 半径跟着短边走，但**上限压到 88dp**、下限 52dp：
-    // 页面区吃掉的高度要尽量小（这一版比第一版小了约 1/4）。
-    s.joyRadius = clampf(std::min(s.viewW, s.viewH) * 0.15f, 52.0f, 88.0f);
+    // 半径跟着短边走，上限 88dp、下限 46dp。
+    // ★ 2026-09-29 iPad 横屏适配：可用高不足 760dp（如 1097×686 的平板横屏）时把上限压到 70dp ——
+    //   摇杆带要吃掉 2*半径+标签+安全区，半径 88 时页面区只剩 ~398dp，参数被迫折叠；
+    //   压到 70 之后页面区回到 ~434dp，参数能常显（用户抱怨的"横屏只能折叠"就是这个）。
+    const float radiusCap = (s.viewH < 760.0f) ? 70.0f : 88.0f;
+    s.joyRadius = clampf(std::min(s.viewW, s.viewH) * 0.15f, 52.0f, radiusCap);
     computeFloatingJoysticks(s);
 
     // ---- 摇杆带中间的「单控 / 群控」面板（用户要求放两个摇杆中间）----

@@ -105,6 +105,7 @@ add_executable(go2_remote
     ui/theme.cpp
     ui/layout.cpp
     ui/ui.cpp
+    ui/web_bridge.cpp
 )
 target_include_directories(go2_remote PRIVATE ui)
 # 链上 core（其 PUBLIC include 目录会带出 core/ 与 platform/，源码里 #include "xxx.hpp" 无需改动）

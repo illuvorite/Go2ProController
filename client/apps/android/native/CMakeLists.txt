@@ -145,6 +145,7 @@ add_library(go2_ui STATIC
     "${CLIENT_DIR}/ui/ui.cpp"
     "${CLIENT_DIR}/ui/layout.cpp"
     "${CLIENT_DIR}/ui/theme.cpp"
+    "${CLIENT_DIR}/ui/web_bridge.cpp"   # 网页界面后端（本机 HTTP 服务 + /api/*），供安卓 WebView 使用
 )
 target_include_directories(go2_ui PUBLIC "${CLIENT_DIR}/ui")
 target_link_libraries(go2_ui PUBLIC go2_core go2_imgui)

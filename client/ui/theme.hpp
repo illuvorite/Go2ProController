@@ -25,6 +25,13 @@ bool loadUiFonts();
 /// @param fontScale 基准字号的整体倍率，一般传 1.0（字号改由断点控制）
 bool loadUiFontsFromMemory(const void* data, int dataSize, float fontScale = 1.0f);
 
+/// 图标字体（Phosphor，MIT）是否已合并进界面字体。
+///
+/// 合并后**同一份 ImFont 里既有汉字也有图标**，所以 `"%s 设备"` 这种混排直接可用
+/// （字形清单见 ui/icons.hpp）。返回 false 表示没找到字体文件 ——
+/// 此时界面里的图标位置会退化成手绘简笔形状（见 ui.cpp 的 drawTileIcon），功能不受影响。
+bool iconFontLoaded();
+
 const UiFonts& uiFonts();
 
 /// 按断点设置三档字号（运行时可变）
@@ -65,13 +72,14 @@ FontScope fontSmall();
 
 /// 语义色（与主题一致，供各处直接引用）
 namespace col {
-constexpr ImVec4 kAccent{0.29f, 0.56f, 0.99f, 1.00f};   // 主色（蓝）
+// ★ 主要文字调亮、次要文字调暗一点 → 拉开层次（同一屏里"标题/正文/辅助"一眼能分开）
+constexpr ImVec4 kAccent{0.32f, 0.58f, 1.00f, 1.00f};   // 主色（蓝）
 constexpr ImVec4 kOk{0.24f, 0.72f, 0.35f, 1.00f};       // 成功（绿）
 constexpr ImVec4 kWarn{0.85f, 0.62f, 0.16f, 1.00f};     // 警告（黄）
 constexpr ImVec4 kErr{0.96f, 0.32f, 0.29f, 1.00f};      // 危险（红）
 constexpr ImVec4 kIdle{0.45f, 0.50f, 0.56f, 1.00f};     // 空闲（灰）
-constexpr ImVec4 kText{0.90f, 0.93f, 0.96f, 1.00f};     // 主文字
-constexpr ImVec4 kDim{0.52f, 0.57f, 0.63f, 1.00f};      // 次要文字
+constexpr ImVec4 kText{0.94f, 0.96f, 0.98f, 1.00f};     // 主文字
+constexpr ImVec4 kDim{0.50f, 0.55f, 0.62f, 1.00f};      // 次要文字
 }  // namespace col
 
 }  // namespace go2

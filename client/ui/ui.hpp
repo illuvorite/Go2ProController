@@ -103,6 +103,8 @@ struct UiState {
     /// "当前指令发给谁"的一句话（摇杆带中间显示：单控 · 名字 / 群控 · N 台）
     std::string controlTargetText();
 
+    // （底部快捷栏 / 编辑常用动作已于 2026-09-28 按用户要求撤掉）
+
     // ---- 弹窗（顶栏入口按钮）----
     // 注意：顶栏按钮是在**子窗口**里画的，而 ImGui 的弹窗 ID 会带 ID 栈前缀 ——
     // 在子窗口里直接 OpenPopup 会和主窗口层级的 BeginPopupModal 对不上（弹窗打不开）。
@@ -111,6 +113,7 @@ struct UiState {
     bool showDevices = false;   ///< 弹窗开关（作为 BeginPopupModal 的 p_open）
     bool showSettings = false;  ///< 设置：钥匙库 / 隐私 / 说明
     bool showLog = false;       ///< 运行日志
+
     /// 本帧是否有模态弹窗打开（设备 / 设置 / 日志）—— 弹窗要**盖住摇杆带**：
     /// 打开时摇杆不画、不响应、数值清零（避免"眼睛看弹窗、手指还在推摇杆"）。
     /// ⚠️ 安卓触屏入口（apps/android/native/main_android.cpp）也要读这个标志：
@@ -165,6 +168,13 @@ struct UiState {
     // ---- 本地钥匙库（不依赖云；每行一个 32 位 hex，存 keys.txt）----
     char manualKey[80] = "";
 
+    // ---- 钥匙探测（设置页「从机器狗找钥匙」：不连电脑，从狗的内网服务里提取）----
+    // 结果都在这：网页/设置页通过 /api/state 的 keyScan 字段读
+    std::atomic<bool> keyScanning{false};
+    std::mutex keyScanMutex;
+    std::string keyScanNote;                 // 最近一次探测的说明（开放端口 / 提示）
+    std::vector<std::string> keyCandidates;  // 探测到的 32 位 hex 候选（未验证）
+
     // ---- 日志 ----
     std::vector<std::string> logs;
     std::mutex logMutex;
@@ -189,6 +199,10 @@ struct UiState {
 
 /// 绘制整个界面
 void drawUi(RobotManager& mgr, UiState& ui);
+
+/// 扫描局域网（后台线程）：网段 TCP 探测 + SN 多播，发现的狗自动加入列表并连接。
+/// 实现在 ui.cpp（ui.hpp 里只给声明 —— 网页桥 web_bridge.cpp 也调这份）
+void startScan(RobotManager& mgr, UiState& ui);
 
 /// 在指定屏幕位置画一个摇杆（**不处理输入，只负责画**）。
 /// 供触屏多点触控使用：数值（x/y）由调用方自己算好传进来 —— ImGui 只有一个"指针"，

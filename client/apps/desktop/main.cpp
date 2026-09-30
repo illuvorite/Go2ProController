@@ -3,6 +3,7 @@
 #include "sport_library.hpp"
 #include "theme.hpp"
 #include "ui.hpp"
+#include "web_bridge.hpp"
 
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
@@ -511,6 +512,11 @@ int runGui(const Options& opt) {
     manager.loadKeyCache();
     if (!opt.keys.empty()) manager.addAesKeys(opt.keys);
     go2::UiState ui;
+
+    // ★ 网页界面（Vue3）：本机起一个 HTTP 服务（默认 8123，被占会往后试）
+    //   协议 / 加密 / 钥匙库 / 运动指令表全在 C++，前端只负责"画"和"点"（见 ui/web_bridge.cpp）。
+    //   ⚠ 只监听 127.0.0.1（无鉴权，不对外暴露）
+    go2::startWebUi(manager, ui, 8123);
 
     // 日志：UI 列表 + stdout 双输出
     static std::mutex printMutex;

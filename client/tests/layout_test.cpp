@@ -42,7 +42,7 @@ static_assert(kPhonePortrait.topTwoRows, "★ C 档顶栏拆两行");
 static_assert(!kPhonePortrait.showBrand, "太窄：品牌名让给按钮");
 static_assert(near(kPhonePortrait.topBtnH, 44.0f), "触摸按钮高 44dp");
 static_assert(near(kPhonePortrait.topBarH, 114.0f), "★ 两行顶栏 = 2*44 + 26 行距");
-static_assert(near(kPhonePortrait.topBtnW, 55.6f), "第二行 5 个按钮均分（(318-40)/5）");
+static_assert(near(kPhonePortrait.topBtnW, 71.5f), "第二行 4 个按钮均分（(318-32)/4）");
 static_assert(kPhonePortrait.topBtnW >= 44.0f, "入口按钮不小于 44dp（触摸下限）");
 static_assert(near(kPhonePortrait.contentMaxW, 322.0f), "★ 铺满：内容宽 = 可用宽 - 左右内边距");
 static_assert(near(kPhonePortrait.btnH, 50.0f), "触摸按钮最小高 50dp ≥ 48dp 下限");
@@ -89,7 +89,7 @@ constexpr go2::LayoutSpec kPhoneLandscape =
 static_assert(kPhoneLandscape.widthClass == go2::WidthClass::Medium, "804dp 属 M 档");
 static_assert(kPhoneLandscape.heightClass == go2::HeightClass::Short, "366dp 属 S 档");
 static_assert(!kPhoneLandscape.topTwoRows, "M 档顶栏一行 6 个按钮");
-static_assert(near(kPhoneLandscape.topBtnW, 96.0f), "一行 6 个按钮均分（(772-140-56)/6）");
+static_assert(near(kPhoneLandscape.topBtnW, 118.0f), "一行 4 个按钮 → 触到 118dp 上限");
 static_assert(!kPhoneLandscape.paramInline, "★ 矮屏页面区只剩 ~168dp → 参数收进折叠区");
 static_assert(near(kPhoneLandscape.estopH, 64.0f), "矮屏急停 64dp");
 static_assert(near(kPhoneLandscape.joyRadius, 54.9f), "摇杆半径 = min(804,366)*0.15");
@@ -109,7 +109,7 @@ constexpr go2::LayoutSpec kTabletPortrait =
 static_assert(kTabletPortrait.widthClass == go2::WidthClass::Medium, "728dp 属 M 档");
 static_assert(kTabletPortrait.heightClass == go2::HeightClass::Tall, "1000dp 属 T 档");
 static_assert(kTabletPortrait.showBrand, "平板够宽，品牌名保留");
-static_assert(near(kTabletPortrait.topBtnW, 83.33f), "6 个按钮均分（(696-140-56)/6）");
+static_assert(near(kTabletPortrait.topBtnW, 118.0f), "4 个按钮 → 触到 118dp 上限");
 static_assert(near(kTabletPortrait.contentMaxW, 700.0f), "★ 铺满：内容宽 = 728-28");
 static_assert(near(kTabletPortrait.joyPanelW, 320.0f), "面板宽上限 320dp");
 static_assert(near(kTabletPortrait.joyPanelH, 90.0f), "面板高 = 44 + 46");
@@ -136,17 +136,18 @@ static_assert(near(kTabletLandscape.contentMaxW, 1029.0f), "★ 铺满：遥控�
 static_assert(near(kTabletLandscape.actAreaW, 1005.0f), "动作库网格可用宽");
 static_assert(near(kTabletLandscape.joyPanelW, 320.0f), "单控/群控面板宽 320dp");
 static_assert(near(kTabletLandscape.joyPanelH, 90.0f), "面板高 = 44 + 46");
-static_assert(near(kTabletLandscape.joyRadius, 88.0f), "摇杆半径 88dp 上限");
-static_assert(near(kTabletLandscape.joyInsetX, 123.6f), "左内缩");
-static_assert(near(kTabletLandscape.joyCenterY, 544.0f), "圆心高 = 686-24-88-30");
-static_assert(near(kTabletLandscape.joyReserve, 230.0f), "摇杆带高度（第一版 278 → 现在 230）");
+static_assert(near(kTabletLandscape.joyRadius, 70.0f),
+              "★ iPad 横屏：可用高 662 < 760 → 摇杆上限压到 70dp（把纵向空间还给页面区）");
+static_assert(near(kTabletLandscape.joyInsetX, 106.5f), "左内缩 = 70*0.95+20+20");
+static_assert(near(kTabletLandscape.joyCenterY, 562.0f), "圆心高 = 686-24-70-30");
+static_assert(near(kTabletLandscape.joyReserve, 194.0f), "摇杆带高度（半径压小后 230 → 194）");
 static_assert(kTabletLandscape.joyCenterY + kTabletLandscape.joyRadius <
                   kTabletLandscape.screenH,
               "★ 摇杆完全在屏幕内");
 // ★★ 内容不能被摇杆压住：页面区高度扣掉摇杆带，所以必须保证扣完还剩得下东西。
-static_assert(near(kTabletLandscape.pageH, 398.0f), "页面区高 = 686-58-230");
+static_assert(near(kTabletLandscape.pageH, 434.0f), "页面区高 = 686-58-194");
 static_assert(kTabletLandscape.pageH > 300.0f, "★ 页面区必须留够");
-static_assert(!kTabletLandscape.paramInline, "★ 页面区只剩 ~398dp → 参数自动收进折叠区");
+static_assert(kTabletLandscape.paramInline, "★ 半径压小后页面区 ~434dp → 参数常显（横屏不再折叠）");
 static_assert(near(kTabletLandscape.popupW, 930.16f), "弹窗宽 = 1057*0.88");
 static_assert(near(kTabletLandscape.popupH, 595.8f), "★ 弹窗高 = 662*0.90（要盖住摇杆带）");
 static_assert(kTabletLandscape.popupW <= kTabletLandscape.viewW, "弹窗不超可用宽");
@@ -160,7 +161,7 @@ constexpr go2::LayoutSpec kDesktop =
     go2::makeLayout(1440.0f, 880.0f, false, kDesktopSafe, nullptr);
 
 static_assert(kDesktop.widthClass == go2::WidthClass::Large, "1440dp 属 L 档");
-static_assert(near(kDesktop.topBarH, 46.0f), "桌面顶栏 46dp（一行 8 个按钮）");
+static_assert(near(kDesktop.topBarH, 46.0f), "桌面顶栏 46dp（一行 4 个按钮）");
 static_assert(near(kDesktop.topBtnH, 30.0f), "桌面按钮 30dp（鼠标更紧凑）");
 static_assert(near(kDesktop.topBtnW, 118.0f), "桌面按钮触到 118dp 上限");
 static_assert(near(kDesktop.btnH, 34.0f), "鼠标：按钮最小高 34dp");

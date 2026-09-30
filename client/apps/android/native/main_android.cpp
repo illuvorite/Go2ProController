@@ -14,6 +14,7 @@
 #include "robot_manager.hpp"
 #include "theme.hpp"
 #include "ui.hpp"
+#include "web_bridge.hpp"
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
@@ -37,6 +38,7 @@
 #include <string>
 #include <thread>
 #include <unistd.h>  // chdir：把工作目录切到应用可写目录
+#include <sys/stat.h>  // mkdir：网页界面资源的子目录
 #include <vector>
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "go2", __VA_ARGS__)
@@ -212,6 +214,125 @@ void loadFontsFromAssets() {
     go2::loadUiFonts();  // 退回系统字体（Android 上通常只有拉丁字形）
 }
 
+/// 把 assets 里的图标字体（Phosphor，MIT）导出到**应用可写目录**，用 GO2_ICON_FONT 指过去。
+///
+/// 为什么非要落盘：`theme.cpp::mergeIconFont()` 只认磁盘路径（`fopen`），而 APK 里
+/// `assets/` 的文件不在文件系统上（只有 SDL_RWFromFile / AAssetManager 能读）。
+/// 调用前必须已经 chdir 到应用目录 —— 路径就用相对名 "Phosphor.ttf"。
+/// 大小一致就跳过重写（省 470KB 的写盘），也能在换字体后自动覆盖。
+void extractIconFont() {
+    const char* kAsset = "fonts/Phosphor.ttf";
+    const char* kDst = "Phosphor.ttf";
+    auto data = readAsset(kAsset);
+    if (data.empty()) {
+        LOGI("assets/%s 不存在 → 图标回退手绘形状", kAsset);
+        return;
+    }
+    long have = 0;
+    if (FILE* f = std::fopen(kDst, "rb")) {
+        std::fseek(f, 0, SEEK_END);
+        have = std::ftell(f);
+        std::fclose(f);
+    }
+    if (have != static_cast<long>(data.size())) {
+        FILE* w = std::fopen(kDst, "wb");
+        if (!w) {
+            LOGE("图标字体导出失败：%s 不可写", kDst);
+            return;
+        }
+        std::fwrite(data.data(), 1, data.size(), w);
+        std::fclose(w);
+        LOGI("图标字体已导出: %s (%zu 字节)", kDst, data.size());
+    }
+    ::setenv("GO2_ICON_FONT", kDst, 1);  // mergeIconFont 优先读这个
+}
+
+// ---------------------------------------------------------------- 网页界面（Vue3）资源
+/// 前端文件在 APK 的 assets/web 里，而 httplib 的静态目录只认**磁盘路径**
+/// → 启动时导出到应用可写目录的 assets/web/（与桌面端 set_base_dir("assets/web") 同名，
+///   因为这里已经 chdir 到应用目录了）。大小一致就跳过，改前端能自动覆盖。
+/// ⚠ 新增前端文件要同步加到这张表（APK assets 里的文件没法枚举）。
+const char* const kWebFiles[] = {
+    "index.html", "style.css", "app.js", "api.js", "store.js", "icons.js", "motion.js",
+    "components/topbar.js", "components/remote.js", "components/actions.js",
+    "components/band.js", "components/joystick.js", "components/slider.js",
+    "components/devices.js", "components/settings.js", "components/log.js",
+    "vendor/vue.esm-browser.prod.js",
+    "fonts/Phosphor.ttf", "img/go2.jpg", "img/go2@2x.jpg", "img/CREDITS.txt",
+};
+
+void extractWebAssets() {
+    ::mkdir("assets", 0755);
+    ::mkdir("assets/web", 0755);
+    for (const char* sub : {"components", "fonts", "img", "vendor"}) {
+        const std::string d = std::string("assets/web/") + sub;
+        ::mkdir(d.c_str(), 0755);
+    }
+    int updated = 0, missing = 0;
+    for (const char* rel : kWebFiles) {
+        const std::string src = std::string("web/") + rel;
+        const std::string dst = std::string("assets/web/") + rel;
+        auto data = readAsset(src.c_str());
+        if (data.empty()) { ++missing; LOGE("assets/%s 缺失", src.c_str()); continue; }
+        long have = 0;
+        if (FILE* f = std::fopen(dst.c_str(), "rb")) {
+            std::fseek(f, 0, SEEK_END);
+            have = std::ftell(f);
+            std::fclose(f);
+        }
+        if (have == static_cast<long>(data.size())) continue;  // 没变，不重写
+        FILE* w = std::fopen(dst.c_str(), "wb");
+        if (!w) { LOGE("写入失败: %s", dst.c_str()); continue; }
+        std::fwrite(data.data(), 1, data.size(), w);
+        std::fclose(w);
+        ++updated;
+    }
+    LOGI("网页界面资源: 更新 %d 个 / 缺失 %d 个 → assets/web", updated, missing);
+}
+
+/// 打开网页界面（com.go2.remote.WebUiActivity 里的 WebView）。
+/// 内部 post 到主线程执行，所以从 SDL 线程直接调也没问题。
+void openWebUi(const char* url) {
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    if (!env) { LOGE("openWebUi: 拿不到 JNIEnv"); return; }
+    jobject activity = static_cast<jobject>(SDL_AndroidGetActivity());
+    if (!activity) { LOGE("openWebUi: 拿不到 Activity"); return; }
+
+    // ★ 不能直接 FindClass("com/go2/remote/...")：我们在 **native 里新建的 std::thread** 上，
+    //   这种线程被 JNI attach 时用的是**系统类加载器**，看不见应用自己的类
+    //   （刚才实测就是在这里挂的）。正确姿势：拿 Activity 的类加载器去 loadClass。
+    jclass actCls = env->GetObjectClass(activity);
+    if (!actCls) { env->ExceptionClear(); LOGE("openWebUi: GetObjectClass 失败"); return; }
+    jmethodID getLoader = env->GetMethodID(actCls, "getClassLoader", "()Ljava/lang/ClassLoader;");
+    jobject loader = getLoader ? env->CallObjectMethod(activity, getLoader) : nullptr;
+    if (!loader) { env->ExceptionClear(); LOGE("openWebUi: 拿不到 ClassLoader"); return; }
+    jclass loaderCls = env->FindClass("java/lang/ClassLoader");  // 系统类，任何线程都找得到
+    if (!loaderCls) { env->ExceptionClear(); LOGE("openWebUi: 找不到 ClassLoader 类"); return; }
+    jmethodID loadClass = env->GetMethodID(loaderCls, "loadClass",
+                                           "(Ljava/lang/String;)Ljava/lang/Class;");
+    jstring jname = env->NewStringUTF("com.go2.remote.WebUiActivity");
+    jclass cls = loadClass
+        ? static_cast<jclass>(env->CallObjectMethod(loader, loadClass, jname)) : nullptr;
+    env->DeleteLocalRef(jname);
+    if (!cls || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        LOGE("openWebUi: loadClass(WebUiActivity) 失败");
+        return;
+    }
+
+    jmethodID mid = env->GetStaticMethodID(cls, "open",
+                                           "(Landroid/content/Context;Ljava/lang/String;)V");
+    if (!mid) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        LOGE("openWebUi: 找不到 open()");
+        return;
+    }
+    jstring jurl = env->NewStringUTF(url);
+    env->CallStaticVoidMethod(cls, mid, activity, jurl);
+    env->DeleteLocalRef(jurl);
+    LOGI("网页界面已打开: %s", url);
+}
+
 // ---------------------------------------------------------------- Android 特有：多播锁
 /// Android 默认过滤组播 → 必须在 Java 侧持有 WifiManager.MulticastLock，
 /// 否则 SN 多播发现（231.1.1.1:10131）收不到任何回包。
@@ -296,8 +417,44 @@ bool callActivityIntArray4(const char* method, int out[4]) {
 }
 
 // ---------------------------------------------------------------- 前后台切换
+/// 网页界面（WebView）是否正盖在最上面。是的话 **不算切后台**：
+/// 连接要保持住，网页界面才能发指令。（JNI 走 Activity 的类加载器，同 openWebUi 的坑）
+bool webUiShowing() {
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    if (!env) return false;
+    jobject activity = static_cast<jobject>(SDL_AndroidGetActivity());
+    if (!activity) return false;
+    jclass actCls = env->GetObjectClass(activity);
+    if (!actCls) { env->ExceptionClear(); return false; }
+    jmethodID getLoader = env->GetMethodID(actCls, "getClassLoader", "()Ljava/lang/ClassLoader;");
+    jobject loader = getLoader ? env->CallObjectMethod(activity, getLoader) : nullptr;
+    jclass loaderCls = env->FindClass("java/lang/ClassLoader");
+    jmethodID loadClass = loaderCls
+        ? env->GetMethodID(loaderCls, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;")
+        : nullptr;
+    jstring jname = env->NewStringUTF("com.go2.remote.WebUiActivity");
+    jclass cls = loadClass
+        ? static_cast<jclass>(env->CallObjectMethod(loader, loadClass, jname)) : nullptr;
+    env->DeleteLocalRef(jname);
+    if (!cls || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return false;
+    }
+    jmethodID mid = env->GetStaticMethodID(cls, "isShowing", "()Z");
+    if (!mid) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return false;
+    }
+    return env->CallStaticBooleanMethod(cls, mid);
+}
+
 /// 切后台：**先停车再断开**（安全 + 机器狗同一时刻只允许一条连接），回前台自动重连
 void onEnterBackground(go2::RobotManager& mgr, go2::UiState& ui) {
+    // 网页界面盖在上面 ≠ 切后台：连接必须保持（否则网页界面就是个摆设）
+    if (webUiShowing()) {
+        ui.addLog("[Android] 网页界面在前台：保持连接不断开");
+        return;
+    }
     g_inBackground = true;
     ui.addLog("[Android] 切到后台：停车并断开（回前台自动重连）");
     std::thread([&mgr] {
@@ -412,8 +569,32 @@ int main(int argc, char** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    // ---- Android 钥匙 / 缓存目录（桌面版靠 ~/.go2/keys.json，安卓根本没有这些路径）----
+    // 用「应用专属外部目录」当钥匙目录，并 chdir 过去 —— 一次解决三件事：
+    //   1) 钥匙文件  <ext>/keys.json      ← adb push 直接写入，无需任何权限
+    //   2) 设置页手输钥匙保存的 keys.txt   ← 原来是相对路径，安卓上工作目录不可写，存不下来
+    //   3) 连接成功后缓存的 go2_keys_cache.json
+    // Android 10+ 的应用专属外部目录（/sdcard/Android/data/<包名>/files）不需要存储权限。
+    // ★ 必须排在字体之前：图标字体要从 assets 导出到"当前目录"（见 extractIconFont）。
+    std::string appDir;
+    {
+        const char* ext = SDL_AndroidGetExternalStoragePath();
+        const char* in  = SDL_AndroidGetInternalStoragePath();
+        if (ext && *ext && ::chdir(ext) == 0)
+            appDir = ext;
+        else if (in && *in && ::chdir(in) == 0)
+            appDir = in;
+        if (!appDir.empty()) {
+            ::setenv("GO2_KEYS_FILE", (appDir + "/keys.json").c_str(), 1);
+            LOGI("钥匙目录: %s", appDir.c_str());
+        } else {
+            LOGE("找不到可写目录，钥匙/缓存不可用");
+        }
+    }
+
     go2::applyTheme();  // 建立样式基线（applyUiScale 每次都从基线重算，不会累乘）
-    loadFontsFromAssets();
+    if (!appDir.empty()) extractIconFont();  // 图标字体落盘 + GO2_ICON_FONT
+    loadFontsFromAssets();                   // 内部会把图标字体并进中文字体
     // 字号与控件间距不再在启动时定死：drawUi 每帧按断点调
     // setUiFontSizes() + applyUiScale()（见 ui/layout.cpp / ui/theme.cpp）
     g_pixelScale = detectPixelScale(window);
@@ -421,27 +602,6 @@ int main(int argc, char** argv) {
     ImGui_ImplSDL2_InitForOpenGL(window, gl);
     ImGui_ImplOpenGL3_Init("#version 300 es");
 
-    // ---- Android 钥匙 / 缓存目录（桌面版靠 ~/.go2/keys.json，安卓根本没有这些路径）----
-    // 用「应用专属外部目录」当钥匙目录，并 chdir 过去 —— 一次解决三件事：
-    //   1) 钥匙文件  <ext>/keys.json      ← adb push 直接写入，无需任何权限
-    //   2) 设置页手输钥匙保存的 keys.txt   ← 原来是相对路径，安卓上工作目录不可写，存不下来
-    //   3) 连接成功后缓存的 go2_keys_cache.json
-    // Android 10+ 的应用专属外部目录（/sdcard/Android/data/<包名>/files）不需要存储权限。
-    {
-        const char* ext = SDL_AndroidGetExternalStoragePath();
-        const char* in  = SDL_AndroidGetInternalStoragePath();
-        std::string dir;
-        if (ext && *ext && ::chdir(ext) == 0)
-            dir = ext;
-        else if (in && *in && ::chdir(in) == 0)
-            dir = in;
-        if (!dir.empty()) {
-            ::setenv("GO2_KEYS_FILE", (dir + "/keys.json").c_str(), 1);
-            LOGI("钥匙目录: %s", dir.c_str());
-        } else {
-            LOGE("找不到可写目录，钥匙/缓存不可用");
-        }
-    }
 
     // ---- 业务状态（与桌面完全共用）----
     go2::RobotManager mgr;
@@ -466,6 +626,20 @@ int main(int argc, char** argv) {
     managerWireUp(mgr, ui);  // 见下方定义（回调接线与桌面一致）
     callActivityVoid("acquireMulticastLock");  // 组播发现必需
     callActivityVoid("refreshSafeAreaInsets");  // 让 Java 侧读一次真实安全区（异步，稍后生效）
+
+    // ---- 网页界面（Vue3）：本机服务 + WebView ----
+    // 界面本身是 client/assets/web 那套前端（打包进 APK 的 assets/web，这里导出到磁盘），
+    // 协议 / 加密 / 钥匙库 / 指令表仍在 C++（ui/web_bridge.cpp）—— 只换界面，不碰协议。
+    // 返回键 / 返回手势从 WebView 回到 ImGui 界面（两套共存，随时可切）。
+    if (!appDir.empty()) {
+        extractWebAssets();
+        go2::startWebUi(mgr, ui, 8123);
+        // 等服务线程 listen 起来再开 WebView（端口打印在 logcat：[WebUI] 界面已就绪 → ...）
+        std::thread([] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(900));
+            openWebUi("http://127.0.0.1:8123/");
+        }).detach();
+    }
 
     // ---- 遥控时保持屏幕常亮（安全项：操作中息屏会断连）----
     bool keepScreenOn = false;

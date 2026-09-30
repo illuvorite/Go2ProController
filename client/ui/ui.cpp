@@ -1,6 +1,7 @@
 #include "ui.hpp"
 
 #include "discovery.hpp"
+#include "icons.hpp"
 #include "robot_client.hpp"
 #include "robot_manager.hpp"
 #include "sport_library.hpp"
@@ -9,6 +10,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <regex>
@@ -223,8 +225,33 @@ ImVec4 stateColor(ConnState s) {
     }
 }
 
+/// 大按钮：竖向渐变 + 顶边高光 + 底部投影（ImGui 原生 Button 是一块死平色，毫无质感）。
+/// 做法：先 ImGui::Button（拿到底色/悬停/按下的配色），再用 draw list **叠画**
+/// "上白下黑"的竖向渐变 + 顶边 1px 高光；渐变压得很淡，按钮上原有的文字不受影响。
 bool bigButton(const char* label, const ImVec2& size = ImVec2(0, 34)) {
-    return ImGui::Button(label, size);
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const bool pressed = ImGui::Button(label, size);
+    const ImVec2 p1 = ImGui::GetItemRectMax();
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float rounding = ImGui::GetStyle().FrameRounding;
+    const ImVec2 c0(p0.x + 2.0f, p0.y + 2.0f), c1(p1.x - 2.0f, p1.y - 2.0f);
+    // 顶亮底暗的竖向渐变（叠在按钮底色上 → 立体感）
+    dl->AddRectFilledMultiColor(c0, c1, IM_COL32(255, 255, 255, 24), IM_COL32(255, 255, 255, 24),
+                                IM_COL32(0, 0, 0, 40), IM_COL32(0, 0, 0, 40));
+    // 顶边高光 1px（悬停更亮）
+    dl->AddLine(ImVec2(c0.x + 6.0f, c0.y + 0.5f), ImVec2(c1.x - 6.0f, c0.y + 0.5f),
+                ImGui::GetColorU32(ImVec4(1, 1, 1, hovered ? 0.34f : 0.16f)), 1.0f);
+    // 投影：只画按钮**下方**（画在上方会盖住按钮本体；按下时不画 → "按进去了"）
+    if (!pressed) {
+        for (int i = 3; i >= 1; --i) {
+            const float o = static_cast<float>(i) * 1.6f;
+            dl->AddRectFilled(ImVec2(p0.x + o * 0.5f, p1.y - 1.0f),
+                              ImVec2(p1.x - o * 0.5f, p1.y + o),
+                              ImGui::GetColorU32(ImVec4(0, 0, 0, 0.075f)), rounding);
+        }
+    }
+    return pressed;
 }
 
 /// 主色按钮（强调操作用）
@@ -354,75 +381,85 @@ void rollDragFlags() {
 }
 
 // ---------------------------------------------------------------- 苹果风格控件
-// 用户要求"滑动条按照苹果风格设计"。目标观感（iOS）：
-//   灰色胶囊轨道 + 左侧主色"已填充"段 + **白色圆形旋钮** + 数值居中显示。
-// ⚠ 为什么填充段要自己画：ImGui 原生滑条只画一个"旋钮"矩形，并不画左边已填充的部分
-//   （见 imgui_widgets.cpp::SliderBehaviorT 里 out_grab_bb 的算法：只是一个以当前值为中心的方块）。
-//   所以这里先把填充段画在**轨道之前**（画得更早 = 压在轨道底下，文字与旋钮仍在它上面），
-//   再把轨道设成半透明白、旋钮设成白色圆点。
+// 用户要"苹果风格"的滑条 —— iOS 那条滑条的**标志性观感**是三件事：
+//   ① 轨道**细**（约字号的一半高），两端半圆
+//   ② 旋钮**比轨道大一圈**、像一颗悬浮在轨道上的白色圆点（带一点柔和投影）
+//   ③ 左侧已填充段与轨道**同高同圆角**，右端停在旋钮圆心（被旋钮压住，看不出接缝）
+// 旧版把轨道做成"和旋钮一样粗的一条"（灰条/蓝条里塞个球），看起来像进度条不像滑条 → 现在改掉。
+//
+// ⚠ 为什么轨道/填充/投影都要自己画：ImGui 原生滑条只画一个"旋钮"矩形 + 整块 FrameBg，
+//   并不画左边已填充的部分（见 imgui_widgets.cpp::SliderBehaviorT 的 out_grab_bb）。
+//   所以：FrameBg 全设成**透明**（让 ImGui 那根粗条消失），滑条本体只贡献"白色圆旋钮 + 拖动交互"。
 bool iosSliderFloat(const char* label, float* v, float lo, float hi, const char* fmt,
                     float width = 0.0f) {
     const float fontSize = ImGui::GetFontSize();
-    const float padY = 5.0f;
-    const float track = fontSize + padY * 2.0f;  // 轨道高
-    const float knob = track - 4.0f;             // 旋钮直径（ImGui 里 grab_padding 固定 2）
+    const float knob = fontSize * 1.5f;                     // 旋钮直径：比轨道大一圈
+    const float trackH = std::max(8.0f, fontSize * 0.52f);  // 轨道高：细
+    // ImGui 的旋钮跨轴尺寸 = 帧高 − 4（grab_padding 固定 2）→ 用 FramePadding 把帧高撑到"旋钮+4"
+    const float padY = std::max(2.0f, (knob + 4.0f - fontSize) * 0.5f);
+    const float frameH = fontSize + padY * 2.0f;
     const float frameW = (width > 0.0f) ? width : ImGui::CalcItemWidth();
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1(p0.x + frameW, p0.y + frameH);
+    const bool hovering = ImGui::IsMouseHoveringRect(p0, p1);
 
-    // ---- 已填充段（主色）----
     float t = (hi > lo) ? ((*v - lo) / (hi - lo)) : 0.0f;
     t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
-    const float fillRight = p0.x + 2.0f + t * (frameW - 4.0f - knob);
+    const float cy = p0.y + frameH * 0.5f;               // 轨道与旋钮同一水平中心
+    const float xMin = p0.x + 2.0f + knob * 0.5f;        // 旋钮圆心行程（与 ImGui 内部一致）
+    const float xMax = p1.x - 2.0f - knob * 0.5f;
+    const float kx = xMin + t * std::max(0.0f, xMax - xMin);
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->PushClipRect(p0, ImVec2(p0.x + frameW, p0.y + track), true);
-        dl->AddRectFilled(p0, ImVec2(std::max(p0.x + 2.0f, fillRight), p0.y + track),
-                          ImGui::GetColorU32(
-                              ImVec4(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.92f)),
-                          track * 0.5f);
-        dl->PopClipRect();
+        const float ty0 = cy - trackH * 0.5f;
+        const float ty1 = cy + trackH * 0.5f;
+        // 轨道（细胶囊；悬停时略亮一点，给一点反馈）
+        dl->AddRectFilled(ImVec2(p0.x, ty0), ImVec2(p1.x, ty1),
+                          ImGui::GetColorU32(ImVec4(1, 1, 1, hovering ? 0.17f : 0.11f)),
+                          trackH * 0.5f);
+        // 已填充段（主色，与轨道等高同圆角，右端停在旋钮圆心）
+        if (kx > p0.x + 1.0f)
+            dl->AddRectFilled(ImVec2(p0.x, ty0), ImVec2(kx, ty1),
+                              ImGui::GetColorU32(ImVec4(col::kAccent.x, col::kAccent.y,
+                                                        col::kAccent.z, 0.95f)),
+                              trackH * 0.5f);
+        // 旋钮投影：ImGui 没有模糊，用几层低透明度同心圆近似 iOS 那种柔和阴影
+        for (int i = 3; i >= 1; --i)
+            dl->AddCircleFilled(ImVec2(kx, cy), knob * 0.5f + static_cast<float>(i) * 1.7f,
+                                ImGui::GetColorU32(ImVec4(0, 0, 0, 0.05f)), 28);
     }
 
-    // ---- 轨道 + 白色圆形旋钮 ----
+    // ---- 滑条本体：只留白色圆旋钮 ----
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, padY));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, track * 0.5f);
-    ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, track);  // ≥ 半径 → 正圆
-    ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, knob);    // 旋钮 = 轨道内高 → 圆点
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 999.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, knob);  // ≥ 半径 → 正圆
+    ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, knob);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(1.0f, 1.0f, 1.0f, 0.09f));  // 轨道
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.13f));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(1.0f, 1.0f, 1.0f, 0.15f));
-    ImGui::PushStyleColor(ImGuiCol_SliderGrab, ImVec4(1.0f, 1.0f, 1.0f, 0.97f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));  // 轨道自己画了 → 透明
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, ImVec4(1.0f, 1.0f, 1.0f, 0.98f));
     ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
     ImGui::SetNextItemWidth(frameW);
-    // 格式传一个空格：让 ImGui 自己的"居中数值"变成空白（它画在旋钮**之后**，
-    // 白色旋钮上压白字会看不见 —— 实测 "1.20 rad/s" 中间被旋钮吃掉）。
-    // 数值改由下面自己画在"离旋钮最远的轨道一端"。
-    // NoInput：因为格式被换成空格，Ctrl+点 的临时输入框会以"空"起步（回车会把值压到下限），
-    //          索性关掉它 —— 数值在轨道上一直看得见，拖动即可调。
-    const bool changed =
-        ImGui::SliderFloat(label, v, lo, hi, " ", ImGuiSliderFlags_NoInput);
+    // 格式给一个空格：ImGui 自己的居中数值不要（数值由调用方画在轨道外侧，见 paramRowF）。
+    // NoInput：Ctrl+点 的临时输入框会以"空"起步（回车会把值压到下限）→ 关掉。
+    const bool changed = ImGui::SliderFloat(label, v, lo, hi, " ", ImGuiSliderFlags_NoInput);
     // 记下"正在拖滑条"：这一下的手指拖动不该变成页面滚动（见 touchDragScroll）
     if (ImGui::IsItemActive()) g_valueDragCur = true;
     ImGui::PopStyleColor(5);
     ImGui::PopStyleVar(5);
 
-    // ---- 数值文本：**固定在轨道右端**（不随值左右跳），带 1px 暗色描边 → 压在旋钮上也读得清 ----
-    {
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), fmt, *v);
-        const ImVec2 ts = ImGui::CalcTextSize(buf);
-        const float padX = 12.0f;
-        if (ts.x + padX * 2.0f < frameW) {
-            const ImVec2 pos(p0.x + frameW - ts.x - padX, p0.y + (track - ts.y) * 0.5f);
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            dl->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f),
-                        ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.6f)), buf);
-            dl->AddText(pos, ImGui::GetColorU32(col::kText), buf);
-        }
-    }
-    (void)t;
+    (void)fmt;  // 数值文本由调用方画（轨道变细之后，字压在轨道里就没法看了）
     return changed;
+}
+
+/// 苹果滑条占的高度（同一行里给数值文字 / 按钮做垂直居中对齐用）。
+/// 与 iosSliderFloat 里的帧高算法保持一致：帧高 = 字号 + 2*padY，padY 由"旋钮+4"反推。
+float iosSliderHeight() {
+    const float fs = ImGui::GetFontSize();
+    const float knob = fs * 1.5f;
+    const float padY = std::max(2.0f, (knob + 4.0f - fs) * 0.5f);
+    return fs + padY * 2.0f;
 }
 
 /// 整数滑条：内部仍走**浮点**滑条（ImGui 的整数滑条会把旋钮拉成一个长条：
@@ -448,9 +485,23 @@ void paramRowF(const char* label, float* v, float lo, float hi, const char* fmt,
     ImGui::TextUnformatted(label);
     ImGui::SameLine(labelW);
     const float resetW = ImGui::CalcTextSize("重置").x + 22.0f;
+    // 数值单独占一栏（固定宽度，居中）→ 拖动时数字不会左右跳，滑条右端也照样对齐
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), fmt, *v);
+    const float valW = std::max(74.0f, ImGui::CalcTextSize(buf).x + 10.0f);
     const std::string id = std::string("##") + label;
     iosSliderFloat(id.c_str(), v, lo, hi, fmt,
-                   ImGui::GetContentRegionAvail().x - resetW - 9.0f);
+                   ImGui::GetContentRegionAvail().x - resetW - valW - 18.0f);
+    ImGui::SameLine();
+    {
+        FontScope fs = fontBody();
+        const ImVec2 ts = ImGui::CalcTextSize(buf);
+        const ImVec2 cur = ImGui::GetCursorPos();
+        // 与滑条垂直居中（滑条比文字高，不对齐会显得"数字浮在上面"）
+        ImGui::SetCursorPos(ImVec2(cur.x + std::max(0.0f, (valW - ts.x) * 0.5f),
+                                   cur.y + (iosSliderHeight() - ts.y) * 0.5f));
+        ImGui::TextUnformatted(buf);
+    }
     ImGui::SameLine();
     if (ImGui::Button((std::string("重置##") + label).c_str(), ImVec2(resetW, 0.0f)))
         *v = def;  // 恢复默认值（helpTip 定义在后面，这里不调）
@@ -476,7 +527,8 @@ void touchDragScroll(const LayoutSpec& L) {
 }
 
 /// 后台线程：扫描本机所有网段，发现的 Go2 自动加入列表并连接
-void startScan(RobotManager& mgr, UiState& ui) {
+///（实现放匿名命名空间；对外入口是 namespace go2 的 startScan 包装，见 ui.hpp）
+void startScanImpl(RobotManager& mgr, UiState& ui) {
     if (ui.scanning.exchange(true)) return;
     ui.addLog("[扫描] 启动局域网发现 ...");
     std::thread([&mgr, &ui] {
@@ -638,10 +690,22 @@ void drawJoystickAt(const char* id, ImDrawList* dl, float cx, float cy, float ra
     const ImVec2 c(cx, cy);
     constexpr float kPi = 3.14159265f;
 
-    // ---- 底座：深色盘 + 内圈 + 刻度点 ----
+    // ---- 底座：投影 + 径向渐变 + 深色盘 + 内圈 + 刻度点 ----
+    // ★ 投影：让摇杆"离地"（ImGui 没有模糊 → 几层下偏移的同心圆近似）
+    for (int i = 4; i >= 1; --i)
+        dl->AddCircleFilled(ImVec2(c.x, c.y + static_cast<float>(i) * 2.2f),
+                            radius + static_cast<float>(i) * 1.3f,
+                            ImGui::GetColorU32(ImVec4(0, 0, 0, 0.055f)));
+    // ★ 径向渐变：同心圆由内向外一层层叠加 → 中心亮、边缘暗，球面感就出来了
+    for (int i = 5; i >= 1; --i)
+        dl->AddCircleFilled(c, radius * (0.28f + static_cast<float>(i) * 0.145f),
+                            ImGui::GetColorU32(ImVec4(1, 1, 1, 0.020f)));
     dl->AddCircleFilled(c, radius, ImGui::GetColorU32(ImVec4(0, 0, 0, 0.32f)));
     dl->AddCircleFilled(c, radius - 1.5f, ImGui::GetColorU32(ImVec4(1, 1, 1, 0.035f)));
     dl->AddCircle(c, radius, ImGui::GetColorU32(ImVec4(1, 1, 1, 0.10f)), 0, 1.5f);
+    // 顶部高光弧（沿盘的上沿描一段淡白弧 —— 金属/玻璃的边缘反光）
+    dl->PathArcTo(c, radius - 2.0f, -2.60f, -0.75f, 28);
+    dl->PathStroke(ImGui::GetColorU32(ImVec4(1, 1, 1, 0.18f)), 0, 1.6f);
     dl->AddCircle(c, radius * 0.60f, ImGui::GetColorU32(ImVec4(1, 1, 1, 0.05f)), 0, 1.0f);
     for (int i = 0; i < 8; ++i) {
         const float a = i * kPi / 4.0f;
@@ -675,7 +739,7 @@ namespace {  // ← 重新打开匿名命名空间，后面的文件内部辅助
 
 // ============================================================ 设备列表（卡片式）
 void drawDeviceList(RobotManager& mgr, UiState& ui) {
-    sectionTitle("设备");
+    sectionTitle((std::string(icon::Robot) + " 设备").c_str());
     ImGui::SameLine();
     {
         FontScope fs = fontSmall();
@@ -716,23 +780,14 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
             ImGui::SameLine(0, 4);
             statusDot(stc);
             ImGui::SameLine(0, 2);
-            // 名称（没起名就显示 IP）；起了名也把 IP 露出来 —— 排障全靠它
+            // 名称（没起名就显示 IP）
+            // ★ 起了名就**只显示名字**、不再并排显示 IP（用户要求）；IP 收进悬停提示，排障仍看得到
             {
                 const std::string nm = ui.nameOf(e.ip);
-                if (nm.empty()) {
-                    FontScope fs = fontBody();
-                    ImGui::TextColored(stc, "%s", maskIps(e.ip, ui.privacyMode).c_str());
-                } else {
-                    {
-                        FontScope fs = fontBody();
-                        ImGui::TextColored(stc, "%s", maskIps(nm, ui.privacyMode).c_str());
-                    }
-                    ImGui::SameLine(0, 8);
-                    {
-                        FontScope fs = fontSmall();
-                        ImGui::TextDisabled("%s", maskIps(e.ip, ui.privacyMode).c_str());
-                    }
-                }
+                FontScope fs = fontBody();
+                ImGui::TextColored(stc, "%s",
+                                   maskIps(nm.empty() ? e.ip : nm, ui.privacyMode).c_str());
+                if (!nm.empty()) helpTip((e.ip + "（已起名，只显示名字）").c_str());
             }
             ImGui::SameLine(0, 8);
             chip(stateText(st), stc);
@@ -849,6 +904,9 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
 
 }  // namespace
 
+/// 对外的扫描入口（网页界面 / 其他入口也用同一份逻辑，别再各写一份）
+void startScan(RobotManager& mgr, UiState& ui) { startScanImpl(mgr, ui); }
+
 // ============================================================================
 // 界面：上下两块 —— 上「页面区」（遥控 / 动作库）+ 下「摇杆带」
 //
@@ -881,7 +939,7 @@ void ensureNamesLoaded(UiState& ui) {
     static bool loaded = false;
     if (loaded) return;
     loaded = true;
-    ui.loadNames();
+    ui.loadNames();   // robot_names.json
 }
 
 /// 群控：全选（指令只发给已就绪的）
@@ -895,6 +953,123 @@ void selectOne(UiState& ui, const std::string& ip) {
     const std::string nm = ui.nameOf(ip);
     ui.selectOnly(ip);
     ui.addLog("[单控] 只控制 " + ip + (nm.empty() ? "" : "（" + nm + "）"));
+}
+
+/// 取消单控：谁都不控制（摇杆 / 动作 / 快捷都不再发给任何设备）
+void clearSelection(UiState& ui) {
+    if (ui.selectedCount() == 0) return;
+    ui.selectOnly("");  // 没有哪台的 ip 是空串 → 等于全部取消勾选
+    ui.addLog("[单控] 已取消：当前不控制任何设备（再点「单控」挑一台即可恢复）");
+}
+
+// ---------------------------------------------------------------- 动作 → 图标
+/// 动作 → Phosphor 字形（见 ui/icons.hpp）。用不了图标字体时不生效（走手绘兜底形状）。
+///
+/// ★ 按 `a.key`（英文标识）**逐个精确对应** —— 用户要求"每个按钮的图标别重样、要见名知意"：
+///   纯关键词匹配做不到（前跳 / 跳跃奔跑 / 自由跳跃 会全撞成兔子，四个空翻会全撞成一个箭头）。
+///   表里漏掉的（新固件指令）再退回中文关键词兜底，至少不会没图标。
+///
+/// ★ 放在**文件作用域**（不是某个页面的局部 lambda）：动作库瓷砖与底部快捷栏共用同一份表，
+///   免得两处各写一份、早晚对不上。
+const char* iconGlyph(const SportAction& a) {
+    using namespace go2::icon;  // NOLINT
+    struct KeyIcon {
+        const char* key;
+        const char* glyph;
+    };
+    static const KeyIcon kMap[] = {
+        // ---- 基础姿态 ----
+        {"Damp", ArrowsIn},                  // 阻尼：向内收
+        {"BalanceStand", Scales},            // 平衡站立：天平 = 平衡
+        {"StopMove", HandPalm},              // 停止移动：举手示意停
+        {"StandUp", Person},                 // 站立：人形
+        {"StandDown", Bed},                  // 趴下：躺下
+        {"RecoveryStand", Lifebuoy},         // 恢复站立：救生圈
+        {"Sit", ChairSimple},                // 坐下：椅子
+        {"RiseSit", Chair},                  // 起立(坐姿)：扶手椅
+        // ---- 步态 / 参数 ----
+        {"Euler", Compass},                  // 姿态角：罗盘
+        {"SwitchGait", Shuffle},             // 切换步态：切换箭头
+        {"BodyHeight", Sliders},             // 机身高度：滑杆
+        {"FootRaiseHeight", ArrowsOutLineV}, // 抬腿高度：上下撑开
+        {"SpeedLevel", Gauge},               // 速度档位：仪表
+        {"ContinuousGait", Infinity},        // 持续步态：∞
+        {"EconomicGait", Coins},             // 经济步态：省钱（硬币）
+        {"StaticWalk", Footprints},          // 静态行走：脚印
+        {"TrotRun", Run},                    // 小跑：跑动的人
+        {"SwitchJoystick", Gamepad},         // 手柄接管：手柄
+        {"Trigger", Crosshair},              // 扳机：准星
+        // ---- 表演动作 ----
+        {"Hello", Wave},                     // 打招呼：挥手
+        {"Stretch", Stretch},                // 伸懒腰：张开双臂
+        {"Content", Smiley},                 // 满意：笑脸
+        {"Wallow", HeartStraight},           // 撒娇打滚：卖萌
+        {"Dance1", MusicNote},               // 舞蹈 1：单音符
+        {"Dance2", Music},                   // 舞蹈 2：双音符
+        {"Pose", Camera},                    // 摆姿势：拍照
+        {"Scrape", Pray},                    // 拜年(作揖)：合十
+        {"WiggleHips", WaveSine},            // 扭屁股：扭动的波形
+        {"FingerHeart", HeartHand},          // 比心：手比心
+        {"MoonWalk", Boot},                  // 太空步：靴子
+        {"OnesidedStep", Stairs},            // 单边踏步：台阶
+        {"CrossStep", Sneaker},              // 交叉步：运动鞋
+        {"StandOut", Star},                  // 站立展示：亮相星标
+        {"LeadFollow", Flag},                // 领航跟随：旗
+        {"FreeWalk", Walk},                  // 自由行走：走路的人
+        // ---- 跳跃特技 ----
+        {"FrontJump", Jump},                 // 前跳：兔子（蹦跳）
+        {"FrontPounce", Throw},              // 前扑：身体前扑
+        {"FrontFlip", ArrowClockwise},       // 前空翻：向前滚翻
+        {"LeftFlip", BendDoubleUpLeft},      // 左空翻：翻向左侧
+        {"RightFlip", BendDoubleUpRight},    // 右空翻：翻向右侧
+        {"BackFlip", ArrowCounter},          // 后空翻：向后滚翻
+        {"Handstand", TaiChi},               // 倒立：倒立人形
+        {"Bound", Lightning},                // 跳跃奔跑：迅捷
+        {"FreeJump", ArrowsOut},             // 自由跳跃：自由（不限定方向）
+        // ---- 状态查询 ----
+        {"GetBodyHeight", Ruler},            // 查机身高度：量尺寸
+        {"GetFootRaiseHeight", ArrowFatUp},  // 查抬腿高度：向上抬
+        {"GetSpeedLevel", Speedometer},      // 查速度档位：速度表
+        {"GetState", Pulse},                 // 查运动状态：脉搏
+        {"GetAutoRecovery", FirstAid},       // 查自动恢复：急救
+        // ---- 其他 / 进阶 ----
+        {"TrajectoryFollow", Path},          // 轨迹跟随：路径
+        {"Standup", ArrowUp},                // 起立(兼容)：向上
+        {"CrossWalk", ArrowsLR},             // 横向行走：左右
+        {"ClassicWalk", Crown},              // 经典步态：经典 = 皇冠
+        {"BackStand", ArrowUUpLeft},         // 后仰站立：向后仰
+        {"SetAutoRecovery", Wrench},         // 设自动恢复：扳手
+        {"FreeAvoid", Shield},               // 自由避障：护盾
+        {"SwitchAvoidMode", WarningCircle},  // 避障模式：注意障碍
+    };
+    const std::string k = a.key ? a.key : "";
+    for (const KeyIcon& m : kMap)
+        if (k == m.key) return m.glyph;
+
+    // 兜底：中文关键词（新指令进库、还没来得及加表时用）
+    const std::string& l = a.label;
+    auto has = [&](const char* s) { return l.find(s) != std::string::npos; };
+    if (has("空翻") || has("翻")) return ArrowClockwise;
+    if (has("跳")) return Jump;
+    if (has("扑")) return Throw;
+    if (has("比心") || has("爱心")) return HeartHand;
+    if (has("握手") || has("招手") || has("打招呼")) return Wave;
+    if (has("拜年") || has("作揖") || has("恭喜")) return Pray;
+    if (has("舞") || has("扭")) return Music;
+    if (has("懒腰")) return Stretch;
+    if (has("坐") || has("趴")) return ChairSimple;
+    if (has("站") || has("立") || has("起身")) return Person;
+    if (has("倒立") || has("姿势")) return TaiChi;
+    if (has("跑") || has("步") || has("行走")) return Walk;
+    if (has("阻尼") || has("锁")) return ArrowsIn;
+    if (has("高度")) return Sliders;
+    if (has("速度") || has("档位") || has("步态")) return Gauge;
+    if (has("状态") || has("查")) return Search;
+    if (has("灯")) return Lamp;
+    if (has("音量") || has("声音")) return Speaker;
+    if (has("雷达")) return Broadcast;
+    if (has("温度")) return Thermometer;
+    return Paw;  // 兜底：狗爪 —— 比通用人形更贴"机器狗"
 }
 
 /// 急停（锁定式）：停**全部就绪**的机器狗（不只勾选的）+ 逐个关掉我们打开过的「持续模式」开关。
@@ -944,13 +1119,29 @@ void triggerEstop(RobotManager& mgr, UiState& ui) {
 //   顶栏因此从 8 个按钮减到 6 个，宽松屏上每个按钮更宽、更好点。
 void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     ImGui::BeginChild("top", ImVec2(0, L.topBarH), ImGuiChildFlags_Borders);
+    // 顶栏"玻璃感"：自上而下的淡白渐变 + 底部一条暗色收边（与页面区分层）
+    {
+        const ImVec2 wp = ImGui::GetWindowPos();
+        const ImVec2 ws = ImGui::GetWindowSize();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilledMultiColor(wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
+                                    IM_COL32(255, 255, 255, 13), IM_COL32(255, 255, 255, 13),
+                                    IM_COL32(255, 255, 255, 2), IM_COL32(255, 255, 255, 2));
+        dl->AddLine(ImVec2(wp.x, wp.y + ws.y - 0.5f), ImVec2(wp.x + ws.x, wp.y + ws.y - 0.5f),
+                    IM_COL32(0, 0, 0, 95), 1.0f);
+    }
 
     const ImVec2 bs(L.topBtnW, L.topBtnH);
     const float sp = ImGui::GetStyle().ItemSpacing.x;
     const ImVec4 accent(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.80f);
-    const ImVec4 red(0.78f, 0.16f, 0.16f, 1.0f);
     const int sel = ui.selectedCount();
     const int total = static_cast<int>(ui.robots.size());
+
+    // 按钮文案带图标（Phosphor 字形，见 ui/icons.hpp）。
+    // 图标字体没加载成功时退回纯文字 —— 免得按钮上出现一片"缺字方块"。
+    const bool ic = iconFontLoaded();
+    const std::string labRemote = ic ? std::string(icon::Joystick) + " 遥控" : std::string("遥控");
+    const std::string labActions = ic ? std::string(icon::TaiChi) + " 动作库" : std::string("动作库");
 
     // 把接下来的 n 个按钮推到右端（两边留白，别贴着边）
     const auto alignRight = [&](int n) {
@@ -973,17 +1164,44 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
                                                " 台受控";
         chip(s.c_str(), sel > 0 ? col::kAccent : col::kIdle);
     };
-    const auto estopBtn = [&] {
-        ImGui::PushStyleColor(ImGuiCol_Button, red);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.22f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.00f, 0.32f, 0.32f, 1.0f));
-        const bool hit = ImGui::Button(ui.estop ? "已急停" : "■ 急停", bs);
-        ImGui::PopStyleColor(3);
-        return hit;
+    const auto goPage = [&](UiPage p) {
+        if (ui.page == p) return;
+        ui.page = p;
+        ui.addLog(std::string("[UI] 切到") + (p == UiPage::Actions ? "动作库" : "遥控") + "页");
     };
-    // 日志按钮：有新异常时右上角画红色角标（日志弹窗没开也能发现出错）
-    const auto logBtn = [&] {
-        const bool hit = ImGui::Button("日志", bs);
+
+    // ---------------------------------------------------------------- 顶栏
+    // 左：品牌 + 状态胶囊 + 电量；右：设备 · 页面切换 · ⋯ 更多 · ■ 急停
+    //
+    // ★ 按用户 2026-09-28 的调整：
+    //   · **没有返回键**（页面切换按钮本身就是"遥控/动作库"来回切，不需要返回）
+    //   · 「设备」提到顶栏当独立按钮（不再埋在「更多」菜单里）
+    //   · 急停回到顶栏最右（那条右侧竖排红条已撤掉）
+    const std::string labEquipment =
+        ic ? std::string(icon::Robot) + " 设备" : std::string("设备");
+    const std::string labMore = ic ? std::string(icon::Dots) + " 更多" : std::string("更多");
+    const std::string labEstop = ic ? std::string(icon::Estop) + " 急停" : std::string("■ 急停");
+
+    // 电量胶囊：取**受控设备里最低**的那台 —— 最需要关注的那台
+    const auto batteryChip = [&]() -> bool {
+        float low = -1.0f;
+        for (const auto& e : ui.robots) {
+            if (!e.selected || e.battery < 0.0f) continue;
+            if (low < 0.0f || e.battery < low) low = e.battery;
+        }
+        if (low < 0.0f) return false;
+        char t[40];
+        if (ic)
+            std::snprintf(t, sizeof(t), "%s %d%%", icon::Battery, static_cast<int>(low));
+        else
+            std::snprintf(t, sizeof(t), "%d%%", static_cast<int>(low));
+        chip(t, low > 30.0f ? col::kOk : col::kWarn);
+        return true;
+    };
+    // 「⋯ 更多」：设置 / 日志 + 页面切换（「设备」已提到顶栏，不再重复放这里）
+    const auto moreBtn = [&] {
+        const bool hit = ImGui::Button(labMore.c_str(), bs);
+        // 有新异常就在按钮上画红色角标（日志弹窗没打开也能发现出错）
         const int unread =
             (ui.problemCount > ui.problemSeen) ? (ui.problemCount - ui.problemSeen) : 0;
         if (unread > 0) {
@@ -1000,32 +1218,53 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
             dl->AddText(ImGui::GetFont(), fs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f),
                         ImGui::GetColorU32(ImVec4(1, 1, 1, 1)), t);
         }
+        if (hit) ImGui::OpenPopup("##more");
+        if (ImGui::BeginPopup("##more")) {
+            const auto item = [&](const char* glyph, const char* text) {
+                const std::string s = ic ? std::string(glyph) + "   " + text : std::string(text);
+                return ImGui::MenuItem(s.c_str());
+            };
+            if (item(icon::Gear, "设置")) ui.popupRequest = 2;
+            if (item(icon::Log, "日志")) ui.popupRequest = 3;
+            ImGui::Separator();
+            if (item(icon::TaiChi, "动作库")) goPage(UiPage::Actions);
+            if (item(icon::Joystick, "遥控")) goPage(UiPage::Remote);
+            ImGui::EndPopup();
+        }
+        return hit;
+    };
+    // 页面切换按钮：遥控页上显示「动作库」，动作库页上显示「遥控」
+    const auto pageBtn = [&] {
+        const bool onRemote = (ui.page == UiPage::Remote);
+        if (hiBtn(onRemote ? labActions.c_str() : labRemote.c_str(), false))
+            goPage(onRemote ? UiPage::Actions : UiPage::Remote);
+    };
+
+    // 急停：红色、顶栏最右（用户要求放回顶栏；断线时也能按，不依赖任何连接状态）
+    const auto estopBtn = [&] {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.78f, 0.16f, 0.16f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.22f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.00f, 0.32f, 0.32f, 1.0f));
+        const std::string lab = ui.estop ? std::string("已急停") : labEstop;
+        const bool hit = ImGui::Button(lab.c_str(), bs);
+        ImGui::PopStyleColor(3);
         return hit;
     };
 
-    const auto goPage = [&](UiPage p) {
-        if (ui.page == p) return;
-        ui.page = p;
-        ui.addLog(std::string("[UI] 切到") + (p == UiPage::Actions ? "动作库" : "遥控") + "页");
-    };
-
     if (L.topTwoRows) {
-        // ---- 第一行：受控状态 + 急停 ----
+        // ---- 第一行：状态 + 电量 ----
         statusChip();
         ImGui::SameLine();
-        alignRight(1);
-        if (estopBtn()) triggerEstop(mgr, ui);
-        // ---- 第二行：页签 + 工具 ----
-        if (hiBtn("遥控", ui.page == UiPage::Remote)) goPage(UiPage::Remote);
-        ImGui::SameLine();
-        if (hiBtn("动作库", ui.page == UiPage::Actions)) goPage(UiPage::Actions);
+        batteryChip();
+        // ---- 第二行：设备 · 页面切换 · 更多 · 急停 ----
+        if (plainBtn(labEquipment.c_str())) ui.popupRequest = 1;
         ImGui::SameLine();
         alignRight(3);
-        if (plainBtn("设备")) ui.popupRequest = 1;
+        pageBtn();
         ImGui::SameLine();
-        if (plainBtn("设置")) ui.popupRequest = 2;
+        moreBtn();
         ImGui::SameLine();
-        if (logBtn()) ui.popupRequest = 3;
+        if (estopBtn()) triggerEstop(mgr, ui);
     } else {
         if (L.showBrand) {
             FontScope fs = fontTitle();
@@ -1034,16 +1273,13 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
         }
         statusChip();
         ImGui::SameLine();
-        alignRight(6);
-        if (hiBtn("遥控", ui.page == UiPage::Remote)) goPage(UiPage::Remote);
+        if (batteryChip()) ImGui::SameLine();
+        alignRight(4);
+        if (plainBtn(labEquipment.c_str())) ui.popupRequest = 1;
         ImGui::SameLine();
-        if (hiBtn("动作库", ui.page == UiPage::Actions)) goPage(UiPage::Actions);
+        pageBtn();
         ImGui::SameLine();
-        if (plainBtn("设备")) ui.popupRequest = 1;
-        ImGui::SameLine();
-        if (plainBtn("设置")) ui.popupRequest = 2;
-        ImGui::SameLine();
-        if (logBtn()) ui.popupRequest = 3;
+        moreBtn();
         ImGui::SameLine();
         if (estopBtn()) triggerEstop(mgr, ui);
     }
@@ -1115,7 +1351,7 @@ void drawDevicePanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
         bigButton("扫描中...", ImVec2(-1, bh));
         ImGui::EndDisabled();
     } else if (accentButton("扫描局域网", ImVec2(-1, bh))) {
-        startScan(mgr, ui);
+        startScanImpl(mgr, ui);
     }
 
     ImGui::SetNextItemWidth(-1);
@@ -1137,7 +1373,7 @@ void drawDevicePanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
 //   与下方摇杆带用一条分隔线明确分开；页眉固定不动，只有动作网格滚动。
 //   一排排按钮平铺：分组只作为小标题，不折叠。
 void drawActionPageHeader(UiState& ui) {
-    sectionTitle("动作库");
+    sectionTitle((std::string(icon::TaiChi) + " 动作库").c_str());
     ImGui::SameLine();
     {
         FontScope fs = fontSmall();
@@ -1163,6 +1399,7 @@ void drawActionPageBody(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
 
 // 参数类动作（带滑条的那些）：一行放 2 个、滑条自动撑满格子。
 // 用户反馈"整体太空了" —— 整屏页面上如果每行只有左边一小截滑条，右边全是空白，非常难看。
+const float tileH = actH + 32.0f;  // 官方 App 风格瓷砖：图标区 + 下方标签
 const float kParamGap = 12.0f;
 const float paramCellW = (L.actAreaW - kParamGap) * 0.5f;
 const float paramSliderW = std::max(120.0f, paramCellW - actW2 - 9.0f);
@@ -1213,6 +1450,20 @@ auto actionTip = [&ui](int id) {
     }
     helpTip(buf);
 };
+// 瓷砖：标签不带 ✓/✗（改用右上角小点），只保留"另一套指令集"的记号
+const auto tileLabel = [](const SportAction& a, bool fellBack) {
+    std::string t = a.label;
+    if (differsInMcf(a)) t += "*";
+    if (fellBack) t += "†";
+    return t;
+};
+// 上次回执 → 小点状态：0 没试过 / 1 成功 / 2 失败
+const auto apiState = [&ui](int id) {
+    int c = 0;
+    std::string n;
+    if (!ui.apiResult(id, &c, &n)) return 0;
+    return c == 0 ? 1 : 2;
+};
 
 // 可用性一览：点过的动作会累计成功/失败，方便"哪些动作能用"一眼看清
 {
@@ -1260,6 +1511,191 @@ auto sendAction = [&](const SportAction& a, bool flagValue = true) {
               ") → " + std::to_string(n) + " 台");
 };
 
+// ---------------------------------------------------------------- 官方 App 风格的动作瓷砖
+// 参考宇树官方 App：圆角半透明面板 + 图标 + 下方小字标签的"瓷砖"网格。
+//
+// 图标用开源图标字体 **Phosphor Icons**（MIT，细线圆润 —— 与官方风格同类）：
+// 官方那套美术素材在加密的 Web bundle 里、APK 里也取不到（1017 张资源图全是加固改名），
+// 所以按动作名关键词挑字形，观感对齐（同样细线人物 / 手掌语义）。字形清单见 ui/icons.hpp。
+// 找不到图标字体时（iconFontLoaded()==false）自动退回下面的手绘简笔形状，功能不受影响。
+enum class TileIcon { Figure, Hand, Heart, Jump, Dance, Sit, Stand, Walk, Gear, Query, Lock };
+
+const auto iconFor = [](const SportAction& a) -> TileIcon {
+    const std::string l = a.label;
+    auto has = [&](const char* s) { return l.find(s) != std::string::npos; };
+    if (has("跳") || has("翻") || has("扑")) return TileIcon::Jump;
+    if (has("舞蹈") || has("拜年") || has("太空步") || has("扭")) return TileIcon::Dance;
+    if (has("比心")) return TileIcon::Heart;
+    if (has("握手") || has("打招呼")) return TileIcon::Hand;
+    if (has("坐") || has("趴") || has("伸懒腰") || has("满意") || has("撒娇")) return TileIcon::Sit;
+    if (has("站") || has("立") || has("起身") || has("摆姿势")) return TileIcon::Stand;
+    if (has("步") || has("行走") || has("小跑") || has("跟随") || has("避障") || has("踏步"))
+        return TileIcon::Walk;
+    if (has("查") || has("状态")) return TileIcon::Query;
+    if (has("阻尼") || has("停止") || has("恢复") || has("锁定")) return TileIcon::Lock;
+    if (has("高度") || has("档位") || has("步态") || has("扳机") || has("接管") || has("角度"))
+        return TileIcon::Gear;
+    return TileIcon::Figure;
+};
+
+// 图标映射已提到**文件作用域**（见上面的 iconGlyph）—— 底部快捷栏也要用它，
+// 免得两处各写一份表、早晚对不上。
+
+/// 在 c 处画一个尺寸约 s 的简笔图标
+const auto drawTileIcon = [](ImDrawList* dl, TileIcon ic, ImVec2 c, float s, ImU32 col) {
+    const float t = std::max(1.5f, s * 0.085f);
+    switch (ic) {
+        case TileIcon::Figure:
+            dl->AddCircle(ImVec2(c.x, c.y - s * 0.34f), s * 0.13f, col, 0, t);
+            dl->AddLine(ImVec2(c.x, c.y - s * 0.20f), ImVec2(c.x, c.y + s * 0.14f), col, t);
+            dl->AddLine(ImVec2(c.x - s * 0.30f, c.y - s * 0.06f),
+                        ImVec2(c.x + s * 0.30f, c.y - s * 0.06f), col, t);
+            dl->AddLine(ImVec2(c.x, c.y + s * 0.14f), ImVec2(c.x - s * 0.20f, c.y + s * 0.42f),
+                        col, t);
+            dl->AddLine(ImVec2(c.x, c.y + s * 0.14f), ImVec2(c.x + s * 0.20f, c.y + s * 0.42f),
+                        col, t);
+            break;
+        case TileIcon::Hand:
+            dl->AddCircleFilled(ImVec2(c.x, c.y + s * 0.12f), s * 0.20f, col, 20);
+            for (int i = -1; i <= 1; ++i)
+                dl->AddLine(ImVec2(c.x + i * s * 0.13f, c.y + s * 0.02f),
+                            ImVec2(c.x + i * s * 0.16f, c.y - s * 0.34f), col, t);
+            dl->AddLine(ImVec2(c.x - s * 0.20f, c.y + s * 0.16f),
+                        ImVec2(c.x - s * 0.38f, c.y + s * 0.26f), col, t);
+            break;
+        case TileIcon::Heart:
+            dl->AddCircleFilled(ImVec2(c.x - s * 0.13f, c.y - s * 0.10f), s * 0.19f, col, 20);
+            dl->AddCircleFilled(ImVec2(c.x + s * 0.13f, c.y - s * 0.10f), s * 0.19f, col, 20);
+            dl->AddTriangleFilled(ImVec2(c.x - s * 0.315f, c.y - s * 0.02f),
+                                  ImVec2(c.x + s * 0.315f, c.y - s * 0.02f),
+                                  ImVec2(c.x, c.y + s * 0.40f), col);
+            break;
+        case TileIcon::Jump:
+            dl->AddTriangleFilled(ImVec2(c.x, c.y - s * 0.42f), ImVec2(c.x - s * 0.22f, c.y - s * 0.06f),
+                                  ImVec2(c.x + s * 0.22f, c.y - s * 0.06f), col);
+            dl->AddRect(ImVec2(c.x - s * 0.24f, c.y + s * 0.16f), ImVec2(c.x + s * 0.24f, c.y + s * 0.42f),
+                        col, s * 0.06f, 0, t);
+            break;
+        case TileIcon::Dance:
+            dl->AddCircle(ImVec2(c.x - s * 0.04f, c.y - s * 0.34f), s * 0.12f, col, 0, t);
+            dl->AddLine(ImVec2(c.x - s * 0.04f, c.y - s * 0.22f), ImVec2(c.x, c.y + s * 0.14f), col, t);
+            dl->AddLine(ImVec2(c.x - s * 0.04f, c.y - s * 0.12f), ImVec2(c.x - s * 0.34f, c.y - s * 0.30f),
+                        col, t);
+            dl->AddLine(ImVec2(c.x, c.y + s * 0.14f), ImVec2(c.x + s * 0.30f, c.y + s * 0.40f), col, t);
+            dl->AddLine(ImVec2(c.x, c.y + s * 0.14f), ImVec2(c.x - s * 0.24f, c.y + s * 0.38f), col, t);
+            break;
+        case TileIcon::Sit:
+            dl->AddCircle(ImVec2(c.x - s * 0.18f, c.y - s * 0.28f), s * 0.13f, col, 0, t);
+            dl->AddLine(ImVec2(c.x - s * 0.10f, c.y - s * 0.16f), ImVec2(c.x + s * 0.10f, c.y + s * 0.06f),
+                        col, t);
+            dl->AddLine(ImVec2(c.x + s * 0.10f, c.y + s * 0.06f), ImVec2(c.x + s * 0.34f, c.y + s * 0.36f),
+                        col, t);
+            dl->AddLine(ImVec2(c.x - s * 0.02f, c.y + s * 0.34f), ImVec2(c.x + s * 0.34f, c.y + s * 0.34f),
+                        col, t);
+            break;
+        case TileIcon::Stand:
+            dl->AddCircle(ImVec2(c.x, c.y - s * 0.32f), s * 0.13f, col, 0, t);
+            dl->AddLine(ImVec2(c.x, c.y - s * 0.19f), ImVec2(c.x, c.y + s * 0.12f), col, t);
+            dl->AddLine(ImVec2(c.x - s * 0.26f, c.y - s * 0.10f),
+                        ImVec2(c.x + s * 0.26f, c.y - s * 0.10f), col, t);
+            dl->AddLine(ImVec2(c.x, c.y + s * 0.12f), ImVec2(c.x - s * 0.16f, c.y + s * 0.42f), col, t);
+            dl->AddLine(ImVec2(c.x, c.y + s * 0.12f), ImVec2(c.x + s * 0.16f, c.y + s * 0.42f), col, t);
+            break;
+        case TileIcon::Walk:
+            dl->AddCircleFilled(ImVec2(c.x - s * 0.16f, c.y - s * 0.16f), s * 0.10f, col, 16);
+            dl->AddCircleFilled(ImVec2(c.x + s * 0.14f, c.y + s * 0.14f), s * 0.10f, col, 16);
+            dl->AddLine(ImVec2(c.x - s * 0.06f, c.y - s * 0.34f), ImVec2(c.x + s * 0.30f, c.y - s * 0.34f),
+                        col, t);
+            dl->AddLine(ImVec2(c.x + s * 0.20f, c.y - s * 0.42f),
+                        ImVec2(c.x + s * 0.34f, c.y - s * 0.34f), col, t);
+            dl->AddLine(ImVec2(c.x + s * 0.20f, c.y - s * 0.26f),
+                        ImVec2(c.x + s * 0.34f, c.y - s * 0.34f), col, t);
+            break;
+        case TileIcon::Gear:
+            for (int i = 0; i < 2; ++i) {
+                const float y = c.y + (i == 0 ? -s * 0.18f : s * 0.18f);
+                dl->AddLine(ImVec2(c.x - s * 0.36f, y), ImVec2(c.x + s * 0.36f, y), col, t);
+                dl->AddCircleFilled(ImVec2(c.x + (i == 0 ? -s * 0.12f : s * 0.14f), y), s * 0.11f, col, 16);
+            }
+            break;
+        case TileIcon::Query:
+            dl->AddCircle(ImVec2(c.x - s * 0.08f, c.y - s * 0.10f), s * 0.26f, col, 0, t);
+            dl->AddLine(ImVec2(c.x + s * 0.10f, c.y + s * 0.10f), ImVec2(c.x + s * 0.36f, c.y + s * 0.38f),
+                        col, t);
+            break;
+        case TileIcon::Lock:
+            dl->AddRectFilled(ImVec2(c.x - s * 0.26f, c.y - s * 0.04f),
+                              ImVec2(c.x + s * 0.26f, c.y + s * 0.38f), col, s * 0.07f);
+            dl->PathArcTo(ImVec2(c.x, c.y - s * 0.06f), s * 0.18f, 3.15f, 6.28f, 16);
+            dl->PathStroke(col, 0, t);
+            break;
+    }
+};
+
+/// 瓷砖图标：有图标字体就画字形（线宽/圆角由字体统一保证），否则回退手绘简笔。
+const auto drawTileIconAuto = [&iconFor, &drawTileIcon](
+                                  ImDrawList* dl, const SportAction& a, ImVec2 c, float s,
+                                  ImU32 col) {
+    if (go2::iconFontLoaded()) {
+        const char* g = iconGlyph(a);
+        const float gs = s * 1.06f;  // 字形自身留了边距，稍放大一点视觉上更饱满
+        const ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(gs, FLT_MAX, 0.0f, g);
+        dl->AddText(ImGui::GetFont(), gs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), col, g);
+        return;
+    }
+    drawTileIcon(dl, iconFor(a), c, s, col);
+};
+
+/// 官方 App 风格的"图标瓷砖"。返回是否被点击。
+/// @param st 上次执行结果：0=没试过 1=成功 2=失败（右上角小圆点）
+/// @param on 持续模式开关的当前状态（高亮）
+const auto actionTile = [&drawTileIconAuto](const SportAction& a, const std::string& label,
+                                            bool risky, int st, bool on,
+                                            const ImVec2& size) -> bool {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##tile", size);
+    const bool hovered = ImGui::IsItemHovered();
+    const bool held = ImGui::IsItemActive();
+    const bool clicked = ImGui::IsItemClicked();
+    const ImVec2 b(p.x + size.x, p.y + size.y);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    ImVec4 bg = on ? ImVec4(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.22f)
+                   : ImVec4(1.0f, 1.0f, 1.0f, 0.045f);
+    if (held) bg = ImVec4(1.0f, 1.0f, 1.0f, 0.14f);
+    else if (hovered) bg = ImVec4(1.0f, 1.0f, 1.0f, 0.095f);
+    const ImVec4 bd = risky ? kRed : (on ? col::kAccent : ImVec4(1, 1, 1, 0.10f));
+    // ★ 悬停 / 开启时"离地"：ImGui 没有模糊，用 2~3 层低透明度圆角矩形近似投影
+    if (hovered || on) {
+        const int layers = on ? 3 : 2;
+        for (int i = layers; i >= 1; --i) {
+            const float o = static_cast<float>(i) * 1.7f;
+            dl->AddRectFilled(ImVec2(p.x - o * 0.25f, p.y + o * 0.5f),
+                              ImVec2(b.x + o * 0.25f, b.y + o),
+                              ImGui::GetColorU32(ImVec4(0, 0, 0, 0.075f)), 12.0f);
+        }
+    }
+    dl->AddRectFilled(p, b, ImGui::GetColorU32(bg), 12.0f);
+    // ★ 顶部高光：沿上沿一条 1px 淡白线 —— 玻璃/金属质感其实就差这一笔
+    dl->AddLine(ImVec2(p.x + 12.0f, p.y + 1.0f), ImVec2(b.x - 12.0f, p.y + 1.0f),
+                ImGui::GetColorU32(ImVec4(1, 1, 1, hovered ? 0.22f : 0.11f)), 1.0f);
+    dl->AddRect(p, b, ImGui::GetColorU32(bd), 12.0f, 0, risky ? 1.6f : 1.0f);
+
+    drawTileIconAuto(dl, a, ImVec2((p.x + b.x) * 0.5f, p.y + size.y * 0.38f),
+                     std::min(size.x, size.y) * 0.52f, ImGui::GetColorU32(col::kText));
+    {
+        FontScope fs = fontSmall();
+        const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+        dl->AddText(ImVec2((p.x + b.x) * 0.5f - ts.x * 0.5f, b.y - ts.y - 7.0f),
+                    ImGui::GetColorU32(col::kText), label.c_str());
+    }
+    if (st == 1)
+        dl->AddCircleFilled(ImVec2(b.x - 9.0f, p.y + 9.0f), 3.5f, ImGui::GetColorU32(kGreen), 12);
+    else if (st == 2)
+        dl->AddCircleFilled(ImVec2(b.x - 9.0f, p.y + 9.0f), 3.5f, ImGui::GetColorU32(kRed), 12);
+    return clicked && !takeTipShown();
+};
+
 struct GroupDef {
     SportGroup g;
     const char* title;
@@ -1273,7 +1709,9 @@ static const GroupDef kGroups[] = {
     {SportGroup::Stunt, "跳跃特技（危险）"},
     {SportGroup::Query, "状态查询"},
     {SportGroup::Advanced, "其他 / 进阶"},
-    {SportGroup::Gait, "步态 / 速度 / 身高（参数）"},
+    // ★ 2026-09-28 用户要求：「步态 / 速度 / 身高（参数）」这一组**整组撤下**
+    //   （那批滑条：姿态角 / 切换步态 / 机身高度 / 抬腿高度 / 速度档位，
+    //    以及组里的持续步态 / 经济步态 / 静态行走 / 小跑 / 手柄接管 / 扳机 都不再显示）
 };
 
 for (const auto& gd : kGroups) {
@@ -1308,10 +1746,8 @@ for (const auto& gd : kGroups) {
             if (L.actCols > 1 && (col % L.actCols) != 0) ImGui::SameLine();
             ++col;
             bool& on = ui.toggles[a.key];
-            if (on)
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.55f, 0.28f, 1.0f));
-            const std::string t = label + (on ? "  [开]" : "  [关]");
-            if (ImGui::Button((t + "##b").c_str(), ImVec2(actW1, actH)) && !takeTipShown()) {
+            const std::string t = tileLabel(a, fellBack) + (on ? " · 开" : " · 关");
+            if (actionTile(a, t, false, apiState(id), on, ImVec2(actW1, tileH))) {
                 on = !on;
                 sendAction(a, on);
                 // 记录"真正开过的开关"（含另一套指令集的 id），急停时只关这些
@@ -1325,7 +1761,6 @@ for (const auto& gd : kGroups) {
             actionTip(id);
             helpTip("持续模式开关（开启后会一直生效，StopMove 停不掉）\n"
                     "点一下切换开/关；急停会自动把所有开关关掉");
-            if (on) ImGui::PopStyleColor();
             ImGui::PopID();
             continue;
         }
@@ -1381,164 +1816,16 @@ for (const auto& gd : kGroups) {
 
         if (L.actCols > 1 && (col % L.actCols) != 0) ImGui::SameLine();
         ++col;
-        if (a.risky)
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.20f, 0.15f, 1.0f));
-        if (ImGui::Button((label + "##b").c_str(), ImVec2(actW1, actH))) sendAction(a);
+        if (actionTile(a, tileLabel(a, fellBack), a.risky, apiState(id), false,
+                       ImVec2(actW1, tileH)))
+            sendAction(a);
         actionTip(id);
-        if (a.risky) ImGui::PopStyleColor();
 
         ImGui::PopID();
     }
 }
-ImGui::TextDisabled("* = MCF 固件下 api_id 不同   † = 当前指令集无此条，自动用另一套 id");
-ImGui::TextDisabled("✓ = 上次成功   ✗ = 上次失败（悬停看原因；指令集不匹配会自动换一套 id 重试）");
-
-// ---- 官方 App 常用动作快捷（高度 / 姿态 / 侧移 / 模式 / 舞蹈编排）----
-// 这些在 App 里是"参数类"操作（不是独立 api_id）：用现有的 1013/1007/1008 带不同参数实现
-ImGui::Spacing();
-ImGui::Separator();
-{  // 官方 App 快捷：同样平铺，不折叠
-    auto sendJson = [&](int apiId, const nlohmann::json& p, const char* what) {
-        if (takeTipShown()) return;  // 同上：长按看说明不算执行
-        const int n = forEachSelected(
-            mgr, ui, [&](RobotClient& c) { return c.sendSportCommand(apiId, p); });
-        ui.addLog(std::string("[App] ") + what + " (api " + std::to_string(apiId) + ") → " +
-                  std::to_string(n) + " 台");
-    };
-    auto jsonData = [](float v) {
-        nlohmann::json p;
-        p["data"] = v;
-        return p;
-    };
-
-    // 机身高度三档（BodyHeight 1013；单位米）
-    ImGui::TextDisabled("机身高度");
-    if (ImGui::Button("机身最低 0.22")) sendJson(1013, jsonData(0.22f), "机身最低");
-    ImGui::SameLine();
-    if (ImGui::Button("机身正常 0.28")) sendJson(1013, jsonData(0.28f), "机身正常");
-    ImGui::SameLine();
-    if (ImGui::Button("机身最高 0.33")) sendJson(1013, jsonData(0.33f), "机身最高");
-    ImGui::SameLine();
-    ImGui::TextDisabled("(MCF 固件无 1013，会回复 3203)");
-    helpTip("机身高度 = BodyHeight(1013)，MCF 固件的指令表里没有它\n"
-            "→ 会被拒（3203）。等 id 确定后再补 MCF 的高度指令。");
-
-    // 姿态（Euler 1007；x=roll 左正, y=pitch 低头为负）
-    // 实测要点：左倾/低头这类姿态操作**只在"摆姿势(Pose 1028)"模式下生效**
-    // （参考实现注明 "Pose (exit via StopMove)"），而且进入该模式有约 0.5s 的切换时间，
-    // 紧跟着发 Euler 会被丢掉 → 所以「进模式 → 等 0.7s → 下发姿态角」放进后台线程。
-    ImGui::TextDisabled("姿态（自动进入摆姿势模式后下发，幅度 0.25）");
-    auto euler = [&](float roll, float pitch, const char* what, bool exitPose = false) {
-        if (takeTipShown()) return;  // 同上：长按看说明不算执行
-        const auto ips = ui.selectedIps();
-        ui.addLog(std::string("[App] ") + what + "：进入摆姿势 → 0.7s 后下发姿态角");
-        std::thread([&mgr, ips, roll, pitch, exitPose] {
-            nlohmann::json poseOn;
-            poseOn["data"] = true;
-            for (const auto& ip : ips)
-                if (auto* c = mgr.find(ip); c && c->isReady())
-                    c->sendSportCommand(1028, poseOn);
-            std::this_thread::sleep_for(std::chrono::milliseconds(700));
-            nlohmann::json p;
-            p["x"] = roll;
-            p["y"] = pitch;
-            p["z"] = 0.0f;
-            for (const auto& ip : ips)
-                if (auto* c = mgr.find(ip); c && c->isReady()) c->sendSportCommand(1007, p);
-            if (exitPose) {  // 方向回正：再等 0.4s 用 StopMove 退出摆姿势模式
-                std::this_thread::sleep_for(std::chrono::milliseconds(400));
-                for (const auto& ip : ips)
-                    if (auto* c = mgr.find(ip); c && c->isReady()) c->stopMove();
-            }
-        }).detach();
-    };
-    if (ImGui::Button("左倾")) euler(0.25f, 0.0f, "左倾");
-    ImGui::SameLine();
-    if (ImGui::Button("右倾")) euler(-0.25f, 0.0f, "右倾");
-    ImGui::SameLine();
-    if (ImGui::Button("低头")) euler(0.0f, -0.25f, "低头");
-    ImGui::SameLine();
-    if (ImGui::Button("抬头")) euler(0.0f, 0.25f, "抬头");
-    ImGui::SameLine();
-    if (ImGui::Button("方向回正")) euler(0.0f, 0.0f, "方向回正", true);
-    helpTip("姿态角 = Euler(1007)，只在「摆姿势」模式下生效（已自动进入）。\n"
-            "若回 code=0 但狗没动 = 该固件忽略姿态角；\n"
-            "符号方向若相反（点左倾往右倒）告诉我，对调即可");
-
-    // 侧移（官方 App 的"左移 / 右移"）：**按住不放持续横移，松开立即停**
-    // 与左摇杆的横向轴是同一个功能，但这里保留 App 同款按住式按钮，手感更直观
-    ImGui::TextDisabled("侧移（按住不放，松开即停）");
-    ImGui::Button("◀ 左移（按住）", ImVec2(122, 0));
-    if (ImGui::IsItemActive()) ui.sideHold = 1;
-    ImGui::SameLine();
-    ImGui::Button("右移（按住）▶", ImVec2(122, 0));
-    if (ImGui::IsItemActive()) ui.sideHold = -1;
-
-    // 运动模式（motion_switcher）
-    ImGui::TextDisabled("运动模式");
-    if (ImGui::Button("正常模式")) {
-        const int n = forEachSelected(
-            mgr, ui, [](RobotClient& c) { return c.setMotionMode("normal"); });
-        ui.addLog("[App] 正常模式 → " + std::to_string(n) + " 台");
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("ai 模式")) {
-        const int n = forEachSelected(
-            mgr, ui, [](RobotClient& c) { return c.setMotionMode("ai"); });
-        ui.addLog("[App] ai 模式 → " + std::to_string(n) + " 台");
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("mcf 模式")) {
-        const int n = forEachSelected(
-            mgr, ui, [](RobotClient& c) { return c.setMotionMode("mcf"); });
-        ui.addLog("[App] mcf 模式 → " + std::to_string(n) + " 台");
-    }
-
-    // 舞蹈编排：舞 1 → 舞 2 连播
-    if (ImGui::Button("舞蹈编排：舞 1 → 舞 2")) {
-        const auto ips = ui.selectedIps();
-        const int n = forEachSelected(
-            mgr, ui, [](RobotClient& c) { return c.sendSportCommand(1022); });
-        ui.addLog("[App] 舞蹈编排：舞 1 开始 → " + std::to_string(n) + " 台（12 秒后接舞 2）");
-        std::thread([&mgr, ips] {
-            std::this_thread::sleep_for(std::chrono::seconds(12));
-            for (const auto& ip : ips)
-                if (auto* c = mgr.find(ip); c && c->isReady()) c->sendSportCommand(1023);
-        }).detach();
-    }
-
-    // 待验证动作候选探测：App 上有、但 id 未知的动作，逐个试并报告回执
-    ImGui::TextDisabled("待验证动作（App 有、id 未知）：拜年 / 直立行走 / 并腿跑 / 原地踏步 / 翻身");
-    if (ImGui::Button("候选探测（会依次尝试，狗可能有动作）")) {
-        const auto ips = ui.selectedIps();
-        ui.addLog("[App] 候选探测开始：确保机器狗周围安全、地面平坦");
-        std::thread([&mgr, ips, &ui] {
-            struct Cand {
-                int id;
-                const char* note;
-            };
-            static const Cand kCands[] = {
-                {1029, "拜年候选1=作揖(Scrape)"}, {1037, "拜年候选2"}, {1038, "拜年候选3"},
-                {1040, "直立行走候选1"},          {1041, "直立行走候选2"},
-                {1052, "直立行走/踏步候选"},      {1053, "并腿跑候选1"},
-                {1054, "并腿跑候选2"},            {1055, "并腿跑候选3"},
-                {1303, "原地踏步候选=单边踏步"},  {1006, "翻身候选1=恢复站立"},
-                {1300, "翻身候选2"},
-            };
-            for (const auto& cd : kCands) {
-                for (const auto& ip : ips) {
-                    if (auto* c = mgr.find(ip); c && c->isReady())
-                        c->sendSportCommand(cd.id);
-                }
-                ui.addLog(std::string("[App] 探测 ") + cd.note + " (api " +
-                          std::to_string(cd.id) + ")");
-                std::this_thread::sleep_for(std::chrono::milliseconds(1800));
-            }
-            ui.addLog("[App] 候选探测结束：回执 code=0 的即为该动作的真实 id");
-        }).detach();
-    }
-    ImGui::TextDisabled("　（探测结果看日志：code=0 就是命中；3203 = 该 id 不存在）");
-}
+// ★ 2026-09-28 用户要求：图例文字与「官方 App 常用动作快捷」整块（机身高度三档 / 姿态角 /
+//   侧移 / 运动模式切换 / 舞蹈编排 / 待验证动作探测）**全部从界面撤下** —— 动作库页现在只有瓷砖网格。
 
         ImGui::EndDisabled();
 }
@@ -1547,6 +1834,8 @@ ImGui::Separator();
 /// 高度扣掉摇杆带（−joyReserve）—— 内容永远不会渲染到摇杆的地盘上，
 /// 这就是"动作库与摇杆区明确区分上下位置"的落点。
 void drawActionPage(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
+    // 半透明深色面板（官方 App 那种"浮在地面上的面板"观感）
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.11f, 0.14f, 0.62f));
     ImGui::BeginChild("actpage", ImVec2(0, -L.joyReserve), ImGuiChildFlags_Borders);
     drawActionPageHeader(ui);
     ImGui::Separator();
@@ -1555,6 +1844,7 @@ void drawActionPage(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     drawActionPageBody(mgr, ui, L);
     ImGui::EndChild();
     ImGui::EndChild();
+    ImGui::PopStyleColor();
 }
 
 // ---------------------------------------------------------------- 设置弹窗
@@ -1608,7 +1898,7 @@ void drawRemotePanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     //   高度扣掉摇杆带（负值 = 可用高度 − 该值）：内容**永远不会渲染到摇杆的地盘上**。
     ImGui::BeginChild("remote", ImVec2(0, -L.joyReserve), ImGuiChildFlags_None);
     touchDragScroll(L);  // 触摸：手指按住拖动即可滚动（不用去抓右边滚动条）
-sectionTitle("遥控");
+sectionTitle((std::string(icon::Joystick) + " 遥控").c_str());
 ImGui::SameLine();
 {
     FontScope fs = fontSmall();
@@ -1817,11 +2107,8 @@ ImGui::SameLine();
             FontScope fs = fontBody();
             ImGui::TextColored(stc, "%s", maskIps(ui.labelOf(e.ip), ui.privacyMode).c_str());
         }
-        if (!ui.nameOf(e.ip).empty()) {  // 起了名也把 IP 露出来（排障要用）
-            ImGui::SameLine(0, 8);
-            FontScope fs = fontSmall();
-            ImGui::TextDisabled("%s", maskIps(e.ip, ui.privacyMode).c_str());
-        }
+        // ★ 起了名就只显示名字（用户要求）—— IP 挪进悬停提示（排障仍看得到）
+        if (!ui.nameOf(e.ip).empty()) helpTip((e.ip + "（已起名，只显示名字）").c_str());
         ImGui::SameLine(0, 10);
         chip(stateText(st), stc);
         ImGui::SameLine(0, 14);
@@ -2091,12 +2378,22 @@ void drawJoysticks(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
                     if (active) ImGui::PopStyleColor();
                     return hit;
                 };
-                if (panelBtn("单控", sel == 1, ImVec2(bw, bh))) ImGui::OpenPopup("##pick");
+                // 图标字体加载成功时按钮带图标（人 / 多人的字形一眼看清是单控还是群控）
+                const bool ic = iconFontLoaded();
+                const std::string labSingle =
+                    ic ? std::string(icon::User) + " 单控" : std::string("单控");
+                const std::string labGroup =
+                    ic ? std::string(icon::Users) + " 群控" : std::string("群控");
+                const bool singleHit = panelBtn(labSingle.c_str(), sel == 1, ImVec2(bw, bh));
+                // 记下按钮矩形：下面的选择器要**向上弹**（摇杆带贴着屏幕下沿，
+                // 往下弹会被裁掉、还会压住「群控」按钮）
+                const ImVec2 pickAnchor = ImGui::GetItemRectMin();
+                if (singleHit) ImGui::OpenPopup("##pick");
                 if (L.joyPanelStack) {
-                    if (panelBtn("群控", sel > 1, ImVec2(bw, bh))) selectGroupAll(ui);
+                    if (panelBtn(labGroup.c_str(), sel > 1, ImVec2(bw, bh))) selectGroupAll(ui);
                 } else {
                     ImGui::SameLine(0.0f, 8.0f);
-                    if (panelBtn("群控", sel > 1, ImVec2(bw, bh))) selectGroupAll(ui);
+                    if (panelBtn(labGroup.c_str(), sel > 1, ImVec2(bw, bh))) selectGroupAll(ui);
                 }
                 // 当前受控对象（居中一行小字）
                 {
@@ -2110,7 +2407,11 @@ void drawJoysticks(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
                                                 : (sel == 1 ? col::kAccent : col::kOk),
                                        "%s", t.c_str());
                 }
-                // ---- 单控：选哪一台 ----
+                // ---- 单控：选哪一台（**向上弹**的选择器）----
+                // 定位用"底边对齐按钮顶边"的 pivot：高度交给 ImGui 自适应，不用预先估算行高。
+                ImGui::SetNextWindowPos(ImVec2(pickAnchor.x, pickAnchor.y - 8.0f),
+                                        ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+                ImGui::SetNextWindowSizeConstraints(ImVec2(230.0f, 0.0f), ImVec2(470.0f, 520.0f));
                 if (ImGui::BeginPopup("##pick")) {
                     ImGui::TextDisabled("选择要单控的机器狗");
                     ImGui::Separator();
@@ -2125,14 +2426,29 @@ void drawJoysticks(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
                         for (const auto& e : snap) {
                             RobotClient* c = mgr.find(e.ip);
                             const ConnState st = c ? c->state() : ConnState::Disconnected;
+                            // ★ 起了名就**只显示名字**（用户要求）；IP 收进悬停提示，排障时仍看得到
                             const std::string nm = ui.nameOf(e.ip);
-                            std::string label = (nm.empty() ? e.ip : nm + "   " + e.ip);
-                            label += std::string("   ") + stateText(st);
+                            const std::string label =
+                                (nm.empty() ? e.ip : nm) + std::string("    ") + stateText(st);
                             if (ImGui::Selectable(label.c_str(), ui.isSelected(e.ip))) {
                                 selectOne(ui, e.ip);
                                 ImGui::CloseCurrentPopup();
                             }
+                            if (!nm.empty()) helpTip((e.ip + "（已起名，这里只显示名字）").c_str());
                         }
+                    }
+                    // ---- 取消当前单控：谁都不控制 ----
+                    if (sel > 0) {
+                        ImGui::Separator();
+                        const std::string cancelLabel =
+                            (ic ? std::string(icon::HandPalm) + "    " : std::string()) +
+                            "取消单控（不控制任何设备）";
+                        if (ImGui::Selectable(cancelLabel.c_str())) {
+                            clearSelection(ui);
+                            ImGui::CloseCurrentPopup();
+                        }
+                        helpTip("取消后摇杆 / 动作 / 快捷都不再发给任何设备；\n"
+                                "想恢复再点「单控」挑一台即可");
                     }
                     ImGui::EndPopup();
                 }
@@ -2159,6 +2475,23 @@ void drawUi(RobotManager& mgr, UiState& ui) {
     ImGui::Begin("Go2 控制管理台", nullptr,
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    // ---- 背景：顶部略亮 → 底部近黑的**竖向渐变** + 顶部一点氛围光 ----
+    // ★ 这是"有没有质感"的第一根分水岭：全屏一个纯色，所有半透明面板都贴在死灰上；
+    //   铺一层渐变之后，控件上下位置自带明暗差，立刻有空间感（见 theme.cpp 里"半透明白"的说明）。
+    {
+        const ImVec2 wp = ImGui::GetWindowPos();
+        const ImVec2 ws = ImGui::GetWindowSize();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilledMultiColor(wp, ImVec2(wp.x + ws.x, wp.y + ws.y),
+                                    IM_COL32(28, 33, 43, 255), IM_COL32(28, 33, 43, 255),
+                                    IM_COL32(10, 12, 16, 255), IM_COL32(10, 12, 16, 255));
+        // 顶部中央的氛围光（非常淡 —— 深色背景上只留一点点"打光"的感觉）
+        for (int i = 4; i >= 1; --i)
+            dl->AddCircleFilled(ImVec2(wp.x + ws.x * 0.5f, wp.y + ws.y * 0.10f),
+                                ws.y * (0.20f + static_cast<float>(i) * 0.13f),
+                                IM_COL32(80, 124, 205, 6));
+    }
 
     // ---- 断点布局：每帧按「视口 + 输入方式 + 安全区」重算（纯函数，带 8dp 滞回，幂等）----
     // 注意：DisplaySize 必须是**已按设备密度归一**的逻辑尺寸（dp），
@@ -2200,7 +2533,7 @@ void drawUi(RobotManager& mgr, UiState& ui) {
     ImGui::End();
 
     // ★ 摇杆在最后画、且画到前景层：页面内容盖不住它；弹窗打开时整条带子不画。
-    // 两杆中间的「单控 / 群控」面板也在这里（要 mgr 读设备状态）。
+    // 两杆中间的「快捷动作 + 单控 / 群控」面板也在这里（要 mgr 读设备状态）。
     drawJoysticks(mgr, ui, L);
 }
 

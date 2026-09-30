@@ -1,0 +1,5 @@
+﻿img/go2.jpg + img/go2@2x.jpg
+  Source: Wikimedia Commons - File:Unitree Go2 of Salvamont side view.jpg
+  Author: HotNews Romania (Adi Iacob, Ovidiu Popica)
+  License: CC BY 3.0 - https://creativecommons.org/licenses/by/3.0
+  (attribution required - keep this file)
