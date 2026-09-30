@@ -14,6 +14,7 @@ inline constexpr const char* CaretLeft     = "\xEE\x84\xB8";  // 返回 / 左转
 inline constexpr const char* CaretDown     = "\xEE\x84\xB6";  // 后退（向下）  (caret-down U+E136)
 inline constexpr const char* CaretRight    = "\xEE\x84\xBA";  // 右转  (caret-right U+E13A)
 inline constexpr const char* X             = "\xEE\x93\xB6";  // 关闭  (x U+E4F6)
+inline constexpr const char* Check         = "\xEE\x86\x82";  // 勾选  (check U+E182)
 inline constexpr const char* Pencil        = "\xEE\x8E\xB4";  // 编辑  (pencil-simple U+E3B4)
 inline constexpr const char* Robot         = "\xEE\x9D\xA2";  // 设备 / 机器狗  (robot U+E762)
 inline constexpr const char* Dog           = "\xEE\x9D\x8A";  // 机器狗  (dog U+E74A)

@@ -53,7 +53,8 @@ static_assert(near(kPhonePortrait.fontTitle, 19.0f), "C 档字号 19/16/13");
 static_assert(near(kPhonePortrait.joyRadius, 52.5f), "★ 摇杆半径 = min(350,820)*0.15（比第一版小）");
 static_assert(near(kPhonePortrait.joyInsetX, 89.88f), "左内缩 = radius*0.95 + 安全区左 + 20");
 static_assert(near(kPhonePortrait.joyCenterY, 737.5f), "圆心高 = 844-24-52.5-30（底部留出标签位置）");
-static_assert(near(kPhonePortrait.joyReserve, 159.0f), "摇杆带高 = 2*radius + 标签位 + 底部安全区");
+static_assert(near(kPhonePortrait.joyReserve, 194.0f),
+              "摇杆带高 = 2*radius + 标签位 + 底部安全区 + 面板加高（竖排面板 140 > 2*半径）");
 static_assert(kPhonePortrait.joyCenterY + kPhonePortrait.joyRadius <=
                   kPhonePortrait.screenH - kPhonePortrait.safe.bottom,
               "★ 摇杆底边必须让开底部安全区（手势条）");
@@ -61,7 +62,7 @@ static_assert(kPhonePortrait.joyInsetX - kPhonePortrait.joyRadius >= kPhonePortr
               "★ 摇杆左边必须让开左安全区");
 // ★★ 关键：页面区（整屏 − 顶栏 − 摇杆带）必须留得下东西
 static_assert(kPhonePortrait.pageH > 300.0f, "★ 页面区高度要够（摇杆带不能把内容挤没）");
-static_assert(near(kPhonePortrait.pageH, 571.0f), "页面区高 = 844-114-159");
+static_assert(near(kPhonePortrait.pageH, 536.0f), "页面区高 = 844-114-194");
 static_assert(kPhonePortrait.joyReserve > kPhonePortrait.joyRadius * 2.0f,
               "★ 摇杆带要盖住整个摇杆");
 static_assert(kPhonePortrait.joyCenterY + kPhonePortrait.joyRadius + 30.0f <=
@@ -112,7 +113,8 @@ static_assert(kTabletPortrait.showBrand, "平板够宽，品牌名保留");
 static_assert(near(kTabletPortrait.topBtnW, 118.0f), "4 个按钮 → 触到 118dp 上限");
 static_assert(near(kTabletPortrait.contentMaxW, 700.0f), "★ 铺满：内容宽 = 728-28");
 static_assert(near(kTabletPortrait.joyPanelW, 320.0f), "面板宽上限 320dp");
-static_assert(near(kTabletPortrait.joyPanelH, 90.0f), "面板高 = 44 + 46");
+static_assert(kTabletPortrait.joyPanelCards, "★ 平板竖屏：面板带受控狗卡片行");
+static_assert(near(kTabletPortrait.joyPanelH, 150.0f), "面板高 = 44 + 46 + 卡片行 60");
 static_assert(kTabletPortrait.paramInline, "平板竖屏页面区够高 → 参数常显");
 static_assert(near(kTabletPortrait.joyRadius, 88.0f), "★ 摇杆半径触到 88dp 上限（第一版是 112）");
 static_assert(near(kTabletPortrait.joyInsetX, 123.6f), "左内缩 = 88*0.95+20+20");
@@ -135,17 +137,18 @@ static_assert(near(kTabletLandscape.pageW, 1029.0f), "★ 页面宽 = 可用宽 
 static_assert(near(kTabletLandscape.contentMaxW, 1029.0f), "★ 铺满：遥控页内容也用满 pageW");
 static_assert(near(kTabletLandscape.actAreaW, 1005.0f), "动作库网格可用宽");
 static_assert(near(kTabletLandscape.joyPanelW, 320.0f), "单控/群控面板宽 320dp");
-static_assert(near(kTabletLandscape.joyPanelH, 90.0f), "面板高 = 44 + 46");
+static_assert(kTabletLandscape.joyPanelCards, "★ 平板横屏：面板带受控狗卡片行");
+static_assert(near(kTabletLandscape.joyPanelH, 150.0f), "面板高 = 44 + 46 + 卡片行 60");
 static_assert(near(kTabletLandscape.joyRadius, 70.0f),
               "★ iPad 横屏：可用高 662 < 760 → 摇杆上限压到 70dp（把纵向空间还给页面区）");
 static_assert(near(kTabletLandscape.joyInsetX, 106.5f), "左内缩 = 70*0.95+20+20");
 static_assert(near(kTabletLandscape.joyCenterY, 562.0f), "圆心高 = 686-24-70-30");
-static_assert(near(kTabletLandscape.joyReserve, 194.0f), "摇杆带高度（半径压小后 230 → 194）");
+static_assert(near(kTabletLandscape.joyReserve, 204.0f), "摇杆带高度（194 + 面板加高 10）");
 static_assert(kTabletLandscape.joyCenterY + kTabletLandscape.joyRadius <
                   kTabletLandscape.screenH,
               "★ 摇杆完全在屏幕内");
-// ★★ 内容不能被摇杆压住：页面区高度扣掉摇杆带，所以必须保证扣完还剩得下东西。
-static_assert(near(kTabletLandscape.pageH, 434.0f), "页面区高 = 686-58-194");
+// ★★ 内容不能被摇杆压住：页面区高度扣掉摇杆带（含面板加高的狗卡片行），必须保证扣完还剩得下东西。
+static_assert(near(kTabletLandscape.pageH, 424.0f), "页面区高 = 686-58-204");
 static_assert(kTabletLandscape.pageH > 300.0f, "★ 页面区必须留够");
 static_assert(kTabletLandscape.paramInline, "★ 半径压小后页面区 ~434dp → 参数常显（横屏不再折叠）");
 static_assert(near(kTabletLandscape.popupW, 930.16f), "弹窗宽 = 1057*0.88");
@@ -171,7 +174,8 @@ static_assert(near(kDesktop.contentMaxW, 1404.0f), "★ 铺满：桌面遥控页
 static_assert(near(kDesktop.pageW, 1404.0f), "★ 页面铺满（1440-36）");
 static_assert(near(kDesktop.sliderW, 560.0f), "滑条宽上限 560dp（铺满后别拉太长）");
 static_assert(near(kDesktop.joyPanelW, 320.0f), "单控/群控面板宽 320dp");
-static_assert(near(kDesktop.joyPanelH, 68.0f), "面板高 = 30 + 38");
+static_assert(kDesktop.joyPanelCards, "★ 桌面：面板带受控狗卡片行");
+static_assert(near(kDesktop.joyPanelH, 128.0f), "面板高 = 30 + 38 + 卡片行 60");
 static_assert(near(kDesktop.joyRadius, 88.0f), "★ 桌面摇杆半径 88dp（第一版 112）");
 static_assert(near(kDesktop.joyInsetX, 103.6f), "左内缩 = 88*0.95+20");
 static_assert(near(kDesktop.joyCenterY, 762.0f), "圆心高 = 880-88-30");

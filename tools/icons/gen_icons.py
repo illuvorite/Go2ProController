@@ -31,6 +31,7 @@ TABLE = [
     ("CaretDown",   "caret-down",             "后退（向下）"),
     ("CaretRight",  "caret-right",            "右转"),
     ("X",           "x",                      "关闭"),
+    ("Check",       "check",                  "勾选"),
     ("Pencil",      "pencil-simple",          "编辑"),
     ("Robot",       "robot",                  "设备 / 机器狗"),
     ("Dog",         "dog",                    "机器狗"),

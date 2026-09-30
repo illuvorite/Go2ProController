@@ -2,6 +2,8 @@
 
 #include "discovery.hpp"
 #include "icons.hpp"
+#include "textures.hpp"
+#include "key_probe.hpp"
 #include "robot_client.hpp"
 #include "robot_manager.hpp"
 #include "sport_library.hpp"
@@ -21,181 +23,6 @@
 
 namespace go2 {
 
-namespace {
-/// 前置声明：addLog 里要统计"异常行"用于日志按钮的角标，
-/// 而它的定义在文件靠后（与"只看异常"过滤用的是同一套判断，避免两处标准不一致）
-bool isProblemLine(const std::string& s);
-}  // namespace
-
-void UiState::addLog(const std::string& line) {
-    std::lock_guard<std::mutex> lock(logMutex);
-    logs.push_back(line);
-    if (logs.size() > 500) logs.erase(logs.begin(), logs.begin() + 100);
-    // 累计异常/失败行数：日志弹窗没打开时，靠顶栏「日志」按钮上的角标提醒
-    // （否则出错了用户根本不知道，机器人控制里这种"静默失败"很危险）
-    if (isProblemLine(line)) ++problemCount;
-}
-
-bool UiState::addOrUpdate(const std::string& ip, bool manual) {
-    std::lock_guard<std::mutex> lock(robotsMutex);
-    for (auto& r : robots)
-        if (r.ip == ip) return false;
-    robots.push_back({ip, false, manual, -1.0f, "-"});
-    return true;
-}
-
-bool UiState::remove(const std::string& ip) {
-    std::lock_guard<std::mutex> lock(robotsMutex);
-    for (auto it = robots.begin(); it != robots.end(); ++it)
-        if (it->ip == ip) {
-            robots.erase(it);
-            return true;
-        }
-    return false;
-}
-
-bool UiState::isSelected(const std::string& ip) {
-    std::lock_guard<std::mutex> lock(robotsMutex);
-    for (auto& r : robots)
-        if (r.ip == ip) return r.selected;
-    return false;
-}
-
-void UiState::setSelected(const std::string& ip, bool sel) {
-    std::lock_guard<std::mutex> lock(robotsMutex);
-    for (auto& r : robots)
-        if (r.ip == ip) {
-            r.selected = sel;
-            return;
-        }
-}
-
-void UiState::updateStatus(const std::string& ip, float battery, const std::string& mode) {
-    std::lock_guard<std::mutex> lock(robotsMutex);
-    for (auto& r : robots)
-        if (r.ip == ip) {
-            if (battery >= 0.0f) r.battery = battery;
-            if (!mode.empty()) r.modeName = mode;
-            return;
-        }
-}
-
-std::vector<std::string> UiState::selectedIps() {
-    std::lock_guard<std::mutex> lock(robotsMutex);
-    std::vector<std::string> out;
-    for (auto& r : robots)
-        if (r.selected) out.push_back(r.ip);
-    return out;
-}
-
-int UiState::selectedCount() {
-    return static_cast<int>(selectedIps().size());
-}
-
-// ---------------------------------------------------------------- 机器狗名称
-// 规矩与钥匙一致：只读写**本应用目录**下的文件（安卓启动时已 chdir 到应用专属目录）。
-// names 只在界面线程读写，不需要加锁。
-void UiState::loadNames() {
-    std::ifstream f("robot_names.json");
-    if (!f) return;
-    try {
-        nlohmann::json j;
-        f >> j;
-        if (!j.is_object()) return;
-        for (auto it = j.begin(); it != j.end(); ++it)
-            if (it.value().is_string() && !it.value().get<std::string>().empty())
-                names[it.key()] = it.value().get<std::string>();
-    } catch (...) {
-        // 文件损坏就当没起过名 —— 绝不能因为一个名字文件让界面起不来
-    }
-}
-
-void UiState::saveNames() {
-    nlohmann::json j = nlohmann::json::object();
-    for (const auto& kv : names)
-        if (!kv.second.empty()) j[kv.first] = kv.second;
-    std::ofstream f("robot_names.json", std::ios::trunc);
-    if (f) f << j.dump(2) << "\n";
-}
-
-void UiState::setName(const std::string& ip, const std::string& name) {
-    // 去掉首尾空白：只有空白的名字等于"没起名"（恢复显示 IP）
-    std::string clean = name;
-    while (!clean.empty() && (clean.back() == ' ' || clean.back() == '\t')) clean.pop_back();
-    const size_t b = clean.find_first_not_of(" \t");
-    clean = (b == std::string::npos) ? std::string() : clean.substr(b);
-    if (clean.empty())
-        names.erase(ip);
-    else
-        names[ip] = clean;
-    saveNames();
-}
-
-std::string UiState::nameOf(const std::string& ip) {
-    auto it = names.find(ip);
-    return it == names.end() ? std::string() : it->second;
-}
-
-std::string UiState::labelOf(const std::string& ip) {
-    const std::string n = nameOf(ip);
-    return n.empty() ? ip : n;
-}
-
-int UiState::selectAll() {
-    std::lock_guard<std::mutex> lock(robotsMutex);
-    for (auto& r : robots) r.selected = true;
-    return static_cast<int>(robots.size());
-}
-
-bool UiState::selectOnly(const std::string& ip) {
-    std::lock_guard<std::mutex> lock(robotsMutex);
-    bool found = false;
-    for (auto& r : robots) {
-        r.selected = (r.ip == ip);
-        if (r.selected) found = true;
-    }
-    return found;
-}
-
-std::string UiState::controlTargetText() {
-    const auto ips = selectedIps();
-    if (ips.empty()) return "未选择受控设备";
-    if (ips.size() == 1) return "单控 · " + labelOf(ips.front());
-    return "群控 · " + std::to_string(ips.size()) + " 台";
-}
-
-void UiState::noteApiResult(int apiId, int code, const std::string& note) {
-    if (apiId == 0) return;
-    std::lock_guard<std::mutex> lock(apiMutex);
-    apiCode[apiId] = code;
-    apiNote[apiId] = note;
-}
-
-bool UiState::apiResult(int apiId, int* code, std::string* note) {
-    std::lock_guard<std::mutex> lock(apiMutex);
-    auto it = apiCode.find(apiId);
-    if (it == apiCode.end()) return false;
-    if (code) *code = it->second;
-    if (note) {
-        auto nt = apiNote.find(apiId);
-        *note = (nt == apiNote.end()) ? std::string() : nt->second;
-    }
-    return true;
-}
-
-std::vector<std::string> loadLocalKeysFile(const std::string& path) {
-    std::vector<std::string> keys;
-    std::ifstream f(path);
-    std::string line;
-    while (std::getline(f, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' ||
-                                 line.back() == '\t'))
-            line.pop_back();
-        if (line.empty() || line[0] == '#') continue;
-        if (line.size() == 32) keys.push_back(line);
-    }
-    return keys;
-}
 
 namespace {
 
@@ -337,14 +164,6 @@ ImVec4 logColor(const std::string& s) {
         s.find("[App]") != std::string::npos || s.find("[扫描]") != std::string::npos)
         return col::kDim;
     return col::kText;
-}
-
-/// 是否属于"需要关注"的行（用于「只看异常」过滤）
-bool isProblemLine(const std::string& s) {
-    return s.find("失败") != std::string::npos || s.find("[错误]") != std::string::npos ||
-           s.find("WARN") != std::string::npos || s.find("异常") != std::string::npos ||
-           s.find("超时") != std::string::npos || s.find("掉线") != std::string::npos ||
-           s.find("[急停]") != std::string::npos;
 }
 
 /// 指令读数框（深色内嵌面板，用于显示当前速度指令等）
@@ -524,49 +343,6 @@ void touchDragScroll(const LayoutSpec& L) {
     const float dy = ImGui::GetIO().MouseDelta.y;
     if (dy == 0.0f) return;
     ImGui::SetScrollY(ImGui::GetScrollY() - dy);
-}
-
-/// 后台线程：扫描本机所有网段，发现的 Go2 自动加入列表并连接
-///（实现放匿名命名空间；对外入口是 namespace go2 的 startScan 包装，见 ui.hpp）
-void startScanImpl(RobotManager& mgr, UiState& ui) {
-    if (ui.scanning.exchange(true)) return;
-    ui.addLog("[扫描] 启动局域网发现 ...");
-    std::thread([&mgr, &ui] {
-        const auto subnets = Discovery::localSubnets();
-        if (subnets.empty()) {
-            ui.addLog("[扫描] 未找到可用的局域网 IPv4 网卡");
-            ui.scanning = false;
-            return;
-        }
-        int added = 0;
-        std::vector<std::string> toConnect;
-        for (const auto& sn : subnets) {
-            ui.addLog("[扫描] 本机网段 " + sn);
-            for (const auto& r : Discovery::scanSubnet(
-                     sn, 400, [&](const std::string& line) { ui.addLog("[扫描] " + line); })) {
-                if (ui.addOrUpdate(r.ip, false)) {
-                    ++added;
-                    ui.addLog("[扫描] 发现 Go2: " + r.ip + " [" + r.note + "]");
-                    toConnect.push_back(r.ip);
-                }
-            }
-        }
-        // 多播 SN 发现：补上跨网段/多网卡时的漏网设备，并给出 SN
-        for (const auto& kv : Discovery::multicastSnScan(
-                 1500, [&](const std::string& line) { ui.addLog("[扫描] " + line); })) {
-            if (ui.addOrUpdate(kv.second, false)) {
-                ++added;
-                ui.addLog("[扫描] 多播发现 Go2: " + kv.second + " (SN=" + kv.first + ")");
-                toConnect.push_back(kv.second);
-            }
-        }
-        if (!toConnect.empty()) {
-            ui.addLog("[扫描] 错峰连接 " + std::to_string(toConnect.size()) + " 台 ...");
-            mgr.connectAll(toConnect, 600);
-        }
-        ui.addLog("[扫描] 完成，新增 " + std::to_string(added) + " 台");
-        ui.scanning = false;
-    }).detach();
 }
 
 // ---------------------------------------------------------------- 操作提示
@@ -905,8 +681,6 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
 }  // namespace
 
 /// 对外的扫描入口（网页界面 / 其他入口也用同一份逻辑，别再各写一份）
-void startScan(RobotManager& mgr, UiState& ui) { startScanImpl(mgr, ui); }
-
 // ============================================================================
 // 界面：上下两块 —— 上「页面区」（遥控 / 动作库）+ 下「摇杆带」
 //
@@ -1351,7 +1125,9 @@ void drawDevicePanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
         bigButton("扫描中...", ImVec2(-1, bh));
         ImGui::EndDisabled();
     } else if (accentButton("扫描局域网", ImVec2(-1, bh))) {
-        startScanImpl(mgr, ui);
+        // 走公开入口:startScanImpl 已随纯数据实现搬到 ui_state.cpp(内部链接),
+        // 这里只能通过 ui.hpp 声明的 startScan 调用。
+        startScan(mgr, ui);
     }
 
     ImGui::SetNextItemWidth(-1);
@@ -1877,6 +1653,33 @@ if (ImGui::Button("存入")) {
                         ui.localKeyCount);
 }
 
+// ---- 从机器狗找钥匙（与网页端对齐）：不连电脑，扫狗的内网服务抓 32 位 hex ----
+{
+    FontScope fs = fontSmall();
+    ImGui::TextDisabled("狗本地持有明文钥匙 —— 扫它的内网端口，从 Web 服务里抓取候选");
+}
+if (ui.keyScanning) {
+    ImGui::TextColored(col::kWarn, "探测中…（几秒钟）");
+} else if (ImGui::Button("从机器狗找钥匙")) {
+    // 不填 IP：内部自动回退到受控第一台 / 设备列表第一台
+    std::thread(runKeyProbe, std::ref(mgr), std::ref(ui), std::string()).detach();
+}
+if (ui.keyScanning) helpTip("结果会显示在下方与运行日志里");
+{
+    std::lock_guard<std::mutex> lock(ui.keyScanMutex);
+    if (!ui.keyScanNote.empty()) {
+        FontScope fs = fontSmall();
+        ImGui::TextWrapped("%s", ui.keyScanNote.c_str());
+    }
+    for (const auto& k : ui.keyCandidates) {
+        ImGui::PushID(k.c_str());
+        ImGui::TextDisabled("%s", k.c_str());
+        ImGui::SameLine(0, 10);
+        if (ImGui::SmallButton("采用")) applyKeyCandidate(mgr, ui, k, std::string());
+        ImGui::PopID();
+    }
+}
+
 ImGui::Spacing();
 ImGui::Separator();
 sectionTitle("说明");
@@ -2056,9 +1859,7 @@ if (L.paramInline && L.pageW >= 900.0f) {
 
 // ---- 当前指令与发送节拍 ----
 // 决策全部交给纯函数 planMotion（急停语义有单元测试保证，见 tests/motion_test.cpp）
-// 侧移按钮（按住）折算成左杆的横向分量：协议 y 左为正 → 按住"左移" = vy>0
 float lxEff = ui.joyLx;
-if (ui.sideHold != 0 && std::fabs(ui.joyLx) < 1e-3f) lxEff = -0.55f * float(ui.sideHold);
 const MotionPlan plan = planMotion(lxEff, ui.joyLy, ui.joyRx, ui.joyRy, ui.estop,
                                    ui.maxLinSpeed, ui.yawRate, ui.movingSent);
 const int mask = (std::fabs(lxEff) > 1e-3f || std::fabs(ui.joyLy) > 1e-3f ? 1 : 0) |
@@ -2076,56 +1877,6 @@ ImGui::Spacing();
                                  : (plan.send ? "下发中 · 10Hz" : "松手即停");
     const ImVec4 sc = ui.estop ? col::kErr : (plan.send ? col::kOk : col::kIdle);
     readout(state, buf, sc);
-}
-
-// ---- 受控设备一览（铺满之后下方本来就空着，这里顺便让"指令发给谁"一目了然）----
-ImGui::Spacing();
-sectionTitle("受控设备");
-ImGui::SameLine();
-{
-    FontScope fs = fontSmall();
-    ImGui::TextDisabled("%s —— 在摇杆带中间的「单控 / 群控」里切换",
-                        ui.controlTargetText().c_str());
-}
-{
-    std::vector<RobotEntry> snap;
-    {
-        std::lock_guard<std::mutex> lock(ui.robotsMutex);
-        snap = ui.robots;
-    }
-    int shown = 0;
-    for (const auto& e : snap) {
-        if (!ui.isSelected(e.ip)) continue;
-        ++shown;
-        ImGui::PushID(e.ip.c_str());
-        RobotClient* c = mgr.find(e.ip);
-        const ConnState st = c ? c->state() : ConnState::Disconnected;
-        const ImVec4 stc = stateColor(st);
-        statusDot(stc);
-        ImGui::SameLine(0, 6);
-        {
-            FontScope fs = fontBody();
-            ImGui::TextColored(stc, "%s", maskIps(ui.labelOf(e.ip), ui.privacyMode).c_str());
-        }
-        // ★ 起了名就只显示名字（用户要求）—— IP 挪进悬停提示（排障仍看得到）
-        if (!ui.nameOf(e.ip).empty()) helpTip((e.ip + "（已起名，只显示名字）").c_str());
-        ImGui::SameLine(0, 10);
-        chip(stateText(st), stc);
-        ImGui::SameLine(0, 14);
-        batteryBar(e.battery);
-        ImGui::SameLine(0, 8);
-        {
-            FontScope fs = fontSmall();
-            const std::string batt =
-                e.battery >= 0 ? (std::to_string(int(e.battery)) + "%") : "电量 -";
-            ImGui::TextDisabled("%s   模式 %s", batt.c_str(), e.modeName.c_str());
-        }
-        ImGui::PopID();
-    }
-    if (shown == 0) {
-        FontScope fs = fontSmall();
-        ImGui::TextDisabled("（还没有受控设备 —— 点两个摇杆中间的「单控 / 群控」）");
-    }
 }
 
 if (canMove) {
@@ -2365,6 +2116,69 @@ void drawJoysticks(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
                              ImGuiWindowFlags_NoScrollWithMouse |
                              ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus);
             {
+                // ---- 受控狗卡片行（与网页端对齐）：Go2 实拍图 + 名字 + 电量 + 勾选 ----
+                // 点一张勾一台（可多选）；多台横向滚动。矮屏/窄面板时 layout 会关掉这一行。
+                if (L.joyPanelCards) {
+                    std::vector<RobotEntry> snap;
+                    {
+                        std::lock_guard<std::mutex> lock(ui.robotsMutex);
+                        snap = ui.robots;
+                    }
+                    const ImTextureID cardImg = dogCardImage();
+                    ImGui::BeginChild("##dogcards", ImVec2(0.0f, 52.0f), ImGuiChildFlags_None,
+                                      ImGuiWindowFlags_HorizontalScrollbar |
+                                          ImGuiWindowFlags_NoScrollWithMouse);
+                    for (const auto& e : snap) {
+                        ImGui::PushID(e.ip.c_str());
+                        const std::string lab =
+                            maskIps(ui.labelOf(e.ip), ui.privacyMode);  // 有名字显示名字
+                        const bool sel = ui.isSelected(e.ip);
+                        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+                        const ImVec2 sz(92.0f, 48.0f);
+                        const bool hit = ImGui::InvisibleButton("card", sz);
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        const ImU32 bg = ImGui::GetColorU32(
+                            sel ? ImVec4(0.30f, 0.58f, 1.00f, 0.20f) : ImVec4(1, 1, 1, 0.05f));
+                        const ImU32 border = ImGui::GetColorU32(
+                            sel ? ImVec4(0.30f, 0.58f, 1.00f, 0.85f) : ImVec4(1, 1, 1, 0.14f));
+                        dl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), bg, 10.0f);
+                        dl->AddRect(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), border, 10.0f);
+                        // 上半：Go2 实拍图（图片没加载时退化为爪印图标 —— 仍是字体字形，不手绘）
+                        if (cardImg)
+                            dl->AddImage(cardImg, ImVec2(p0.x + 5, p0.y + 4),
+                                         ImVec2(p0.x + sz.x - 5, p0.y + 34));
+                        else
+                            dl->AddText(ImVec2(p0.x + 5, p0.y + 8),
+                                        ImGui::GetColorU32(ImVec4(1, 1, 1, 0.65f)), icon::Paw);
+                        // 下半：名字（有名字显示名字，隐私模式打码）+ 电量（右对齐）
+                        dl->PushClipRect(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), true);
+                        dl->AddText(ImVec2(p0.x + 6, p0.y + 36), ImGui::GetColorU32(col::kText),
+                                    lab.c_str());
+                        const std::string bt =
+                            e.battery >= 0 ? (std::to_string(int(e.battery)) + "%") : "—";
+                        const float btw = ImGui::CalcTextSize(bt.c_str()).x;
+                        dl->AddText(ImVec2(p0.x + sz.x - 6 - btw, p0.y + 36),
+                                    ImGui::GetColorU32(ImVec4(1, 1, 1, 0.45f)), bt.c_str());
+                        // 右上角勾选框：选中 = 主色圆 + check 字形
+                        const ImVec2 cc(p0.x + sz.x - 10.0f, p0.y + 10.0f);
+                        if (sel) {
+                            dl->AddCircleFilled(cc, 8.0f, ImGui::GetColorU32(col::kAccent));
+                            dl->AddText(ImVec2(cc.x - 5.0f, cc.y - 7.0f), IM_COL32_WHITE,
+                                        icon::Check);
+                        } else {
+                            dl->AddCircle(cc, 8.0f, ImGui::GetColorU32(ImVec4(1, 1, 1, 0.40f)));
+                        }
+                        dl->PopClipRect();
+                        if (hit) ui.setSelected(e.ip, !sel);  // 勾一台 / 取消一台（可多选）
+                        ImGui::PopID();
+                        ImGui::SameLine(0.0f, 6.0f);
+                    }
+                    if (snap.empty()) {
+                        FontScope fs = fontSmall();
+                        ImGui::TextDisabled("还没有设备 —— 顶栏「设备」添加");
+                    }
+                    ImGui::EndChild();
+                }
                 const int sel = ui.selectedCount();
                 const float cw = ImGui::GetContentRegionAvail().x;
                 const float bh = L.topBtnH;
@@ -2464,7 +2278,6 @@ void drawJoysticks(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
 
 // ============================================================ 主界面
 void drawUi(RobotManager& mgr, UiState& ui) {
-    ui.sideHold = 0;          // 每帧重置：只有"按住侧移按钮"的那一帧会被置位
     ui.safetyRectCount = 0;   // 安全区矩形每帧重登（急停/阻尼/摇杆带面板，见 addSafetyRect）
     rollDragFlags();          // 拖动型控件标记翻帧（touchDragScroll 要用上一帧的）
     ensureNamesLoaded(ui);    // 名字文件只读一次（桌面 / 安卓共用这条路径）

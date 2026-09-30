@@ -26,7 +26,7 @@ export default {
     })
     const text = computed(() => Number(props.value).toFixed(props.digits) + props.unit)
     const showReset = computed(() =>
-      props.def !== null && Math.abs(props.value - props.def) > 1e-9)
+      props.def !== null && Math.abs(props.value - props.def) > 1e-4)  // 1e-4：滤掉 float32 噪声
 
     function valueAt(clientX) {
       const r = el.value.getBoundingClientRect()

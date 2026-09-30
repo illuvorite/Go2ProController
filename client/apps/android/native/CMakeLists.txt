@@ -143,9 +143,12 @@ target_compile_definitions(go2_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT=1)
 # ---------------------------------------------------------------- ui（与桌面共享）
 add_library(go2_ui STATIC
     "${CLIENT_DIR}/ui/ui.cpp"
+    "${CLIENT_DIR}/ui/ui_state.cpp"     # UiState 的纯数据实现（从 ui.cpp 抽出，见该文件头注释）
     "${CLIENT_DIR}/ui/layout.cpp"
     "${CLIENT_DIR}/ui/theme.cpp"
     "${CLIENT_DIR}/ui/web_bridge.cpp"   # 网页界面后端（本机 HTTP 服务 + /api/*），供安卓 WebView 使用
+    "${CLIENT_DIR}/ui/key_probe.cpp"    # 从机器狗内网找钥匙（设置页 / 网页设置共用）
+    "${CLIENT_DIR}/ui/textures.cpp"     # 狗卡片图片纹理（stb_image + GLES3 上传）
 )
 target_include_directories(go2_ui PUBLIC "${CLIENT_DIR}/ui")
 target_link_libraries(go2_ui PUBLIC go2_core go2_imgui)

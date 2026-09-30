@@ -147,7 +147,6 @@ struct UiState {
     std::map<std::string, bool> toggles;
     std::set<int> activeToggleIds;      // 我们真正打开过的开关 id（急停只关这些，避免灌爆通道）
     std::atomic<bool> estopBusy{false}; // 急停序列进行中（防连按叠加）
-    int sideHold = 0;                   // 侧移按住：+1 左 / -1 右 / 0 无
     bool hideUnsupported = false;  // 隐藏"已确认该固件不支持（3203）"的动作
     bool dampArmed = false;        // 「强制阻尼」二次确认
 
@@ -200,6 +199,11 @@ void drawUi(RobotManager& mgr, UiState& ui);
 /// 扫描局域网（后台线程）：网段 TCP 探测 + SN 多播，发现的狗自动加入列表并连接。
 /// 实现在 ui.cpp（ui.hpp 里只给声明 —— 网页桥 web_bridge.cpp 也调这份）
 void startScan(RobotManager& mgr, UiState& ui);
+
+/// 是否属于"需要关注"的行（用于日志角标统计与「只看异常」过滤）。
+/// 实现在 ui_state.cpp —— 判断标准只留这一份：角标统计（addLog）和日志列表过滤
+/// 走同一个函数，两处标准不一致的话角标数字和列表内容会对不上。
+bool isProblemLine(const std::string& s);
 
 /// 在指定屏幕位置画一个摇杆（**不处理输入，只负责画**）。
 /// 供触屏多点触控使用：数值（x/y）由调用方自己算好传进来 —— ImGui 只有一个"指针"，

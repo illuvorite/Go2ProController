@@ -84,6 +84,7 @@ struct LayoutSpec {
     float joyPanelW = 0.0f;   ///< 空档里「单控 / 群控」面板的尺寸
     float joyPanelH = 0.0f;
     bool joyPanelStack = false;  ///< 空档太窄 → 两个按钮竖排（窄屏手机）
+    bool joyPanelCards = false;  ///< ★ 面板里画"受控狗卡片行"（与网页端对齐；矮屏/窄面板不放）
 
     // ---- 弹窗（设备 / 设置 / 日志）：打开时**盖住**摇杆带 ----
     float popupW = 640.0f;
@@ -301,12 +302,21 @@ constexpr LayoutSpec makeLayout(float w, float h, bool touch, const SafeArea& sa
     computeFloatingJoysticks(s);
 
     // ---- 摇杆带中间的「单控 / 群控」面板（用户要求放两个摇杆中间）----
+    // ★ 面板里还有一行**受控狗卡片**（图片+名字+电量+勾选，横向滚动，与网页端对齐）。
+    //   矮屏（手机横屏，页面区只剩 ~146dp）与窄面板（手机竖屏 84dp 放不下 92dp 卡片）不放
+    //   —— 空间不够别硬塞，这两类设备回到"按钮 + 受控对象"的紧凑形态。
     {
         const float gapW = s.joyGapMaxX - s.joyGapMinX;
         s.joyPanelW = clampf(gapW - 24.0f, 84.0f, 320.0f);
         s.joyPanelStack = (s.joyPanelW < 190.0f);  // 空档太窄 → 两个按钮竖排
-        s.joyPanelH = (s.joyPanelStack ? 2.0f * s.topBtnH + 6.0f : s.topBtnH) +
-                      (touch ? 46.0f : 38.0f);     // 再加一行"当前受控对象"文字
+        s.joyPanelCards =
+            (s.heightClass != HeightClass::Short && s.joyPanelW >= 96.0f);
+        const float base = (s.joyPanelStack ? 2.0f * s.topBtnH + 6.0f : s.topBtnH) +
+                           (touch ? 46.0f : 38.0f);      // 再加一行"当前受控对象"文字
+        s.joyPanelH = base + (s.joyPanelCards ? 60.0f : 0.0f);  // 卡片行 52 + 上下间距
+        // ★ 面板加高（狗卡片行）后可能比"2*半径"还高 —— 页面区再多让一点，
+        //   避免面板顶部盖进页面内容。面板矮于 2*半径时不动（摇杆带本来就够高）。
+        s.joyReserve += std::max(0.0f, s.joyPanelH - 2.0f * s.joyRadius);
     }
 
     // ======================= 页面区 =======================

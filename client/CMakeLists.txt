@@ -105,9 +105,12 @@ add_executable(go2_remote
     ui/theme.cpp
     ui/layout.cpp
     ui/ui.cpp
+    ui/ui_state.cpp
     ui/web_bridge.cpp
+    ui/key_probe.cpp
+    ui/textures.cpp
 )
-target_include_directories(go2_remote PRIVATE ui)
+target_include_directories(go2_remote PRIVATE ui third_party)
 # 链上 core（其 PUBLIC include 目录会带出 core/ 与 platform/，源码里 #include "xxx.hpp" 无需改动）
 target_link_libraries(go2_remote PRIVATE go2_core)
 
@@ -131,6 +134,37 @@ if(WIN32)
     target_compile_definitions(go2_remote PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     # Winsock + IP 助手（本机网段枚举 / 端口探测）
     target_link_libraries(go2_remote PRIVATE ws2_32 iphlpapi)
+endif()
+
+# ---------------------------------------------------------------- 无界面服务
+# ---- go2_serve：只带 core + HTTP 服务，**不链 ImGui / GLFW / OpenGL** ----
+# 为什么单独一个目标：Web 界面只是皮肤，核心控制逻辑（WebRTC / 信令 / 钥匙 /
+# 指令表）都在 core/。桌面版把核心和 ImGui 编进了同一个可执行文件，导致
+# "只想用网页控制"也得把整个图形程序跑起来。这个目标把它们拆开 ——
+# 产物不带图形栈，服务器 / 容器 / CI 里都能跑。
+add_executable(go2_serve
+    apps/serve/main.cpp
+    ui/ui_state.cpp
+    ui/web_bridge.cpp
+    ui/key_probe.cpp
+)
+target_include_directories(go2_serve PRIVATE ui)
+target_link_libraries(go2_serve PRIVATE go2_core)
+target_link_libraries(go2_serve PRIVATE
+    LibDataChannel::LibDataChannel
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL OpenSSL::Crypto
+    Threads::Threads
+)
+if(TARGET httplib::httplib)
+    target_link_libraries(go2_serve PRIVATE httplib::httplib)
+else()
+    target_include_directories(go2_serve PRIVATE ${cpphttplib_SOURCE_DIR})
+endif()
+target_compile_definitions(go2_serve PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT=1)
+if(WIN32)
+    target_compile_definitions(go2_serve PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(go2_serve PRIVATE ws2_32 iphlpapi)
 endif()
 
 # ---------------------------------------------------------------- 自测
