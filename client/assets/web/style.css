@@ -250,8 +250,10 @@ button.icon-btn { padding: 9px 12px; position: relative; }
 }
 .joy.active { border-color: rgba(77, 147, 255, .55); }
 .joy-ring { position: absolute; inset: 14%; border-radius: 50%; border: 1px dashed rgba(255, 255, 255, .10); }
-.joy-cross { position: absolute; width: 60%; height: 1px; background: rgba(255, 255, 255, .07); }
-.joy-cross::after { content: ''; position: absolute; left: 50%; top: -30px; width: 1px; height: 61px; background: rgba(255, 255, 255, .07); }
+.joy-aim {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 34px; color: rgba(255, 255, 255, .10); pointer-events: none;
+}
 .joy-knob {
   position: absolute; border-radius: 50%;
   background: radial-gradient(circle at 38% 30%, #ffffff, #dfe5ed 62%, #b9c2ce);

@@ -73,9 +73,15 @@ export default {
             <span class="ic">{{ ICON.arrowUp }}</span>前进
           </button>
           <div class="dp-row">
-            <button class="dp" :disabled="!canMove || store.st.estop" @click="quick('left')">◀ 左转</button>
-            <button class="dp" :disabled="!canMove || store.st.estop" @click="quick('back')">▼ 后退</button>
-            <button class="dp" :disabled="!canMove || store.st.estop" @click="quick('right')">右转 ▶</button>
+            <button class="dp" :disabled="!canMove || store.st.estop" @click="quick('left')">
+              <span class="ic">{{ ICON.caretLeft }}</span>左转
+            </button>
+            <button class="dp" :disabled="!canMove || store.st.estop" @click="quick('back')">
+              <span class="ic">{{ ICON.caretDown }}</span>后退
+            </button>
+            <button class="dp" :disabled="!canMove || store.st.estop" @click="quick('right')">
+              右转<span class="ic">{{ ICON.caretRight }}</span>
+            </button>
           </div>
         </div>
         <div class="readout">

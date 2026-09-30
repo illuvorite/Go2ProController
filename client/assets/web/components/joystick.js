@@ -1,6 +1,7 @@
 // 悬浮摇杆：只用 pointer 事件（鼠标 / 触屏 / 触控笔通吃），两杆各持有自己的指针 → **可以同时拖**
 // （这也是当初把界面往 WebView 搬的原因之一：ImGui 只有一个指针，双杆要靠平台层自己接管手指）
 import { ref, computed } from 'vue'
+import { ICON } from '../icons.js'
 
 export default {
   name: 'Joystick',
@@ -47,14 +48,14 @@ export default {
       emit('release')
     }
 
-    return { el, x, y, active, down, move, up, knobR, maxOff }
+    return { el, x, y, active, down, move, up, knobR, maxOff, ICON }
   },
   template: `
   <div class="joy" :class="{active:active}" ref="el"
        :style="{width: radius*2 + 'px', height: radius*2 + 'px'}"
        @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="up">
     <div class="joy-ring"></div>
-    <div class="joy-cross"></div>
+    <span class="joy-aim ic">{{ ICON.crosshair }}</span>
     <div class="joy-knob" :style="{
       width: knobR*2 + 'px', height: knobR*2 + 'px',
       left: '50%', top: '50%',

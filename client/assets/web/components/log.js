@@ -33,7 +33,7 @@ export default {
     <div class="modal">
       <div class="modal-head">
         <span class="ic">{{ ICON.log }}</span>运行日志
-        <button class="ghost close" @click="close()">✕</button>
+        <button class="ghost close" @click="close()"><span class="ic">{{ ICON.x }}</span></button>
       </div>
       <div class="modal-body">
         <div class="log-tools">

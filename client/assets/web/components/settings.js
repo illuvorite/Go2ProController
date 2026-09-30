@@ -35,7 +35,7 @@ export default {
     <div class="modal narrow">
       <div class="modal-head">
         <span class="ic">{{ ICON.gear }}</span>设置
-        <button class="ghost close" @click="close()">✕</button>
+        <button class="ghost close" @click="close()"><span class="ic">{{ ICON.x }}</span></button>
       </div>
       <div class="modal-body">
         <label class="opt" @click="toggle('mcf')">

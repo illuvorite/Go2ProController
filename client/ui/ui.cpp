@@ -2009,25 +2009,25 @@ const auto drawQuick = [&] {
         const float bh = L.btnH > 0.0f ? L.btnH + 6.0f : 38.0f;
         const float x0 = ImGui::GetCursorPosX();
         ImGui::SetCursorPosX(x0 + bw + gap);  // 上行只放"前进"，保持在中间那一格
-        if (ImGui::Button("▲  前进", ImVec2(bw, bh))) {
+        if (ImGui::Button((std::string(icon::ArrowUp) + "  前进").c_str(), ImVec2(bw, bh))) {
             const int n = forEachSelected(mgr, ui,
                 [v = ui.speedScale](RobotClient& c) { return c.move(v, 0, 0); });
             ui.addLog("[群控] 前进 → " + std::to_string(n) + " 台");
         }
         ImGui::SetCursorPosX(x0);
-        if (ImGui::Button("◀  左转", ImVec2(bw, bh))) {
+        if (ImGui::Button((std::string(icon::CaretLeft) + "  左转").c_str(), ImVec2(bw, bh))) {
             const int n = forEachSelected(mgr, ui,
                 [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, v); });
             ui.addLog("[群控] 左转 → " + std::to_string(n) + " 台");
         }
         ImGui::SameLine(0.0f, gap);
-        if (ImGui::Button("▼  后退", ImVec2(bw, bh))) {
+        if (ImGui::Button((std::string(icon::CaretDown) + "  后退").c_str(), ImVec2(bw, bh))) {
             const int n = forEachSelected(mgr, ui,
                 [v = ui.speedScale](RobotClient& c) { return c.move(-v, 0, 0); });
             ui.addLog("[群控] 后退 → " + std::to_string(n) + " 台");
         }
         ImGui::SameLine(0.0f, gap);
-        if (ImGui::Button("右转  ▶", ImVec2(bw, bh))) {
+        if (ImGui::Button(("右转  " + std::string(icon::CaretRight)).c_str(), ImVec2(bw, bh))) {
             const int n = forEachSelected(mgr, ui,
                 [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, -v); });
             ui.addLog("[群控] 右转 → " + std::to_string(n) + " 台");

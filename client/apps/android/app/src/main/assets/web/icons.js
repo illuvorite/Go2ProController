@@ -8,6 +8,8 @@ export const ICON = {
   user: '\uE4C2', users: '\uE68E',
   gear: '\uE272', log: '\uE2F4', list: '\uE2F0', dots: '\uE1FE',
   estop: '\uE38E', stop: '\uE46C', lock: '\uE308',
+  caretLeft: '\uE138', caretDown: '\uE136', caretRight: '\uE13A', x: '\uE4F6',
+  crosshair: '\uE1D6',
   joystick: '\uEA5E', gamepad: '\uE26E',
   battery: '\uE0C0', charging: '\uE0BA',
   refresh: '\uE094', search: '\uE30C', key: '\uE2D6', eye: '\uE220', eyeOff: '\uE224',

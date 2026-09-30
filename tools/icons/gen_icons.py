@@ -27,7 +27,10 @@ CDN = ("https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/"
 
 # (C++ 常量名, Phosphor 图标名, 注释)
 TABLE = [
-    ("CaretLeft",   "caret-left",             "返回"),
+    ("CaretLeft",   "caret-left",             "返回 / 左转"),
+    ("CaretDown",   "caret-down",             "后退（向下）"),
+    ("CaretRight",  "caret-right",            "右转"),
+    ("X",           "x",                      "关闭"),
     ("Pencil",      "pencil-simple",          "编辑"),
     ("Robot",       "robot",                  "设备 / 机器狗"),
     ("Dog",         "dog",                    "机器狗"),

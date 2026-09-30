@@ -39,7 +39,7 @@ export default {
     <div class="modal">
       <div class="modal-head">
         <span class="ic">{{ ICON.robot }}</span>设备（{{ store.st.robots.length }}）
-        <button class="ghost close" @click="close()">✕</button>
+        <button class="ghost close" @click="close()"><span class="ic">{{ ICON.x }}</span></button>
       </div>
 
       <div class="modal-body">
