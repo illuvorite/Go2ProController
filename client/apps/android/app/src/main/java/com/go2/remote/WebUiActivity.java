@@ -22,6 +22,8 @@ import android.webkit.WebViewClient;
 
 public class WebUiActivity extends Activity {
     private WebView web;
+    private String url = "http://127.0.0.1:8123/";
+    private int retries = 0;   // 首屏加载失败自动重试（服务可能比 WebView 晚一拍）
 
     /// 网页界面是否在前台。SDL 界面切后台的"停车并断开"逻辑要看这个标志：
     /// WebView 盖在 SDL 界面上时，**不算切后台**（连接要保持，网页界面才能控制狗）
@@ -54,12 +56,21 @@ public class WebUiActivity extends Activity {
         s.setLoadWithOverviewMode(false);
         s.setUseWideViewPort(true);
         s.setMediaPlaybackRequiresUserGesture(false);
-        web.setWebViewClient(new WebViewClient());  // 别跳到外部浏览器
+        web.setWebViewClient(new WebViewClient() {  // 别跳到外部浏览器
+            @Override
+            public void onReceivedError(WebView v, android.webkit.WebResourceRequest req,
+                                        android.webkit.WebResourceError err) {
+                // 主文档加载失败（多半是服务还没 bind 上）→ 稍等重试，最多 25 次 ≈ 10 秒
+                if (req.isForMainFrame() && retries++ < 25) {
+                    v.postDelayed(() -> v.loadUrl(url), 400);
+                }
+            }
+        });
         setContentView(web, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        String url = getIntent().getStringExtra("url");
-        if (url == null || url.isEmpty()) url = "http://127.0.0.1:8123/";
+        String u = getIntent().getStringExtra("url");
+        if (u != null && !u.isEmpty()) url = u;
         web.loadUrl(url);
     }
 

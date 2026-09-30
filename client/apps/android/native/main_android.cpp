@@ -15,6 +15,7 @@
 #include "theme.hpp"
 #include "ui.hpp"
 #include "web_bridge.hpp"
+#include "../../../platform/net.hpp"
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
@@ -634,10 +635,26 @@ int main(int argc, char** argv) {
     if (!appDir.empty()) {
         extractWebAssets();
         go2::startWebUi(mgr, ui, 8123);
-        // 等服务线程 listen 起来再开 WebView（端口打印在 logcat：[WebUI] 界面已就绪 → ...）
+        // **服务一就绪立刻打开 WebView**（每 50ms 探测一次端口，最多等 3 秒）——
+        // 把"先看到 ImGui 再进网页"的闪烁压到最短；WebView 侧另有加载失败自动重试兜底
         std::thread([] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(900));
-            openWebUi("http://127.0.0.1:8123/");
+            for (int i = 0; i < 60; ++i) {
+                go2_socket_t s = ::socket(AF_INET, SOCK_STREAM, 0);
+                if (s != GO2_INVALID_SOCKET) {
+                    sockaddr_in a{};
+                    a.sin_family = AF_INET;
+                    a.sin_port = ::htons(8123);
+                    ::inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
+                    if (::connect(s, reinterpret_cast<sockaddr*>(&a), sizeof(a)) == 0) {
+                        go2::platform::closeSocket(s);
+                        openWebUi("http://127.0.0.1:8123/");
+                        return;
+                    }
+                    go2::platform::closeSocket(s);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            LOGE("网页服务 3 秒内未就绪，放弃自动打开（可从 ImGui 界面手动进）");
         }).detach();
     }
 
