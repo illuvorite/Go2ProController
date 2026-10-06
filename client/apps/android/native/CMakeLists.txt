@@ -144,6 +144,7 @@ target_compile_definitions(go2_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT=1)
 add_library(go2_ui STATIC
     "${CLIENT_DIR}/ui/ui.cpp"
     "${CLIENT_DIR}/ui/ui_state.cpp"     # UiState 的纯数据实现（从 ui.cpp 抽出，见该文件头注释）
+    "${CLIENT_DIR}/ui/command_service.cpp"  # 群控语义唯一实现（桌面/网页/安卓三端共用）
     "${CLIENT_DIR}/ui/layout.cpp"
     "${CLIENT_DIR}/ui/theme.cpp"
     "${CLIENT_DIR}/ui/web_bridge.cpp"   # 网页界面后端（本机 HTTP 服务 + /api/*），供安卓 WebView 使用
@@ -153,7 +154,44 @@ add_library(go2_ui STATIC
 target_include_directories(go2_ui PUBLIC "${CLIENT_DIR}/ui")
 target_link_libraries(go2_ui PUBLIC go2_core go2_imgui)
 
+# ---------------------------------------------------------------- 网页资源清单（自动生成）
+# 安卓端要把 APK assets/web 里的前端文件**导出到磁盘**（httplib 的静态目录只认磁盘路径），
+# 而 APK 里的 assets 无法在运行时枚举 → 必须有一份"文件清单"。
+#
+# ★ 这份清单以前是 main_android.cpp 里手工维护的数组，漏加新文件就会：原生界面加载不到新图、
+#   WebView 里 404（真实踩过：加 logo 时就差点漏掉 img/logo-word.png）。
+#   现在改成**构建期用 GLOB 从 client/assets/web 真实目录生成**，新增文件自动进清单。
+#   CONFIGURE_DEPENDS：新增/删除文件时 CMake 会自动重新配置，不用手动清缓存。
+set(GO2_WEB_ASSET_DIR "${CLIENT_DIR}/assets/web")
+file(GLOB_RECURSE GO2_WEB_FILES
+    CONFIGURE_DEPENDS
+    RELATIVE "${GO2_WEB_ASSET_DIR}"
+    "${GO2_WEB_ASSET_DIR}/*")
+# 清单只列"要给前端用的文件"：README 之类不必打进导出目录
+list(FILTER GO2_WEB_FILES EXCLUDE REGEX "^README\\.md$")
+list(SORT GO2_WEB_FILES)
+
+list(LENGTH GO2_WEB_FILES GO2_WEB_COUNT)
+
+set(GO2_WEB_LIST_HPP "${CMAKE_CURRENT_BINARY_DIR}/go2_web_files.hpp")
+# ★ 刻意**不套 namespace**：这个头文件是在 main_android.cpp 的匿名命名空间里 include 的，
+#   一旦里面写了 `namespace go2 { ... }`，就会变成 `(匿名)::go2`，
+#   把后面所有 `go2::RobotManager` 之类的引用全遮蔽掉（编译报一串 no type named ...）。
+file(WRITE "${GO2_WEB_LIST_HPP}"
+    "// 本文件由 CMake 自动生成 —— 不要手改，改 client/assets/web 里的文件即可。\n"
+    "// 生成源: apps/android/native/CMakeLists.txt（GLOB client/assets/web/**）\n"
+    "// 注意: 故意不带 namespace，因为本文件是在匿名命名空间里被 include 的。\n"
+    "#pragma once\n\n"
+    "inline const char* const kWebFiles[] = {\n")
+foreach(f ${GO2_WEB_FILES})
+    file(APPEND "${GO2_WEB_LIST_HPP}" "    \"${f}\",\n")
+endforeach()
+file(APPEND "${GO2_WEB_LIST_HPP}"
+    "};\ninline constexpr int kWebFileCount = ${GO2_WEB_COUNT};\n")
+message(STATUS "[go2] 网页资源清单: ${GO2_WEB_COUNT} 个文件 → ${GO2_WEB_LIST_HPP}")
+
 # ---------------------------------------------------------------- 最终产物 libmain.so
 add_library(main SHARED main_android.cpp)
+target_include_directories(main PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(main PRIVATE go2_ui go2_imgui SDL2::SDL2 SDL2::SDL2main)
 target_compile_definitions(main PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT=1)

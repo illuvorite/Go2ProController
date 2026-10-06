@@ -46,12 +46,42 @@
         "ANDROID_ABI": "arm64-v8a",
         "ANDROID_PLATFORM": "android-26"
       }
+    },
+    {
+      "name": "linux-asan",
+      "displayName": "Linux + AddressSanitizer（越界 / use-after-free）",
+      "inherits": "linux",
+      "binaryDir": "${sourceDir}/build/linux-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "GO2_SANITIZE": "address",
+        "FETCHCONTENT_SOURCE_DIR_CPPHTTPLIB": "${sourceDir}/build/_deps/cpphttplib-src",
+        "FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON": "${sourceDir}/build/_deps/nlohmann_json-src",
+        "FETCHCONTENT_SOURCE_DIR_IMGUI": "${sourceDir}/build/_deps/imgui-src",
+        "FETCHCONTENT_SOURCE_DIR_LIBDATACHANNEL": "${sourceDir}/build/_deps/libdatachannel-src"
+      }
+    },
+    {
+      "name": "linux-tsan",
+      "displayName": "Linux + ThreadSanitizer（数据竞争）",
+      "inherits": "linux",
+      "binaryDir": "${sourceDir}/build/linux-tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "GO2_SANITIZE": "thread",
+        "FETCHCONTENT_SOURCE_DIR_CPPHTTPLIB": "${sourceDir}/build/_deps/cpphttplib-src",
+        "FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON": "${sourceDir}/build/_deps/nlohmann_json-src",
+        "FETCHCONTENT_SOURCE_DIR_IMGUI": "${sourceDir}/build/_deps/imgui-src",
+        "FETCHCONTENT_SOURCE_DIR_LIBDATACHANNEL": "${sourceDir}/build/_deps/libdatachannel-src"
+      }
     }
   ],
   "buildPresets": [
     { "name": "linux", "configurePreset": "linux" },
     { "name": "windows-msvc", "configurePreset": "windows-msvc" },
     { "name": "macos-universal", "configurePreset": "macos-universal" },
-    { "name": "android-arm64", "configurePreset": "android-arm64" }
+    { "name": "android-arm64", "configurePreset": "android-arm64" },
+    { "name": "linux-asan", "configurePreset": "linux-asan" },
+    { "name": "linux-tsan", "configurePreset": "linux-tsan" }
   ]
 }

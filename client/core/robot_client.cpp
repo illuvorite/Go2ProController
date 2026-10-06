@@ -917,7 +917,7 @@ bool RobotClient::move(float x, float y, float z) {
     p["x"] = x;
     p["y"] = y;
     p["z"] = z;
-    return sendSportCommand(1008, p);
+    return sendSportCommand(kApiMove, p);  // 1008，见 core/sport_library.hpp
 }
 
 bool RobotClient::setMotionMode(const std::string& name) {

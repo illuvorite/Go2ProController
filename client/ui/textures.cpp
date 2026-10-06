@@ -1,5 +1,6 @@
 #include "textures.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 
@@ -32,6 +33,14 @@ const char* kDogImageCandidates[] = {
     "../client/assets/web/img/go2.jpg",
 };
 
+/// 品牌字标（与狗卡片同一份资源目录，所以三个平台的路径规则完全一致）
+const char* kBrandLogoCandidates[] = {
+    "assets/web/img/logo-word.png",
+    "../assets/web/img/logo-word.png",
+    "client/assets/web/img/logo-word.png",
+    "../client/assets/web/img/logo-word.png",
+};
+
 ImTextureID uploadRgba(const unsigned char* pixels, int w, int h) {
     GLuint tex = 0;
     glGenTextures(1, &tex);
@@ -48,15 +57,11 @@ ImTextureID uploadRgba(const unsigned char* pixels, int w, int h) {
     return static_cast<ImTextureID>(static_cast<std::uintptr_t>(tex));
 }
 
-}  // namespace
-
-ImTextureID dogCardImage() {
-    static ImTextureID tex = 0;
-    static bool tried = false;
-    if (tried) return tex;  // 懒加载一次：无论成败都不再重试（失败则卡片退化为爪印图标）
-    tried = true;
-
-    for (const char* path : kDogImageCandidates) {
+/// 依次尝试候选路径，第一个能打开且能解码的生效。
+template <size_t N>
+LoadedImage loadFirst(const char* const (&candidates)[N], const char* label) {
+    LoadedImage out;
+    for (const char* path : candidates) {
         FILE* probe = std::fopen(path, "rb");
         if (!probe) continue;
         std::fclose(probe);
@@ -64,15 +69,40 @@ ImTextureID dogCardImage() {
         int w = 0, h = 0, comp = 0;
         unsigned char* pixels = ::stbi_load(path, &w, &h, &comp, 4);  // 强制 RGBA
         if (!pixels) continue;
-        tex = uploadRgba(pixels, w, h);
+        const ImTextureID tex = uploadRgba(pixels, w, h);
         ::stbi_image_free(pixels);
         if (tex) {
-            std::printf("[纹理] 狗卡片图片已加载 %s (%dx%d)\n", path, w, h);
-            break;
+            out.tex = tex;
+            out.w = w;
+            out.h = h;
+            std::printf("[纹理] %s已加载 %s (%dx%d)\n", label, path, w, h);
+            return out;
         }
     }
+    return out;
+}
+
+}  // namespace
+
+ImTextureID dogCardImage() {
+    static ImTextureID tex = 0;
+    static bool tried = false;
+    if (tried) return tex;  // 懒加载一次：无论成败都不再重试（失败则卡片退化为爪印图标）
+    tried = true;
+    tex = loadFirst(kDogImageCandidates, "狗卡片图片").tex;
     if (!tex) std::printf("[纹理] 未找到狗卡片图片（卡片退化为爪印图标）\n");
     return tex;
+}
+
+LoadedImage brandLogo() {
+    // 懒加载一次：纹理上传是一次性的，之后每帧只返回缓存（不再碰文件系统）
+    static LoadedImage img;
+    static bool tried = false;
+    if (tried) return img;
+    tried = true;
+    img = loadFirst(kBrandLogoCandidates, "品牌字标");
+    if (!img.tex) std::printf("[纹理] 未找到品牌字标（顶栏回退到文字品牌）\n");
+    return img;
 }
 
 }  // namespace go2

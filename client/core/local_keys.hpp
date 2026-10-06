@@ -31,4 +31,25 @@ struct LocalKeys {
 /// 就是这台机器的钥匙。所以换 WiFi / 换网段 / 多台狗混用都不需要重新配置。
 LocalKeys loadLocalAesKeys();
 
+// ============================================================================
+// 敏感文件的落盘位置
+//
+// 规矩：**钥匙 / 钥匙缓存绝不允许落在源码工作树里** —— 一旦随手打包、复制工程目录、
+// 或者 `git add -f`，密钥就跟着出去了。所以统一放到"应用数据目录"：
+//   · 安卓等显式部署：跟 `GO2_KEYS_FILE` **同一个目录**（那是应用私有目录，可写）；
+//   · 桌面：`$HOME/.go2`（Linux/macOS）或 `%USERPROFILE%\.go2`（Windows）。
+// ============================================================================
+
+/// 该应用的数据目录（不存在就靠 `ensureParentDir` 建）
+std::string userDataDir();
+
+/// 本地钥匙库文件（每行一个 32 位 hex）：`userDataDir()/keys.txt`
+std::string defaultKeysTxtPath();
+
+/// 「IP → 每设备 AES-128 key」缓存：`userDataDir()/keys_cache.json`
+std::string defaultKeyCachePath();
+
+/// 确保 `path` 的父目录存在（已存在或建立失败都静默返回 —— 调用方按写入结果判断）
+void ensureParentDir(const std::string& path);
+
 }  // namespace go2

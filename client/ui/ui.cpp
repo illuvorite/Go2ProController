@@ -1,5 +1,6 @@
 #include "ui.hpp"
 
+#include "command_service.hpp"
 #include "discovery.hpp"
 #include "icons.hpp"
 #include "textures.hpp"
@@ -413,20 +414,21 @@ void helpTip(const char* text) {
     }
 }
 
-/// 对勾选的机器狗执行操作，返回实际执行的台数
-int forEachSelected(RobotManager& mgr, UiState& ui,
-                    const std::function<bool(RobotClient&)>& fn) {
-    int n = 0;
-    for (const auto& ip : ui.selectedIps()) {
-        if (auto* c = mgr.find(ip); c && c->isReady() && fn(*c)) ++n;
-    }
-    return n;
-}
+// 注：群控循环（原 forEachSelected）、急停、动作分发都搬到了 ui/command_service.*，
+//     桌面端与网页端共用同一份语义 —— 这里不再有第二份实现。
 
-/// 重载本地钥匙库并对处于失败状态的机器狗自动重连
-void reloadKeysAndRetry(RobotManager& mgr, UiState& ui,
-                        const std::string& path = "keys.txt") {
-    const auto keys = loadLocalKeysFile(path);
+/// 重载本地钥匙库并对处于失败状态的机器狗自动重连。
+///
+/// 主位置是**应用数据目录**的 `keys.txt`（`~/.go2/keys.txt`）—— 敏感文件不进工程目录；
+/// 同时兼容读一份老的 `./keys.txt`（老版本写在当前工作目录里），读一次即可。
+void reloadKeysAndRetry(RobotManager& mgr, UiState& ui, const std::string& path = std::string()) {
+    const std::string main = path.empty() ? defaultKeysTxtPath() : path;
+    std::vector<std::string> keys = loadLocalKeysFile(main);
+    if (path.empty()) {
+        // 兼容旧位置：工作目录里的 keys.txt（去重合并）
+        for (const auto& k : loadLocalKeysFile("keys.txt"))
+            if (std::find(keys.begin(), keys.end(), k) == keys.end()) keys.push_back(k);
+    }
     mgr.addAesKeys(keys);  // 与云账号钥匙合并
     ui.addLog("[钥匙] 本地钥匙库已装载 " + std::to_string(keys.size()) + " 把（累计 " +
               std::to_string(mgr.aesKeys().size()) + " 把）");
@@ -847,42 +849,14 @@ const char* iconGlyph(const SportAction& a) {
 }
 
 /// 急停（锁定式）：停**全部就绪**的机器狗（不只勾选的）+ 逐个关掉我们打开过的「持续模式」开关。
-/// ★ 顶栏和遥控页两个入口共用这一份实现 —— 免得两处行为悄悄分叉（急停是安全项，不能有差异）。
+/// ★ 顶栏、遥控页、网页端三个入口共用同一份语义（`cmd::estop`）—— 急停是安全项，
+///   绝不允许各处行为悄悄分叉。这里只负责"调用 + 写日志"。
 void triggerEstop(RobotManager& mgr, UiState& ui) {
-    ui.estop = true;
-    std::vector<RobotEntry> snapshot;
-    {
-        std::lock_guard<std::mutex> lock(ui.robotsMutex);
-        snapshot = ui.robots;
-    }
-    // 直接（同步、最快）：先停速度
-    int n = 0;
-    for (const auto& e : snapshot)
-        if (auto* c = mgr.find(e.ip); c && c->isReady() && c->stopMove()) ++n;
-
-    // 只关"我们真正打开过"的开关 —— 连按急停也不会把通道灌爆
-    //（上一版每次关 20 个，连按十几次 → 260 条指令把 SCTP 队列打满，指令反而被丢）
-    const std::vector<int> toClose(ui.activeToggleIds.begin(), ui.activeToggleIds.end());
-    if (!ui.estopBusy.exchange(true)) {
-        std::thread([&mgr, &ui, snapshot, toClose] {
-            // 狗在执行动作时可能吞掉第一条 StopMove → 补发两次
-            for (int round = 0; round < 2; ++round) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(330));
-                for (const auto& e : snapshot)
-                    if (auto* c = mgr.find(e.ip); c && c->isReady()) c->stopMove();
-            }
-            if (!toClose.empty())
-                for (const auto& e : snapshot)
-                    if (auto* c = mgr.find(e.ip); c && c->isReady())
-                        c->disablePersistentModes(toClose);
-            ui.estopBusy = false;
-        }).detach();
-    }
-    for (auto& kv : ui.toggles) kv.second = false;
-    ui.activeToggleIds.clear();
-    ui.movingSent = false;
-    ui.addLog("[急停] 已锁定：停车 " + std::to_string(n) + " 台 + 关闭 " +
-              std::to_string(toClose.size()) + " 个已开启的模式；连按不会叠加");
+    // asyncClose=true：关闭持续模式每条要 45ms，界面线程不能等
+    const auto sink = std::make_shared<ManagerSink>(mgr, ui);
+    const cmd::EstopResult r = cmd::estop(sink, ui, /*asyncClose=*/true);
+    ui.addLog("[急停] 已锁定：停车 " + std::to_string(r.stopped) + " 台 + 关闭 " +
+              std::to_string(r.toggles) + " 个已开启的模式；连按不会叠加");
 }
 
 // ---------------------------------------------------------------- 顶栏
@@ -976,8 +950,9 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     const auto moreBtn = [&] {
         const bool hit = ImGui::Button(labMore.c_str(), bs);
         // 有新异常就在按钮上画红色角标（日志弹窗没打开也能发现出错）
-        const int unread =
-            (ui.problemCount > ui.problemSeen) ? (ui.problemCount - ui.problemSeen) : 0;
+        const int total = ui.problemCount.load();
+        const int seen = ui.problemSeen.load();
+        const int unread = total > seen ? (total - seen) : 0;
         if (unread > 0) {
             char t[8];
             std::snprintf(t, sizeof(t), unread > 99 ? "99+" : "%d", unread);
@@ -1041,8 +1016,18 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
         if (estopBtn()) triggerEstop(mgr, ui);
     } else {
         if (L.showBrand) {
-            FontScope fs = fontTitle();
-            ImGui::TextUnformatted("Go2 控制台");
+            // 品牌位：优先画 logo 字标（assets/web/img/logo-word.png，透明背景）。
+            // 找不到纹理就回退到原来的文字 —— 品牌位不能因为缺资源而空一块。
+            const LoadedImage logo = brandLogo();
+            if (logo.tex && logo.h > 0) {
+                const float h = ImGui::GetFontSize() * 0.98f;          // 与标题字号同量级
+                const float w = h * (logo.w / static_cast<float>(logo.h));
+                ImGui::Image(logo.tex, ImVec2(w, h));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("H-bbot · 幻核睛山");
+            } else {
+                FontScope fs = fontTitle();
+                ImGui::TextUnformatted("Go2 控制台");
+            }
             ImGui::SameLine();
         }
         statusChip();
@@ -1156,13 +1141,16 @@ void drawActionPageHeader(UiState& ui) {
         ImGui::TextDisabled("指令发给 %s", ui.controlTargetText().c_str());
     }
     ImGui::SameLine(0, 18);
-    if (ImGui::Checkbox("MCF 固件", &ui.mcfMode) && takeTipShown())
-        ui.mcfMode = !ui.mcfMode;  // 长按看说明 → 撤销这次切换
+    // atomic 不能取址交给 ImGui → 取出副本给控件，再写回（见 ui.hpp 的线程契约说明）
+    bool mcf = ui.mcfMode.load();
+    if (ImGui::Checkbox("MCF 固件", &mcf) && takeTipShown()) mcf = !mcf;  // 长按看说明 → 撤销
+    ui.mcfMode = mcf;
     helpTip("Go2 Pro 等 MCF 固件使用另一套 api_id（如后空翻 2043 vs 1044）；\n"
             "选错也没关系：被拒后会用另一套 id 自动重试一次");
     ImGui::SameLine();
-    if (ImGui::Checkbox("隐藏不支持的", &ui.hideUnsupported) && takeTipShown())
-        ui.hideUnsupported = !ui.hideUnsupported;  // 长按看说明 → 撤销这次切换
+    bool hideUnsup = ui.hideUnsupported.load();
+    if (ImGui::Checkbox("隐藏不支持的", &hideUnsup) && takeTipShown()) hideUnsup = !hideUnsup;
+    ui.hideUnsupported = hideUnsup;
     helpTip("隐藏「试过且被该固件拒绝（code=3203）」的动作，\n"
             "避免反复点到不存在的指令；取消勾选即可重新显示");
 }
@@ -1262,25 +1250,16 @@ const auto apiState = [&ui](int id) {
 
 ImGui::BeginDisabled(ui.selectedCount() == 0);
 
-// 发送一条动作：解析指令集 id + 组装参数 + 群控分发
+// 发送一条动作：语义（指令集 id 解析 + 参数打包 + 群控分发 + 开关状态维护）全在
+// cmd::sendAction 里 —— 桌面端与网页端共用，这里只补一条日志。
 // flagValue 只对 Flag 类生效（开关型指令传 false 就是"关闭"）
 auto sendAction = [&](const SportAction& a, bool flagValue = true) {
     // 触摸下"长按看说明"的那一下不算执行 —— 否则想看说明就变成了真的下发动作
     if (takeTipShown()) return;
     bool fellBack = false;
     const int id = resolveId(a, &fellBack);
-    const std::string key = a.key;
-    float realVal = ui.bodyHeight;
-    if (key == "FootRaiseHeight") realVal = ui.footRaise;
-    const int intVal = (key == "SwitchGait") ? ui.gaitType : ui.speedLevel;
-    nlohmann::json p = buildSportParam(a, intVal, realVal, ui.eulerX, ui.eulerY,
-                                       ui.eulerZ, std::string(ui.rawJson));
-    if (a.param == SportParam::Flag) {
-        p = nlohmann::json::object();
-        p["data"] = flagValue;   // 开关型：{"data": true|false}
-    }
-    const int n = forEachSelected(
-        mgr, ui, [&](RobotClient& c) { return c.sendSportCommand(id, p); });
+    ManagerSink sink(mgr, ui);
+    const int n = cmd::sendAction(sink, ui, a, flagValue);
     ui.addLog("[动作库] " + std::string(a.label) +
               (a.toggle ? (flagValue ? " 开启" : " 关闭") : "") + " (api " +
               std::to_string(id) + (fellBack ? "，当前指令集无此条，用另一套 id" : "") +
@@ -1521,18 +1500,16 @@ for (const auto& gd : kGroups) {
         if (a.toggle) {
             if (L.actCols > 1 && (col % L.actCols) != 0) ImGui::SameLine();
             ++col;
-            bool& on = ui.toggles[a.key];
+            bool on = ui.toggleState(a.key);
             const std::string t = tileLabel(a, fellBack) + (on ? " · 开" : " · 关");
             if (actionTile(a, t, false, apiState(id), on, ImVec2(actW1, tileH))) {
                 on = !on;
-                sendAction(a, on);
-                // 记录"真正开过的开关"（含另一套指令集的 id），急停时只关这些
-                std::vector<int> ids{id};
-                for (int alt : alternateApiIds(id)) ids.push_back(alt);
-                for (int tid : ids) {
-                    if (on) ui.activeToggleIds.insert(tid);
-                    else ui.activeToggleIds.erase(tid);
-                }
+                // 开关状态维护（toggles / activeToggleIds）在 cmd::dispatchToggle 里，
+                // 与网页端同一份 —— 这里不再自己 insert/erase
+                ManagerSink sink(mgr, ui);
+                const int n = cmd::dispatchToggle(sink, ui, a, on);
+                ui.addLog("[动作库] " + std::string(a.label) + (on ? " 开启" : " 关闭") +
+                          " → " + std::to_string(n) + " 台");
             }
             actionTip(id);
             helpTip("持续模式开关（开启后会一直生效，StopMove 停不掉）\n"
@@ -1544,13 +1521,17 @@ for (const auto& gd : kGroups) {
         if (a.param == SportParam::Int || a.param == SportParam::Real) {
             const std::string key = a.key;
             paramCell();  // 一行放两个参数：滑条撑满格子，右边不留空白
+            // 这些参数是 atomic（Web 端 param 指令会写）→ 滑条操作副本再写回
             if (a.param == SportParam::Int) {
-                int* v = (key == "SwitchGait") ? &ui.gaitType : &ui.speedLevel;
-                iosSliderInt("##v", v, 0, (key == "SwitchGait") ? 4 : 2, paramSliderW);
+                const bool isGait = (key == "SwitchGait");
+                int v = isGait ? ui.gaitType.load() : ui.speedLevel.load();
+                iosSliderInt("##v", &v, 0, isGait ? 4 : 2, paramSliderW);
+                if (isGait) ui.gaitType = v; else ui.speedLevel = v;
             } else {
-                float* v =
-                    (key == "FootRaiseHeight") ? &ui.footRaise : &ui.bodyHeight;
-                iosSliderFloat("##v", v, 0.0f, 0.35f, "%.2f", paramSliderW);
+                const bool isFoot = (key == "FootRaiseHeight");
+                float v = isFoot ? ui.footRaise.load() : ui.bodyHeight.load();
+                iosSliderFloat("##v", &v, 0.0f, 0.35f, "%.2f", paramSliderW);
+                if (isFoot) ui.footRaise = v; else ui.bodyHeight = v;
             }
             ImGui::SameLine();
             if (ImGui::Button((label + "##b").c_str(), ImVec2(actW2, actH))) sendAction(a);
@@ -1640,17 +1621,20 @@ if (ImGui::Button("存入")) {
     if (!isHex32(k)) {
         ui.addLog("[钥匙] 需要 32 位 hex（AES-128 key）");
     } else {
-        std::ofstream f("keys.txt", std::ios::app);
+        // 写到应用数据目录（~/.go2/keys.txt），不再落到工程目录里
+        const std::string keysPath = defaultKeysTxtPath();
+        ensureParentDir(keysPath);
+        std::ofstream f(keysPath, std::ios::app);
         f << k << "\n";
         ui.manualKey[0] = '\0';
-        ui.addLog("[钥匙] 已保存到本地 keys.txt");
+        ui.addLog("[钥匙] 已保存到 " + keysPath);
         reloadKeysAndRetry(mgr, ui);
     }
 }
 {
     FontScope fs = fontSmall();
     ImGui::TextDisabled("每台新固件狗提取一次，永久保存；当前已加载 %d 把",
-                        ui.localKeyCount);
+                        ui.localKeyCount.load());  // atomic：可变参数必须显式取值
 }
 
 // ---- 从机器狗找钥匙（与网页端对齐）：不连电脑，扫狗的内网服务抓 32 位 hex ----
@@ -1790,9 +1774,16 @@ const bool canMove = ui.selectedCount() > 0;
 const auto drawParams = [&] {
     sectionTitle("参数");
     ImGui::BeginDisabled(!canMove);
-    paramRowF("线速度上限", &ui.maxLinSpeed, 0.05f, 1.5f, "%.2f m/s", 0.60f);
-    paramRowF("转向角速度", &ui.yawRate, 0.2f, 2.0f, "%.2f rad/s", 1.20f);
-    paramRowF("快捷步速", &ui.speedScale, 0.05f, 1.5f, "%.2f", 0.50f);
+    // 这三个是 atomic（Web 端 param 指令会写）→ 滑条操作副本，画完统一写回
+    float lin = ui.maxLinSpeed.load();
+    float yaw = ui.yawRate.load();
+    float spd = ui.speedScale.load();
+    paramRowF("线速度上限", &lin, 0.05f, 1.5f, "%.2f m/s", 0.60f);
+    paramRowF("转向角速度", &yaw, 0.2f, 2.0f, "%.2f rad/s", 1.20f);
+    paramRowF("快捷步速", &spd, 0.05f, 1.5f, "%.2f", 0.50f);
+    ui.maxLinSpeed = lin;
+    ui.yawRate = yaw;
+    ui.speedScale = spd;
     ImGui::EndDisabled();
 };
 
@@ -1811,28 +1802,26 @@ const auto drawQuick = [&] {
         const float bw = (ImGui::GetContentRegionAvail().x - gap * 2.0f) / 3.0f;
         const float bh = L.btnH > 0.0f ? L.btnH + 6.0f : 38.0f;
         const float x0 = ImGui::GetCursorPosX();
+        // 快捷方向：语义在 cmd::quickMove（步速取 ui.speedScale），与网页端同一份
+        ManagerSink sink(mgr, ui);
         ImGui::SetCursorPosX(x0 + bw + gap);  // 上行只放"前进"，保持在中间那一格
         if (ImGui::Button((std::string(icon::ArrowUp) + "  前进").c_str(), ImVec2(bw, bh))) {
-            const int n = forEachSelected(mgr, ui,
-                [v = ui.speedScale](RobotClient& c) { return c.move(v, 0, 0); });
+            const int n = cmd::quickMove(sink, ui, "fwd");
             ui.addLog("[群控] 前进 → " + std::to_string(n) + " 台");
         }
         ImGui::SetCursorPosX(x0);
         if (ImGui::Button((std::string(icon::CaretLeft) + "  左转").c_str(), ImVec2(bw, bh))) {
-            const int n = forEachSelected(mgr, ui,
-                [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, v); });
+            const int n = cmd::quickMove(sink, ui, "left");
             ui.addLog("[群控] 左转 → " + std::to_string(n) + " 台");
         }
         ImGui::SameLine(0.0f, gap);
         if (ImGui::Button((std::string(icon::CaretDown) + "  后退").c_str(), ImVec2(bw, bh))) {
-            const int n = forEachSelected(mgr, ui,
-                [v = ui.speedScale](RobotClient& c) { return c.move(-v, 0, 0); });
+            const int n = cmd::quickMove(sink, ui, "back");
             ui.addLog("[群控] 后退 → " + std::to_string(n) + " 台");
         }
         ImGui::SameLine(0.0f, gap);
         if (ImGui::Button(("右转  " + std::string(icon::CaretRight)).c_str(), ImVec2(bw, bh))) {
-            const int n = forEachSelected(mgr, ui,
-                [v = ui.speedScale](RobotClient& c) { return c.move(0, 0, -v); });
+            const int n = cmd::quickMove(sink, ui, "right");
             ui.addLog("[群控] 右转 → " + std::to_string(n) + " 台");
         }
     }
@@ -1882,16 +1871,14 @@ ImGui::Spacing();
 if (canMove) {
     const double now = ImGui::GetTime();
     const bool sticksChanged = (mask != ui.activeMask);  // 松手/换杆：立即生效，不等下一个节拍
+    ManagerSink sink(mgr, ui);
     if (plan.send && (sticksChanged || now - ui.lastMoveSend >= 0.1)) {  // 10 Hz 群发
-        const float vx = plan.vx, vy = plan.vy, vz = plan.vz;
-        const int n = forEachSelected(mgr, ui,
-            [vx, vy, vz](RobotClient& c) { return c.move(vx, vy, vz); });
+        const int n = cmd::moveSelected(sink, ui, plan.vx, plan.vy, plan.vz);
         ui.lastMoveSend = now;
         if (n == 0) ui.movingSent = false;
     }
     if (plan.stop) {
-        const int n = forEachSelected(mgr, ui,
-            [](RobotClient& c) { return c.stopMove(); });  // 松手/急停 → 勾选的狗全部停车
+        const int n = cmd::stopSelected(sink);  // 松手/急停 → 勾选的狗全部停车
         if (n > 0)
             ui.addLog(std::string(ui.estop ? "[急停] 停车 → " : "[群控] 松开摇杆，停车 → ") +
                       std::to_string(n) + " 台");
@@ -1991,7 +1978,7 @@ void drawPopups(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     place();
     if (ImGui::BeginPopupModal(kIdLog, &ui.showLog, kPopupFlags)) {
         ui.modalOpen = true;
-        ui.problemSeen = ui.problemCount;  // 打开日志就算"看过了"，顶栏角标随之清掉
+        ui.problemSeen = ui.problemCount.load();  // 打开日志就算"看过了"，顶栏角标随之清掉
         header("运行日志");
         drawLogPanel(ui, L);
         ImGui::EndPopup();

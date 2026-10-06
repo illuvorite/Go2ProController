@@ -7,6 +7,25 @@ else {
     apply plugin: 'com.android.library'
 }
 
+// ---------------------------------------------------------------------------
+// 网页界面资源：**全仓库只保留一份** client/assets/web。
+//
+// 以前 app/src/main/assets/web/ 下还有一份 21 个文件的副本（与源目录逐字节相同），
+// 改网页必须手动同步两处 —— 而按项目纪律"安卓只同步一次"，两边必然漂移。
+// 现在改成构建期同步：Sync 到 build/generated/webassets/web，再挂成 assets 源目录。
+// 只挂 web/ 这一层（不挂 client/assets 整个目录），否则会和
+// app/src/main/assets/fonts/Phosphor.ttf 撞车、assets 合并直接失败。
+// ---------------------------------------------------------------------------
+def webAssetsSrcDir = file("${rootDir}/../../assets/web")
+def webAssetsGenDir = layout.buildDirectory.dir("generated/webassets").get().asFile
+def syncWebAssets = tasks.register("syncWebAssets", Sync) {
+    from webAssetsSrcDir
+    into new File(webAssetsGenDir, "web")
+    // README.md 是给开发者看的，不必进 APK；与 CMake 那边的清单过滤保持一致
+    // （native/CMakeLists.txt 也会把它排除，两边口径必须一样）
+    exclude "**/README.md"
+}
+
 android {
     if (buildAsApplication) {
         namespace "org.libsdl.app"
@@ -51,7 +70,11 @@ android {
     }
     applicationVariants.all { variant ->
         tasks["merge${variant.name.capitalize()}Assets"]
-            .dependsOn("externalNativeBuild${variant.name.capitalize()}")
+            .dependsOn("externalNativeBuild${variant.name.capitalize()}", syncWebAssets)
+    }
+    // 网页资源以"同步出来的目录"为源（内容来自 client/assets/web，见文件上方说明）
+    sourceSets.main {
+        assets.srcDirs += webAssetsGenDir
     }
     if (!project.hasProperty('EXCLUDE_NATIVE_LIBS')) {
         sourceSets.main {

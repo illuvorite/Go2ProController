@@ -9,11 +9,13 @@
 #include <iterator>
 #include <sstream>
 
-#ifdef __linux__
-#include <dirent.h>
-#ifdef __ANDROID__
+#ifdef _WIN32
+#include <direct.h>
+#else
 #include <sys/stat.h>
 #endif
+#ifdef __linux__
+#include <dirent.h>
 #endif
 
 namespace go2 {
@@ -203,6 +205,43 @@ LocalKeys loadLocalAesKeys() {
     }
     out.keys = std::move(uniq);
     return out;
+}
+
+// ---------------------------------------------------------------- 落盘位置
+
+std::string userDataDir() {
+    // 安卓（以及任何显式指定钥匙文件的部署）：用 GO2_KEYS_FILE 所在目录 ——
+    // 那是应用私有目录，安卓上唯一保证可写的路径（见 apps/android/native/main_android.cpp）。
+    if (const char* f = std::getenv("GO2_KEYS_FILE"); f && *f) {
+        const std::string p(f);
+        const size_t slash = p.find_last_of("/\\");
+        if (slash != std::string::npos && slash > 0) return p.substr(0, slash);
+    }
+#ifdef _WIN32
+    if (const char* up = std::getenv("USERPROFILE"); up && *up)
+        return std::string(up) + "\\.go2";
+    if (const char* ad = std::getenv("APPDATA"); ad && *ad) return std::string(ad) + "\\go2";
+#else
+    if (const char* home = std::getenv("HOME"); home && *home)
+        return std::string(home) + "/.go2";
+    if (const char* tmp = std::getenv("TMPDIR"); tmp && *tmp) return std::string(tmp) + "/go2";
+#endif
+    return ".";  // 兜底：至少还能用（等于旧行为），但正常情况下走不到这里
+}
+
+std::string defaultKeysTxtPath() { return userDataDir() + "/keys.txt"; }
+
+std::string defaultKeyCachePath() { return userDataDir() + "/keys_cache.json"; }
+
+void ensureParentDir(const std::string& path) {
+    const size_t slash = path.find_last_of("/\\");
+    if (slash == std::string::npos || slash == 0) return;
+    const std::string dir = path.substr(0, slash);
+#ifdef _WIN32
+    _mkdir(dir.c_str());  // 已存在 → 返回 -1，忽略即可
+#else
+    ::mkdir(dir.c_str(), 0755);
+#endif
 }
 
 }  // namespace go2

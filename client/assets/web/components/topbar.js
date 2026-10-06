@@ -25,7 +25,7 @@ export default {
   template: `
   <header class="topbar">
     <div class="tb-left">
-      <span class="brand"><span class="ic">{{ ICON.dog }}</span>Go2 控制台</span>
+      <span class="brand" title="H-bbot · 幻核睛山"><img class="brand-logo" src="img/logo-word.png" alt="H-bbot" /></span>
       <span class="chip" :class="{on: store.st.selectedCount > 0}">
         <span class="ic">{{ store.st.selectedCount > 1 ? ICON.users : ICON.user }}</span>
         {{ maskIp(store.st.target) || '未选择受控' }}

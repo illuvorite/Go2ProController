@@ -17,7 +17,21 @@
 
 namespace go2 {
 
+/// 一张已上传到 GPU 的图片。`w/h` 是像素尺寸（画的时候要靠它算宽高比，
+/// 否则图会被拉成正方形 —— 尤其中文 logo 这种横长条）。
+struct LoadedImage {
+    ImTextureID tex = 0;  ///< 0 = 没加载成功（调用方负责回退到文字/图标）
+    int w = 0;
+    int h = 0;
+};
+
 /// 狗卡片用的 Go2 实拍图（懒加载，进程内只加载一次；失败返回 nullptr，卡片退化为爪印图标）
 ImTextureID dogCardImage();
+
+/// 顶栏品牌字标（`assets/web/img/logo-word.png`，透明背景）。
+/// 用字标而不是完整 lockup：原图是"图形+中文 / 分隔线 / H-bbot"三合一，
+/// 缩到顶栏高度后那行中文只剩几像素，等于糊掉。
+/// 懒加载；失败返回空（调用方回退到文字品牌）。
+LoadedImage brandLogo();
 
 }  // namespace go2

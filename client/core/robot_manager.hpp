@@ -81,9 +81,14 @@ public:
     void bindKey(const std::string& ip, const std::string& keyHex);
     std::string pinnedKey(const std::string& ip) const;
 
-    /// key 缓存（IP -> 钥匙），默认 go2_keys_cache.json
-    void loadKeyCache(const std::string& path = "go2_keys_cache.json");
-    void saveKeyCache(const std::string& path = "go2_keys_cache.json") const;
+    /// key 缓存（IP -> 钥匙）。
+    ///
+    /// ★ 默认落在 `go2::defaultKeyCachePath()`（= 应用数据目录 `~/.go2/keys_cache.json`），
+    ///   **不再写进源码工作树** —— 这是敏感文件，放仓库目录里迟早会被打包/复制带走。
+    ///   传空串以外的 path 仍然可以覆盖（测试用）。
+    ///   兼容：若新位置不存在但旧的 `./go2_keys_cache.json` 在，会自动迁移过去。
+    void loadKeyCache(const std::string& path = {});
+    void saveKeyCache(const std::string& path = {}) const;
 
     /// 期望在线的设备列表
     std::vector<std::string> desiredIps() const;
@@ -122,7 +127,10 @@ private:
     std::map<std::string, int> reconnectAttempts_;
     std::vector<std::string> aesKeys_;   // 云账号拉取的 key 候选，创建 client 时下发
     std::vector<Pending> pending_;
-    std::string keyCachePath_ = "go2_keys_cache.json";
+    /// key 缓存的实际路径。空 = 用 `go2::defaultKeyCachePath()`（即 `~/.go2/keys_cache.json`）。
+    /// 由 loadKeyCache() 设定，saveKeyCache() 复用它 —— 这样"载入时用自定义路径、
+    /// 保存时却写回默认路径"的老 bug 一并修掉了。
+    std::string keyCachePath_;
 
     std::condition_variable cv_;
     std::thread supervisor_;

@@ -665,7 +665,11 @@ int runGui(const Options& opt) {
         glfwSwapBuffers(window);
     }
 
-    // 退出前：全部停车并优雅断开（避免僵尸连接）
+    // 退出前：先停网页服务（否则它的后台线程会在静态析构期带着 joinable 状态被销毁 →
+    // std::terminate），再等后台扫描线程收尾（它按引用持有 manager/ui），
+    // 最后全部停车并优雅断开（避免僵尸连接）
+    go2::stopWebUi();
+    go2::joinScans();
     manager.disconnectAll();
     manager.shutdown();
     ImGui_ImplOpenGL3_Shutdown();

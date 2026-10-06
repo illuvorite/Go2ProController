@@ -221,7 +221,18 @@ std::string aesGcmDecrypt(const std::vector<uint8_t>& raw, const std::vector<uin
 std::string rsaEncryptBase64(const std::string& data, const std::string& pubKeyDerB64) {
     const auto der = base64Decode(pubKeyDerB64);
 
-    // 兼容 SubjectPublicKeyInfo 与 PKCS#1 两种 DER 编码
+    // 兼容 SubjectPublicKeyInfo 与 PKCS#1 两种 DER 编码。
+    //
+    // ⚠ OpenSSL 3.0 把 `d2i_RSAPublicKey` / `RSA_free` 标成了 deprecated（推荐改用
+    //   OSSL_DECODER / EVP_PKEY）。这里仍然用它们，是因为**这段代码在信令握手的关键路径上**：
+    //   Go2 的 9991 流程要用狗给的公钥 RSA 加密 AES key，改错了就整体连不上，
+    //   而现场没有可反复试错的余量。所以只做"局部抑制告警 + 留注释"，
+    //   不在这里顺手做迁移（迁移单独一次、并配真机验证）。
+    //   -Wall -Wextra 下这几行是唯一的存量告警来源，见 docs/optimization_plan.md M2-1。
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
     const unsigned char* p = der.data();
     EVP_PKEY* pkey = d2i_PUBKEY(nullptr, &p, long(der.size()));
     if (!pkey) {
@@ -237,6 +248,9 @@ std::string rsaEncryptBase64(const std::string& data, const std::string& pubKeyD
             }
         }
     }
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
     if (!pkey) throw std::runtime_error("无法解析 RSA 公钥 DER");
 
     EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, nullptr);

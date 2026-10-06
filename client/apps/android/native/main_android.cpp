@@ -252,22 +252,19 @@ void extractIconFont() {
 /// 前端文件在 APK 的 assets/web 里，而 httplib 的静态目录只认**磁盘路径**
 /// → 启动时导出到应用可写目录的 assets/web/（与桌面端 set_base_dir("assets/web") 同名，
 ///   因为这里已经 chdir 到应用目录了）。大小一致就跳过，改前端能自动覆盖。
-/// ⚠ 新增前端文件要同步加到这张表（APK assets 里的文件没法枚举）。
-const char* const kWebFiles[] = {
-    "index.html", "style.css", "app.js", "api.js", "store.js", "icons.js", "motion.js",
-    "components/topbar.js", "components/remote.js", "components/actions.js",
-    "components/band.js", "components/joystick.js", "components/slider.js",
-    "components/devices.js", "components/settings.js", "components/log.js",
-    "vendor/vue.esm-browser.prod.js",
-    "fonts/Phosphor.ttf", "img/go2.jpg", "img/go2@2x.jpg", "img/CREDITS.txt",
-};
+///
+/// ★ 文件清单 kWebFiles[] **由 CMake 构建期从 client/assets/web 自动生成**
+///   （见 native/CMakeLists.txt）—— 以前是这里手工维护的数组，漏加一个文件就会出现
+///   "原生界面加载不到新图 / WebView 里 404"，而且不报错、只是静默回退。
+///   所以现在新增前端文件**不需要动这个文件**，重新构建即可。
+#include "go2_web_files.hpp"
 
 void extractWebAssets() {
     ::mkdir("assets", 0755);
     ::mkdir("assets/web", 0755);
     for (const char* sub : {"components", "fonts", "img", "vendor"}) {
         const std::string d = std::string("assets/web/") + sub;
-        ::mkdir(d.c_str(), 0755);
+        ::mkdir(d.c_str(), 0755);  // 已存在返回 -1，忽略
     }
     int updated = 0, missing = 0;
     for (const char* rel : kWebFiles) {
@@ -288,7 +285,8 @@ void extractWebAssets() {
         std::fclose(w);
         ++updated;
     }
-    LOGI("网页界面资源: 更新 %d 个 / 缺失 %d 个 → assets/web", updated, missing);
+    LOGI("网页界面资源: 更新 %d 个 / 缺失 %d 个 / 清单 %d 个 → assets/web", updated, missing,
+         kWebFileCount);
 }
 
 /// 打开网页界面（com.go2.remote.WebUiActivity 里的 WebView）。

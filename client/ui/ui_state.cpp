@@ -96,8 +96,13 @@ int UiState::selectedCount() {
 
 // ---------------------------------------------------------------- 机器狗名称
 // 规矩与钥匙一致：只读写**本应用目录**下的文件（安卓启动时已 chdir 到应用专属目录）。
-// names 只在界面线程读写，不需要加锁。
+//
+// ★ names 必须加锁：Web 端的 `rename` 指令在 **HTTP 线程**调用 setName，
+//   而界面线程同时在读（drawDeviceList / labelOf）。原实现注释说"只在界面线程读写、
+//   不需要加锁"是错的 —— 并发读一个正在重哈希的 std::map 会直接崩。
+//   所以：公开方法自己加锁，内部互相调用走 *Locked 版本（避免递归加锁死锁）。
 void UiState::loadNames() {
+    std::lock_guard<std::mutex> lock(namesMutex);
     std::ifstream f("robot_names.json");
     if (!f) return;
     try {
@@ -112,7 +117,8 @@ void UiState::loadNames() {
     }
 }
 
-void UiState::saveNames() {
+/// 落盘。**调用方必须已持有 namesMutex**（saveNames 与 setName 都会走到这里）
+void UiState::saveNamesLocked() const {
     nlohmann::json j = nlohmann::json::object();
     for (const auto& kv : names)
         if (!kv.second.empty()) j[kv.first] = kv.second;
@@ -120,7 +126,13 @@ void UiState::saveNames() {
     if (f) f << j.dump(2) << "\n";
 }
 
+void UiState::saveNames() {
+    std::lock_guard<std::mutex> lock(namesMutex);
+    saveNamesLocked();
+}
+
 void UiState::setName(const std::string& ip, const std::string& name) {
+    std::lock_guard<std::mutex> lock(namesMutex);
     // 去掉首尾空白：只有空白的名字等于"没起名"（恢复显示 IP）
     std::string clean = name;
     while (!clean.empty() && (clean.back() == ' ' || clean.back() == '\t')) clean.pop_back();
@@ -130,17 +142,66 @@ void UiState::setName(const std::string& ip, const std::string& name) {
         names.erase(ip);
     else
         names[ip] = clean;
-    saveNames();
+    saveNamesLocked();
 }
 
-std::string UiState::nameOf(const std::string& ip) {
+std::string UiState::nameOfLocked(const std::string& ip) const {
     auto it = names.find(ip);
     return it == names.end() ? std::string() : it->second;
 }
 
-std::string UiState::labelOf(const std::string& ip) {
-    const std::string n = nameOf(ip);
+std::string UiState::nameOf(const std::string& ip) const {
+    std::lock_guard<std::mutex> lock(namesMutex);
+    return nameOfLocked(ip);
+}
+
+std::string UiState::labelOf(const std::string& ip) const {
+    std::lock_guard<std::mutex> lock(namesMutex);
+    const std::string n = nameOfLocked(ip);  // 不能调 nameOf（会二次加锁 → 死锁）
     return n.empty() ? ip : n;
+}
+
+// ---------------------------------------------------------------- 持续模式开关
+// toggles / activeToggleIds 的读写者来自两个线程（界面线程画瓷砖、HTTP 线程急停清空），
+// 所以统一走这几个方法；不要在别处直接访问这两个容器。
+
+bool UiState::toggleState(const std::string& key) const {
+    std::lock_guard<std::mutex> lock(toggleMutex);
+    auto it = toggles.find(key);
+    return it != toggles.end() && it->second;
+}
+
+void UiState::setToggle(const std::string& key, bool on) {
+    std::lock_guard<std::mutex> lock(toggleMutex);
+    toggles[key] = on;
+}
+
+void UiState::clearToggles() {
+    std::lock_guard<std::mutex> lock(toggleMutex);
+    toggles.clear();
+}
+
+std::map<std::string, bool> UiState::togglesSnapshot() const {
+    std::lock_guard<std::mutex> lock(toggleMutex);
+    return toggles;
+}
+
+void UiState::setToggleActive(int apiId, bool active) {
+    std::lock_guard<std::mutex> lock(toggleMutex);
+    if (active)
+        activeToggleIds.insert(apiId);
+    else
+        activeToggleIds.erase(apiId);
+}
+
+std::vector<int> UiState::activeToggleIdsSnapshot() const {
+    std::lock_guard<std::mutex> lock(toggleMutex);
+    return std::vector<int>(activeToggleIds.begin(), activeToggleIds.end());
+}
+
+void UiState::clearActiveToggles() {
+    std::lock_guard<std::mutex> lock(toggleMutex);
+    activeToggleIds.clear();
 }
 
 // ---------------------------------------------------------------- 受控集合
@@ -208,50 +269,76 @@ std::vector<std::string> loadLocalKeysFile(const std::string& path) {
 // ---------------------------------------------------------------- 局域网扫描
 
 namespace {
-/// 后台线程：扫描本机所有网段，发现的 Go2 自动加入列表并连接
-///（实现放匿名命名空间；对外入口是 namespace go2 的 startScan 包装，见 ui.hpp）
-void startScanImpl(RobotManager& mgr, UiState& ui) {
-    if (ui.scanning.exchange(true)) return;
-    ui.addLog("[扫描] 启动局域网发现 ...");
-    std::thread([&mgr, &ui] {
-        const auto subnets = Discovery::localSubnets();
-        if (subnets.empty()) {
-            ui.addLog("[扫描] 未找到可用的局域网 IPv4 网卡");
-            ui.scanning = false;
-            return;
-        }
-        int added = 0;
-        std::vector<std::string> toConnect;
-        for (const auto& sn : subnets) {
-            ui.addLog("[扫描] 本机网段 " + sn);
-            for (const auto& r : Discovery::scanSubnet(
-                     sn, 400, [&](const std::string& line) { ui.addLog("[扫描] " + line); })) {
-                if (ui.addOrUpdate(r.ip, false)) {
-                    ++added;
-                    ui.addLog("[扫描] 发现 Go2: " + r.ip + " [" + r.note + "]");
-                    toConnect.push_back(r.ip);
-                }
-            }
-        }
-        // 多播 SN 发现：补上跨网段/多网卡时的漏网设备，并给出 SN
-        for (const auto& kv : Discovery::multicastSnScan(
-                 1500, [&](const std::string& line) { ui.addLog("[扫描] " + line); })) {
-            if (ui.addOrUpdate(kv.second, false)) {
-                ++added;
-                ui.addLog("[扫描] 多播发现 Go2: " + kv.second + " (SN=" + kv.first + ")");
-                toConnect.push_back(kv.second);
-            }
-        }
-        if (!toConnect.empty()) {
-            ui.addLog("[扫描] 错峰连接 " + std::to_string(toConnect.size()) + " 台 ...");
-            mgr.connectAll(toConnect, 600);
-        }
-        ui.addLog("[扫描] 完成，新增 " + std::to_string(added) + " 台");
-        ui.scanning = false;
-    }).detach();
+
+/// 扫描线程句柄 + 保护它的锁。
+/// ★ 这里**不能用 detach**：线程体按引用捕获 mgr/ui，而它们属于调用方的栈对象，
+///   进程退出（或 Android 退出界面）时线程可能还没跑完 → use-after-free。
+///   所以改成持有 thread，退出前由 joinScans() 收尾。
+std::mutex g_scanMutex;
+std::vector<std::thread> g_scanThreads;
+
+/// 回收已结束的扫描线程。**调用方必须已持有 g_scanMutex**。
+///
+/// 安全性依据：`startScanImpl` 靠 `scanning.exchange(true)` 保证同一时刻只有一轮扫描；
+/// 能走到这里说明上一轮的 `scanning` 已经回到 false，也就是上一轮线程体已基本结束，
+/// 所以 join 只会等待微秒级（线程收尾），不会阻塞界面。
+void reapScanThreadsLocked() {
+    for (auto& t : g_scanThreads)
+        if (t.joinable()) t.join();
+    g_scanThreads.clear();
 }
+
+/// 扫描线程体：本机所有网段 TCP 探测 + SN 多播，发现即加入列表并错峰连接
+void runScan(RobotManager& mgr, UiState& ui) {
+    ui.addLog("[扫描] 启动局域网发现 ...");
+    const auto subnets = Discovery::localSubnets();
+    if (subnets.empty()) {
+        ui.addLog("[扫描] 未找到可用的局域网 IPv4 网卡");
+        ui.scanning = false;
+        return;
+    }
+    int added = 0;
+    std::vector<std::string> toConnect;
+    for (const auto& sn : subnets) {
+        ui.addLog("[扫描] 本机网段 " + sn);
+        for (const auto& r : Discovery::scanSubnet(
+                 sn, 400, [&](const std::string& line) { ui.addLog("[扫描] " + line); })) {
+            if (ui.addOrUpdate(r.ip, false)) {
+                ++added;
+                ui.addLog("[扫描] 发现 Go2: " + r.ip + " [" + r.note + "]");
+                toConnect.push_back(r.ip);
+            }
+        }
+    }
+    // 多播 SN 发现：补上跨网段/多网卡时的漏网设备，并给出 SN
+    for (const auto& kv : Discovery::multicastSnScan(
+             1500, [&](const std::string& line) { ui.addLog("[扫描] " + line); })) {
+        if (ui.addOrUpdate(kv.second, false)) {
+            ++added;
+            ui.addLog("[扫描] 多播发现 Go2: " + kv.second + " (SN=" + kv.first + ")");
+            toConnect.push_back(kv.second);
+        }
+    }
+    if (!toConnect.empty()) {
+        ui.addLog("[扫描] 错峰连接 " + std::to_string(toConnect.size()) + " 台 ...");
+        mgr.connectAll(toConnect, 600);
+    }
+    ui.addLog("[扫描] 完成，新增 " + std::to_string(added) + " 台");
+    ui.scanning = false;
+}
+
 }  // namespace
 
-void startScan(RobotManager& mgr, UiState& ui) { startScanImpl(mgr, ui); }
+void startScan(RobotManager& mgr, UiState& ui) {
+    if (ui.scanning.exchange(true)) return;  // 已有一轮在跑
+    std::lock_guard<std::mutex> lock(g_scanMutex);
+    reapScanThreadsLocked();  // 上一轮已结束，先回收它的句柄
+    g_scanThreads.emplace_back([&mgr, &ui] { runScan(mgr, ui); });
+}
+
+void joinScans() {
+    std::lock_guard<std::mutex> lock(g_scanMutex);
+    reapScanThreadsLocked();
+}
 
 }  // namespace go2

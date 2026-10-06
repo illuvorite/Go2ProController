@@ -107,6 +107,10 @@ void printUsage() {
 
 Options parseArgs(int argc, char** argv) {
     Options o;
+    // 监听地址也认环境变量（与桌面端读的 GO2_WEB_HOST 同一个名字）。
+    // 否则会出现"设了 GO2_WEB_HOST=0.0.0.0 却被 --host 的默认值静默覆盖"的坑
+    // —— 命令行 --host 仍然优先。
+    if (const char* h = std::getenv("GO2_WEB_HOST"); h && *h) o.host = h;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&](const char* name) -> std::string {
@@ -256,5 +260,7 @@ int main(int argc, char** argv) {
 
     printLine("[服务] 正在退出 ...");
     go2::stopWebUi();
+    // 扫描线程按引用持有 manager/ui → 必须等它结束，否则可能在析构后访问（use-after-free）
+    go2::joinScans();
     return 0;
 }

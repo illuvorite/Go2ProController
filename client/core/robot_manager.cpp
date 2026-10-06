@@ -1,5 +1,7 @@
 #include "robot_manager.hpp"
 
+#include "local_keys.hpp"  // defaultKeyCachePath() / ensureParentDir()
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -361,8 +363,43 @@ std::string RobotManager::pinnedKey(const std::string& ip) const {
 }
 
 void RobotManager::loadKeyCache(const std::string& path) {
-    keyCachePath_ = path;
-    std::ifstream in(path);
+    // 空 = 用应用数据目录（~/.go2/keys_cache.json）。见 hpp 里的说明。
+    keyCachePath_ = path.empty() ? defaultKeyCachePath() : path;
+
+    // 兼容迁移：新版位置没有、但旧的 ./go2_keys_cache.json 在（老版本把它写进了工作树）
+    // → 读旧文件、写到新位置，然后把旧文件删掉（先复制后删除，不会丢钥匙）。
+    bool migrated = false;
+    if (path.empty() && !std::ifstream(keyCachePath_).good()) {
+        const std::string legacy = "go2_keys_cache.json";
+        if (std::ifstream(legacy).good()) {
+            std::ifstream in(legacy);
+            nlohmann::json j;
+            try {
+                in >> j;
+            } catch (...) {
+                j = nlohmann::json();
+            }
+            if (j.is_object() && !j.empty()) {
+                ensureParentDir(keyCachePath_);
+                std::ofstream out(keyCachePath_);
+                if (out) {
+                    out << j.dump(2) << "\n";
+                    out.close();
+                    migrated = true;
+                    std::remove(legacy.c_str());  // 敏感文件不留工作树
+                }
+            }
+        }
+    }
+    if (migrated) {
+        // 日志走 onLog 不合适（此时还没有客户端），直接打到 stdout 由入口决定是否静默
+        std::printf("[钥匙] 已把旧的 go2_keys_cache.json 迁移到 %s（原文件已删除，"
+                    "该文件含密钥、不应留在工程目录）\n",
+                    keyCachePath_.c_str());
+        std::fflush(stdout);
+    }
+
+    std::ifstream in(keyCachePath_);
     if (!in) return;
     nlohmann::json j;
     try {
@@ -383,12 +420,16 @@ void RobotManager::loadKeyCache(const std::string& path) {
 
 void RobotManager::saveKeyCache(const std::string& path) const {
     std::lock_guard<std::mutex> lock(mutex_);
+    // 不传 path 时复用 loadKeyCache 定下的位置（空则退回默认位置）
+    const std::string target =
+        !path.empty() ? path : (keyCachePath_.empty() ? defaultKeyCachePath() : keyCachePath_);
     nlohmann::json j = nlohmann::json::object();
     for (const auto& kv : pinnedKeys_) {
         if (!kv.second.empty()) j[kv.first] = kv.second;
     }
     if (j.empty()) return;
-    std::ofstream out(path);
+    ensureParentDir(target);
+    std::ofstream out(target);
     if (!out) return;
     out << j.dump(2) << "\n";
 }

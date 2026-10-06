@@ -91,7 +91,7 @@ std::string labelForApiId(int apiId) {
     if (apiId == 0) return {};
     for (const auto& a : sportActions())
         if (a.normalId == apiId || a.mcfId == apiId) return a.label;
-    if (apiId == 1008) return "移动";
+    if (apiId == kApiMove) return "移动";
     return {};
 }
 

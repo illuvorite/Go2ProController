@@ -1,5 +1,6 @@
 #include "key_probe.hpp"
 
+#include "local_keys.hpp"
 #include "robot_manager.hpp"
 #include "ui.hpp"
 
@@ -111,6 +112,8 @@ static std::vector<std::string> hexCandidates(const std::string& text) {
 // ---------------------------------------------------------------- 对外入口
 
 void runKeyProbe(RobotManager& mgr, UiState& ui, const std::string& ipIn) {
+    (void)mgr;  // 本函数只扫狗的端口/Web 服务，用不到连接句柄；
+                // 保留形参是为了与 applyKeyCandidate(mgr, ui, key, ip) 的调用形状一致
     std::string ip = ipIn;
     if (ip.empty()) {
         const auto sel = ui.selectedIps();
@@ -192,7 +195,10 @@ bool applyKeyCandidate(RobotManager& mgr, UiState& ui, const std::string& key,
                                    [](unsigned char c) { return std::isxdigit(c) != 0; });
     if (!hexOk) return false;
     {
-        std::ofstream f("keys.txt", std::ios::app);
+        // 与设置页手工粘贴走同一个位置：应用数据目录（不落工程目录）
+        const std::string keysPath = defaultKeysTxtPath();
+        ensureParentDir(keysPath);
+        std::ofstream f(keysPath, std::ios::app);
         f << key << "\n";
     }
     mgr.addAesKeys({key});

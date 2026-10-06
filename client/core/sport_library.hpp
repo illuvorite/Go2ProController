@@ -7,6 +7,13 @@
 
 namespace go2 {
 
+/// 移动指令的 api_id（Move，参数 `{"x":vx,"y":vy,"z":vyaw}`）。
+///
+/// 它**不在**动作表里 —— 摇杆走的是"连续速度指令"而不是"点一下就执行的动作"；
+/// 但 api_id 属于本表的知识范围，所以常量放在这里、只此一处
+/// （改造前它同时硬编码在 `RobotClient::move()` 与 `labelForApiId()` 两处）。
+constexpr int kApiMove = 1008;
+
 /// 参数类型（决定界面上给什么输入控件、以及 parameter 怎么打包）
 enum class SportParam {
     None,    ///< 无参数（Hello / Dance1 ...）
