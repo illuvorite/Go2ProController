@@ -41,14 +41,24 @@ sudo apt install -y cmake ninja-build g++ pkg-config \
 ## 构建
 
 ```bash
-cd client
+# 推荐：用预设（跨平台/交叉编译/消毒器都在 CMakePresets.json 里）
+cmake --preset linux
+cmake --build build/linux --parallel 2
+
+# 等价的手工写法
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+cmake --build build --parallel 2
 ```
 
 产物：
-- `build/go2_remote` —— 主程序（约 2 MB）
-- `build/crypto_test` —— 加密模块自测
+- `build/linux/go2_remote` —— 桌面版（ImGui + 网页界面后端）
+- `build/linux/go2_serve` —— 无图形版（核心 + HTTP 服务，服务器/容器里也能跑）
+- `build/linux/crypto_test` 等一串自测可执行文件（见「测试与验证」）
+
+> ★ 构建目录**不要改名/搬位置**：`CMakeCache.txt` 里存的是绝对路径，改名后必须删掉
+>   `build/CMakeCache.txt` 与 `CMakeFiles/` 重新配置。依赖已经下载在 `build/_deps/`，
+>   重新配置时可以用 `-DFETCHCONTENT_SOURCE_DIR_<NAME>=<abs>/build/_deps/<name>-src` 复用，
+>   不必重新下载（`CMakePresets.json` 的 `linux-asan` / `linux-tsan` 已经这么做了）。
 
 ## 运行
 
@@ -117,27 +127,56 @@ cmake --build build
 
 ## 已知问题
 
-- `ui.cpp` 里"扫描局域网"用的是 `detach()` 线程并捕获 `mgr/ui` 引用，
-  关闭窗口若正好撞上扫描收尾，退出阶段可能异常。修复方向：把扫描线程改成 joinable，
-  或用 `shared_ptr` 持有状态。
+- ~~`ui.cpp` 的"扫描局域网"用 `detach()` 线程并捕获 `mgr/ui` 引用，退出阶段可能异常。~~
+  已修：扫描线程改成 **joinable 并由 `joinScans()` 收尾**（退出路径会等它结束），
+  见 `ui/ui_state.cpp`。同类隐患的处理约定写在 `ui.hpp` 的「线程契约」注释里。
+- `ui/ui.cpp` 仍是 **2000+ 行的单文件**（绘制 + 布局 + 摇杆 + 弹窗混在一起）。
+  群控**语义**已经抽到 `ui/command_service.*`（不再是两份实现），但**视图层**还没拆。
+  拆分方案见 `docs/optimization_plan.md` 的 M3-2。
+- `client/assets/web/fonts/Phosphor.ttf`、`client/assets/fonts/Phosphor.ttf`、
+  `client/apps/android/app/src/main/assets/fonts/Phosphor.ttf` 是同一字体的三份副本
+  （分别给网页、桌面、安卓 C++ 侧读，加载路径不同）。合并需要先统一运行时资源定位，
+  暂时保留。
 
-## 先跑自测
+## 测试与验证
+
+不需要机器狗、也不需要图形环境，一条命令跑全量纯逻辑自测：
 
 ```bash
-./build/crypto_test
+cd client/build/linux
+ctest --output-on-failure
 ```
 
-该测试用真实抓取的 `con_notify` 响应验证加密链路，**不依赖机器狗在线**：
+| 自测 | 覆盖什么 |
+|---|---|
+| `crypto_test` | base64 / MD5 / AES-ECB / AES-GCM / RSA / SDP 裁剪（用真实抓取的报文） |
+| `motion_test` | 双摇杆决策与急停语义（纯函数） |
+| `layout_test` | 断点布局常量的 `static_assert` + 跨 TU 链接 |
+| `sport_library_test` | 指令表不变量（key 唯一、两套 api_id 兜底、持续模式 id 集合、参数打包） |
+| `command_service_test` | 群控/急停语义（目标集合、锁定后不许动、开关簿记）—— 用假 sink，不碰网络 |
+| `ui_state_thread_test` | 界面线程 × Web 线程并发读写同一份 `UiState`（并发安全回归） |
+| `discovery_test` / `cloud_test` | **手动**：需要真机 / 会访问宇树官方服务器，标了 `DISABLED` |
 
+按需（不跑真机）也能做的更强验证：
+
+```bash
+# ① 全套定量指标取证（构建、ctest、静态指标、前端自检一把过）
+bash scripts/verify.sh --build
+
+# ② 数据竞争：TSan 跑并发自测，并带"正对照"证明 TSan 真的有效
+cmake --preset linux-tsan && cmake --build build/linux-tsan --parallel 2
+bash scripts/verify_tsan.sh          # 期望：正式 0 条、正对照 ≥1 条
+
+# ③ 越界 / use-after-free
+cmake --preset linux-asan && cmake --build build/linux-asan --parallel 2
+ctest --test-dir build/linux-asan --output-on-failure
+
+# ④ 免构建前端（assets/web）的语法与引用检查
+node scripts/web_check.mjs
 ```
-[PASS] base64 编解码往返一致
-[PASS] MD5("abc") 结果正确
-[PASS] AES-256-ECB + PKCS7 往返一致
-[PASS] AES-GCM 解密真实数据成功（验证通过）
-[PASS] 路径后缀推导成功
-[PASS] 真实公钥可解析并完成 RSA-2048 加密
-[PASS] stripExtraFingerprints 只保留 sha-256
-```
+
+> 手动跑需要真机的测试：`ctest -R discovery_test --output-on-failure`
+> （`cloud_test` 会请求宇树官方服务器 —— 按项目纪律由使用者本人执行）
 
 ## 云账号与 data2=3 新固件（Go2 ≥ 1.1.15）
 
@@ -223,27 +262,45 @@ GCM 校验通过的那个即为这台机器的钥匙，并按 IP 记入 `go2_key
 
 ```
 client/
-├── CMakeLists.txt          # go2_core(静态库) + go2_remote(exe) + 自测目标
+├── CMakeLists.txt          # go2_core(静态库) + go2_remote/go2_serve(exe) + 自测目标
+├── CMakePresets.json       # linux / windows-msvc / macos / android-arm64 / linux-asan / linux-tsan
+├── .clang-format           # 格式化规范（不要求全仓重排，见文件头注释）
 ├── core/                   # ★ 纯逻辑层（禁止平台头）
 │   ├── robot_client.{hpp,cpp}   # 单台 WebRTC 通道 + 校验 + 心跳 + 指令
 │   ├── robot_manager.{hpp,cpp}  # 多机管理（每台一个 client + 钥匙绑定）
 │   ├── signaling.{hpp,cpp}      # 9991/8081 信令握手 + 指纹裁剪
 │   ├── crypto.{hpp,cpp}         # base64 / MD5 / AES-GCM / AES-ECB / RSA
 │   ├── discovery.{hpp,cpp}      # 局域网扫描 + SN 多播 + Go2 确认
-│   ├── sport_library.{hpp,cpp}  # 宇树动作指令表（normal / MCF 双指令集）
+│   ├── sport_library.{hpp,cpp}  # 宇树动作指令表（normal / MCF 双指令集）+ kApiMove
 │   ├── motion.hpp               # 双摇杆 + 急停决策（纯函数）
-│   ├── local_keys.{hpp,cpp}     # 每设备钥匙加载（项目外安全存储）
+│   ├── local_keys.{hpp,cpp}     # 钥匙加载 + 落盘位置（userDataDir=~/.go2，不在工程里）
 │   └── unitree_cloud.{hpp,cpp}  # 宇树云接口（云账号取钥匙路线）
 ├── platform/net.hpp        # 平台网络层唯一接缝（POSIX / Winsock）
-├── ui/                     # ImGui 界面层 + 网页界面后端（见上「界面功能」与 web_bridge）
+├── ui/                     # ImGui 界面层 + 网页界面后端
+│   ├── command_service.{hpp,cpp} # ★ 群控语义唯一实现（急停/锁定/群控/开关），桌面·网页·安卓共用
+│   ├── ui.cpp              # 绘制（仍是单文件，拆分见 docs/optimization_plan.md M3-2）
+│   ├── ui_state.{hpp,cpp}  # UiState：跨线程共享状态的线程契约 + 扫描线程管理
+│   └── web_bridge.{hpp,cpp}# 本机 HTTP 服务（/api/state、/api/command）+ 访问控制
 ├── apps/
 │   ├── desktop/main.cpp    # 桌面入口（GUI / 无界面验证 / 内建网页服务）
+│   ├── serve/main.cpp      # 无图形入口（只带 core + HTTP 服务）
 │   └── android/            # 安卓端（见 apps/android/README.md）
-├── assets/                 # fonts/ + web/（Vue3 前端）
+├── assets/                 # fonts/ + web/（Vue3 前端，**全仓库唯一一份**）
 ├── patches/                # libdatachannel 的 Go2 兼容补丁（FetchContent 自动应用）
 ├── third_party/            # 手放的单头库（httplib.h / nlohmann）
-└── tests/                  # crypto / motion / discovery / cloud 自测
+└── tests/                  # crypto / motion / layout / sport_library / command_service /
+                            # ui_state_thread + 手动测试（discovery / cloud）
 ```
+
+仓库根的 `scripts/` 里是跨语言的验证脚本：
+
+| 脚本 | 用途 |
+|---|---|
+| `scripts/verify.sh` | 一键取证：构建 + ctest + 方案 §5 的静态指标 |
+| `scripts/verify_tsan.sh` | TSan 数据竞争验证（含"正对照"证明工具有效） |
+| `scripts/web_check.mjs` | 免构建前端的语法 / import / importmap / 资源引用检查 |
+
+`.github/workflows/ci.yml` 在每次 push / PR 上跑：全量编译 + `ctest` + 前端自检。
 
 ## 跨平台（Windows / Linux / macOS）
 
