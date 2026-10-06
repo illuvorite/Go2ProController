@@ -1,0 +1,58 @@
+# ============================================================================
+# clang-format 配置（C++）
+#
+# ★ 刻意**不做全仓重排**：现有代码已经成体系（4 空格缩进、100 列、中文注释成段），
+#   一次性 format 会产生一个几千行的纯排版 diff，review 时完全看不出真正的改动，
+#   而且会把注释的换行位置打乱。所以规矩是：
+#
+#     · 新增文件、以及被改动的代码块 → 用 `clang-format -i <file>`（或编辑器集成）格式化；
+#     · 不要对没碰过的文件跑 `clang-format -i`（那是另一个独立的、可回滚的提交该干的事）。
+#
+# 校验一条：clang-format --style=file --dry-run -Werror <file>
+# ============================================================================
+BasedOnStyle: LLVM
+
+Language: Cpp
+Standard: c++17
+
+# 列宽与缩进：与现有风格一致
+ColumnLimit: 100
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+AccessModifierOffset: -4
+
+# 指针/引用贴类型（项目里是 `RobotClient* c`、`const std::string& ip`）
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+DerivePointerAlignment: false
+
+# 大括号：函数/类/命名空间全部换行挂（LLVM 默认），控制语句同行
+BreakBeforeBraces: Attach
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+
+# 头文件顺序不要自动改动：本项目大量注释解释了"为什么按现在这个顺序 include"，
+# 自动排序会把注释和代码拆开，反而更糟。
+SortIncludes: false
+SortUsingDeclarations: false
+
+# 中文注释：按字节宽度算列宽会偏大，允许稍微超一点，别把中文注释硬折行
+ReflowComments: false
+BreakStringLiterals: false
+
+# 空函数/空块保持紧凑，但别把多语句塞一行
+BinPackArguments: true
+BinPackParameters: true
+AlignAfterOpenBracket: Align
+AlignOperands: true
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+SpacesInAngles: false
+Cpp11BracedListStyle: true

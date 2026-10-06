@@ -1,0 +1,66 @@
+name: CI
+
+# ============================================================================
+# 之前这个仓库没有任何 CI：改一行 core/ 或 ui/ 的代码，全靠在开发机上手动
+# `ninja && ctest`，忘了跑就不知道。这条流水线只做三件**离线可做**的事：
+#
+#   1. 编译全部目标（含 go2_remote —— 不编它就漏掉 ui.cpp 这个大文件里的编译错误）
+#   2. 跑 ctest（纯逻辑测试；真机/官方服务器相关的两个测试是 DISABLED，不会跑）
+#   3. 前端自检（scripts/web_check.mjs：语法 + import/importmap + 静态资源引用）
+#
+# 明确不做：不连真机器狗、不访问宇树官方服务器、不构建 APK（体积与时间都不划算）。
+# ============================================================================
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux 构建 + ctest
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ pkg-config \
+            libssl-dev libglfw3-dev libgl1-mesa-dev
+
+      - name: 缓存 FetchContent 依赖（imgui / libdatachannel / nlohmann / httplib）
+        uses: actions/cache@v4
+        with:
+          path: client/build/ci
+          key: cmake-deps-${{ runner.os }}-${{ hashFiles('client/CMakeLists.txt') }}
+          restore-keys: cmake-deps-${{ runner.os }}-
+
+      - name: 配置
+        run: |
+          cmake -S client -B client/build/ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: 编译全部目标（含 go2_remote / go2_serve / 全部自测）
+        run: cmake --build client/build/ci --parallel 2
+
+      - name: 自测（纯逻辑；真机/官方服务器相关测试为 DISABLED）
+        working-directory: client/build/ci
+        run: ctest --output-on-failure
+
+  frontend:
+    name: 网页界面自检
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 免构建前端的语法与引用检查
+        run: node scripts/web_check.mjs
