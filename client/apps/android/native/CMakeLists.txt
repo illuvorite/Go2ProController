@@ -115,10 +115,12 @@ target_link_libraries(go2_imgui PUBLIC SDL2::SDL2 GLESv3 EGL)
 add_library(go2_core STATIC
     "${CLIENT_DIR}/core/crypto.cpp"
     "${CLIENT_DIR}/core/signaling.cpp"
+    "${CLIENT_DIR}/core/protocol.cpp"         # 报文纯解析（回执；M2-6 回放基座）
     "${CLIENT_DIR}/core/robot_client.cpp"
     "${CLIENT_DIR}/core/robot_manager.cpp"
     "${CLIENT_DIR}/core/discovery.cpp"
     "${CLIENT_DIR}/core/local_keys.cpp"
+    "${CLIENT_DIR}/core/webrtc_transport.cpp"  # ITransport 的 WebRTC 实现（M5 接缝）
     "${CLIENT_DIR}/core/sport_library.cpp"
     "${CLIENT_DIR}/core/unitree_cloud.cpp"
 )
@@ -143,6 +145,12 @@ target_compile_definitions(go2_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT=1)
 # ---------------------------------------------------------------- ui（与桌面共享）
 add_library(go2_ui STATIC
     "${CLIENT_DIR}/ui/ui.cpp"
+    # ui.cpp 的拆分（M3-2）：共享声明在 ui/ui_internal.hpp，改这几个文件时保持同步
+    "${CLIENT_DIR}/ui/ui_chrome.cpp"    # 顶栏 + 急停
+    "${CLIENT_DIR}/ui/ui_actions.cpp"   # 动作库页（含动作→图标表）
+    "${CLIENT_DIR}/ui/ui_remote.cpp"    # 遥控页
+    "${CLIENT_DIR}/ui/ui_popups.cpp"    # 设备 / 设置 / 日志 三个弹窗
+    "${CLIENT_DIR}/ui/ui_joystick.cpp"  # 悬浮双摇杆（绘制 + 命中区）
     "${CLIENT_DIR}/ui/ui_state.cpp"     # UiState 的纯数据实现（从 ui.cpp 抽出，见该文件头注释）
     "${CLIENT_DIR}/ui/command_service.cpp"  # 群控语义唯一实现（桌面/网页/安卓三端共用）
     "${CLIENT_DIR}/ui/layout.cpp"

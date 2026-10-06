@@ -1,0 +1,6 @@
+{
+  "_说明": "结构异常：没有 status.code —— parsed 必须是 false（界面会打印原始报文）",
+  "type": "res",
+  "topic": "rt/api/sport/response",
+  "data": { "header": { "identity": { "id": 1003, "api_id": 1003 } } }
+}

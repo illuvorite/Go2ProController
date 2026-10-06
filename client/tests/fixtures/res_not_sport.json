@@ -1,0 +1,6 @@
+{
+  "_说明": "非运动服务的回执：isSport=false，不做动作名翻译、不参与重试",
+  "type": "res",
+  "topic": "rt/api/audiohub/response",
+  "data": { "header": { "identity": { "id": 1, "api_id": 1001 }, "status": { "code": 0 } }, "data": "" }
+}

@@ -80,3 +80,21 @@ client/apps/android/*.log
 # 开发过程截图（临时产物，文档用的截图请放 docs/screenshots/）
 /_tab*.png
 /_tab*.jpg
+
+# ==== 误在仓库根做的 in-source 构建产物（cmake . 在根目录跑过一次）====
+# 正确做法：cmake --preset linux（产物在 client/build/linux）或
+#           cmake -S client -B client/build
+# 这些文件有 553MB（_deps 是 FetchContent 拉下来的第三方源码），
+# 绝不能进库；已确认当前构建不依赖它们（preset 指向的是 client/build/_deps）。
+/CMakeCache.txt
+/CMakeFiles/
+/_deps/
+/Makefile
+/cmake_install.cmake
+/compile_commands.json
+/CTestTestfile.cmake
+/DartConfiguration.tcl
+/Testing/
+/*Config.cmake
+/*ConfigVersion.cmake
+/install_manifest.txt

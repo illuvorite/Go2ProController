@@ -1,0 +1,6 @@
+{
+  "_说明": "被拒 code=3202（指令集不匹配 / 未就绪预热）—— 触发「换另一套 api_id 重试」",
+  "type": "res",
+  "topic": "rt/api/sport/response",
+  "data": { "header": { "identity": { "id": 1008, "api_id": 1008 }, "status": { "code": 3202 } }, "data": "" }
+}

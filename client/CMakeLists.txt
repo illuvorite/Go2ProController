@@ -97,11 +97,9 @@ if(GO2_SANITIZE)
     add_link_options(-fsanitize=${GO2_SANITIZE})
 endif()
 
-# 正对照开关：给 ui_state_thread_test 注入一个**故意的**数据竞争，
-# 用来证明"TSan 在本环境里确实抓得到竞争"。默认关闭 —— 只在你怀疑
-# "0 报告是不是工具没生效" 时打开一次：
-#   cmake -DGO2_RACE_POSITIVE_CONTROL=ON --preset linux-tsan && ctest -R ui_state_thread
-option(GO2_RACE_POSITIVE_CONTROL "在并发测试里注入数据竞争（验证 TSan 有效）" OFF)
+# 注：sanitizer 的"正对照"（证明工具真的能抓到问题）由 tests/sanitizer_probe_test.cpp
+#     在**运行期**用 GO2_PROBE=tsan|asan 决定，不需要编译期开关 ——
+#     编译期开关会让每次验证都要重新配置 + 重编一遍，那层开销比验证本身还大。
 
 # ---------------------------------------------------------------- 目标
 # ---- 分层（P0 跨平台重构）：core 纯逻辑 / platform 平台适配 / ui 界面 / apps 入口 ----
@@ -110,8 +108,10 @@ add_library(go2_core STATIC
     core/signaling.cpp
     core/robot_client.cpp
     core/robot_manager.cpp
+    core/protocol.cpp
     core/discovery.cpp
     core/local_keys.cpp
+    core/webrtc_transport.cpp
     core/sport_library.cpp
     core/unitree_cloud.cpp
 )
@@ -136,7 +136,12 @@ add_executable(go2_remote
     apps/desktop/main.cpp
     ui/theme.cpp
     ui/layout.cpp
-    ui/ui.cpp
+    ui/ui.cpp            # 小控件实现 + drawUi
+    ui/ui_chrome.cpp     # 顶栏 + 急停        ┐
+    ui/ui_actions.cpp    # 动作库页            │ ui.cpp 的拆分（M3-2），
+    ui/ui_remote.cpp     # 遥控页              │ 共享声明见 ui/ui_internal.hpp
+    ui/ui_popups.cpp     # 设备/设置/日志弹窗  │
+    ui/ui_joystick.cpp   # 悬浮双摇杆          ┘
     ui/ui_state.cpp
     ui/command_service.cpp
     ui/web_bridge.cpp
@@ -254,6 +259,21 @@ target_link_libraries(sport_library_test PRIVATE nlohmann_json::nlohmann_json)
 go2_add_warnings(sport_library_test)
 add_test(NAME sport_library_test COMMAND sport_library_test)
 
+# ---- 协议回放测试（M2-6）----
+# 把固化报文喂给纯解析函数。fixture 目录用编译期常量传进去（绝对路径），
+# 这样无论从哪个 cwd 跑 ctest 都能找到 —— 找不到会直接报失败而不是静默跳过。
+add_executable(protocol_replay_test
+    tests/protocol_replay_test.cpp
+    core/protocol.cpp
+    core/sport_library.cpp   # labelForApiId（回执里要把 api_id 翻成动作名）
+)
+target_include_directories(protocol_replay_test PRIVATE core)
+target_link_libraries(protocol_replay_test PRIVATE nlohmann_json::nlohmann_json)
+target_compile_definitions(protocol_replay_test PRIVATE
+    GO2_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+go2_add_warnings(protocol_replay_test)
+add_test(NAME protocol_replay_test COMMAND protocol_replay_test)
+
 # ---- 群控语义的自测（急停 / 锁定 / 目标集合 / 持续模式开关）----
 # 用假 sink（tests/command_service_test.cpp 里的 FakeSink）驱动，不碰网络：
 # 这条链路是安全动作的唯一实现，必须能离线回归。
@@ -279,10 +299,16 @@ add_executable(ui_state_thread_test
 target_include_directories(ui_state_thread_test PRIVATE ui)
 target_link_libraries(ui_state_thread_test PRIVATE go2_core)
 go2_add_warnings(ui_state_thread_test)
-if(GO2_RACE_POSITIVE_CONTROL)
-    target_compile_definitions(ui_state_thread_test PRIVATE GO2_RACE_POSITIVE_CONTROL=1)
-endif()
 add_test(NAME ui_state_thread_test COMMAND ui_state_thread_test)
+
+# ---- sanitizer 正对照探针 ----
+# 不带 GO2_PROBE 时是空操作（作为普通 ctest 用例安全）；带上则故意制造
+# 数据竞争（tsan）/ 堆越界（asan），用来证明"0 报告"不是"工具没生效"。
+# 只编一个 TU、不链 core，所以建起来很快。
+add_executable(sanitizer_probe_test tests/sanitizer_probe_test.cpp)
+go2_add_warnings(sanitizer_probe_test)
+target_link_libraries(sanitizer_probe_test PRIVATE Threads::Threads)
+add_test(NAME sanitizer_probe_test COMMAND sanitizer_probe_test)
 
 # ---- 手动 / 联网自测：**不参与默认 ctest** ----
 # discovery_test：直连 192.168.2.111 并扫描本机网段，必须真机在线才有意义；

@@ -1,0 +1,6 @@
+{
+  "_说明": "最普通的成功回执（平衡站立 1003，code=0）",
+  "type": "res",
+  "topic": "rt/api/sport/response",
+  "data": { "header": { "identity": { "id": 1003, "api_id": 1003 }, "status": { "code": 0 } }, "data": "" }
+}

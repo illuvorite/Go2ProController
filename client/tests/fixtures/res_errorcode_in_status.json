@@ -1,0 +1,6 @@
+{
+  "_说明": "固件 A：error_code 放在 status 里（低电量保护常见）",
+  "type": "res",
+  "topic": "rt/api/sport/response",
+  "data": { "header": { "identity": { "id": 1008, "api_id": 1008 }, "status": { "code": 3202, "error_code": 1001 } }, "data": "" }
+}

@@ -41,13 +41,26 @@ if [ "${1:-}" = "--build" ]; then
   fi
 fi
 
-head1 "指标 5：最大源文件行数"
-maxline=$(wc -l "$ROOT"/client/core/*.cpp "$ROOT"/client/ui/*.cpp 2>/dev/null | sort -rn | sed -n 2p)
-report "最大源文件" "$maxline" "≤ 700（M3-2 拆分 ui.cpp 后）"
-if echo "$maxline" | grep -q 'ui\.cpp'; then
-  verdict 1 "ui/ui.cpp 仍是最大文件 → M3-2（拆分）尚未完成，见方案 §3"
-else
-  verdict 0 "没有任何源文件超过拆分阈值"
+head1 "指标 5：源文件行数（阈值 700）"
+echo "  ≥700 行的文件："
+over=0
+for f in "$ROOT"/client/core/*.cpp "$ROOT"/client/ui/*.cpp; do
+  n=$(wc -l < "$f")
+  if [ "$n" -ge 700 ]; then
+    printf '    %5d  %s\n' "$n" "${f#$ROOT/}"
+    over=$((over + 1))
+  fi
+done
+if [ "$over" -eq 0 ]; then
+  echo "    （无）"
+fi
+# ui.cpp 是 M3-2 的**目标**：它必须达标；其它文件超阈值算"待办"而非失败。
+ui_lines=$(wc -l < "$ROOT/client/ui/ui.cpp")
+report "ui/ui.cpp" "$ui_lines 行" "≤ 700（M3-2）"
+verdict "$([ "$ui_lines" -le 700 ] && echo 0 || echo 1)" "ui.cpp 已拆到阈值内（M3-2）"
+if [ "$over" -gt 0 ]; then
+  echo "  注：上面这些超过 700 行的文件不在 M3-2 范围内（协议/连接核心，无截图可验证，"
+  echo "      拆分需配真机回归）—— 记录为后续可选工作，不计入本轮失败。"
 fi
 
 head1 "指标 6：群控循环实现处数"
@@ -106,12 +119,12 @@ else
 fi
 
 head1 "指标 2/3：Sanitizer（ASan / TSan）"
-if [ -x "$BUILD/linux-tsan/ui_state_thread_test" ]; then
-  echo "  已有 TSan 构建，完整验证（含正对照）跑： bash scripts/verify_tsan.sh"
-else
-  echo "  未做 TSan 构建，命令："
-  echo "      cmake --preset linux-tsan && cmake --build client/build/linux-tsan --parallel 2"
-  echo "      bash scripts/verify_tsan.sh"
+echo "  完整验证（含运行期正对照证明工具有效，各约 1~3 分钟）："
+echo "    bash scripts/verify_tsan.sh    # 期望：正式 0 条 race、正对照 ≥1 条"
+echo "    bash scripts/verify_asan.sh    # 期望：正式 0 报告、正对照 1 报告"
+echo "  两个脚本都会**先增量构建**再跑（避免跑到陈旧二进制）。"
+if [ ! -x "$BUILD/linux-tsan/ui_state_thread_test" ] && [ ! -x "$BUILD/linux-asan/ui_state_thread_test" ]; then
+  echo "  ⚠ 还没有 sanitizer 构建树，先跑： cmake --preset linux-asan（或 linux-tsan）"
 fi
 
 head1 "指标 4：编译器告警"

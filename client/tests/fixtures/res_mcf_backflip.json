@@ -1,0 +1,6 @@
+{
+  "_说明": "MCF 指令集的后空翻 (2043)：日志应按动作名显示，而不是裸 id",
+  "type": "res",
+  "topic": "rt/api/sport/response",
+  "data": { "header": { "identity": { "id": 2043, "api_id": 2043 }, "status": { "code": 0 } }, "data": "" }
+}

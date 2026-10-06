@@ -1,5 +1,8 @@
 #include "robot_client.hpp"
 
+#include "protocol.hpp"          // 报文纯解析（指令回执；M2-6 回放基座）
+#include "webrtc_transport.hpp"  // ITransport 的 WebRTC 实现（M5 接缝）
+
 #include "crypto.hpp"
 #include "signaling.hpp"
 #include "sport_library.hpp"
@@ -343,48 +346,17 @@ bool RobotClient::runSignaling(const RobotProfile& profile) {
     }
 
     auto dc = pc_->createDataChannel("data");
-    dc_ = dc;
-
-    dc->onOpen([this] {
-        log("[通道] DataChannel 已打开");
-        if (state_.load() == ConnState::Connecting)
-            setState(ConnState::Validating);
-    });
-    dc->onClosed([this] {
-        log("[通道] 已关闭");
-        if (running_.load() && onNeedsReconnect)
-            onNeedsReconnect(targetIp_, "DataChannel 已关闭");
-    });
-    dc->onMessage([this](rtc::message_variant data) {
-        if (auto* s = std::get_if<std::string>(&data)) {
-            noteRx(s->size());
-            handleMessage(*s);
-        } else if (auto* b = std::get_if<rtc::binary>(&data)) {
-            noteRx(b->size());
-            std::string hex;
-            char buf[8];
-            for (size_t i = 0; i < b->size() && i < 24; ++i) {
-                std::snprintf(buf, sizeof(buf), "%02x ", int((*b)[i]));
-                hex += buf;
-            }
-            log("[收] 二进制 " + std::to_string(b->size()) + " 字节: " + hex);
-        }
-    });
+    // 数据面从此走 ITransport（M5 接缝）：换 DDS 实现时只改这一行的工厂
+    tp_ = makeWebRtcTransport(dc);
+    wireTransport(tp_, /*noisy=*/false);
 
     // 机器狗可能主动建立自己的数据通道，必须捕获
     pc_->onDataChannel([this](std::shared_ptr<rtc::DataChannel> ch) {
         log("[通道] 机器狗自建通道: label=\"" + ch->label() + "\"");
-        ch->onMessage([this, ch](rtc::message_variant data) {
-            if (auto* s = std::get_if<std::string>(&data)) {
-                noteRx(s->size());
-                log("[收/" + ch->label() + "] " + s->substr(0, 200));
-                handleMessage(*s);
-            } else if (auto* b = std::get_if<rtc::binary>(&data)) {
-                noteRx(b->size());
-                log("[收/" + ch->label() + "] 二进制 " + std::to_string(b->size()) + " 字节");
-            }
-        });
-        ch->onOpen([this, ch] { log("[通道] 机器狗通道已打开: \"" + ch->label() + "\""); });
+        auto t = makeWebRtcTransport(ch);
+        if (!t) return;
+        wireTransport(t, /*noisy=*/true);
+        extraChannels_.push_back(t);  // 保活（回调是弱引用，不持有就会失效）
     });
 
     // ---- 生成本地 offer ----
@@ -559,9 +531,37 @@ bool RobotClient::runSignaling(const RobotProfile& profile) {
     return true;
 }
 
+// ------------------------------------------------------------------ 传输接线
+// 把 this 的回调接到一条 ITransport 上。主通道与"机器狗自建通道"共用，
+// 差别只有 noisy：狗自建通道上收到的文本会多打一条 `[收/<label>]`（排查用）。
+void RobotClient::wireTransport(const std::shared_ptr<ITransport>& t, bool noisy) {
+    if (!t) return;
+    const std::string label = t->label();
+    t->setOnOpen([this, t, label] {
+        log("[通道] " + std::string(t->name()) + " 已打开" + (label.empty() ? "" : " \"" + label + "\""));
+        if (state_.load() == ConnState::Connecting) setState(ConnState::Validating);
+    });
+    t->setOnClosed([this] {
+        log("[通道] 已关闭");
+        if (running_.load() && onNeedsReconnect) onNeedsReconnect(targetIp_, "DataChannel 已关闭");
+    });
+    t->setOnMessage([this, noisy, label](const std::string& s) {
+        noteRx(s.size());
+        if (noisy) log("[收/" + label + "] " + s.substr(0, 200));
+        handleMessage(s);
+    });
+    t->setOnBinary([this, noisy, label](std::size_t n, const std::string& hex) {
+        noteRx(n);
+        if (noisy)
+            log("[收/" + label + "] 二进制 " + std::to_string(n) + " 字节");
+        else
+            log("[收] 二进制 " + std::to_string(n) + " 字节: " + hex);
+    });
+}
+
 void RobotClient::disconnect() {
     // 尽力而为：断开前先停车，避免机器狗保持最后的速度继续走
-    if (dc_ && dc_->isOpen()) {
+    if (tp_ && tp_->isOpen()) {
         try { stopMove(); } catch (...) {}
     }
 
@@ -572,9 +572,10 @@ void RobotClient::disconnect() {
     audioTrack_.reset();
     videoTrack_.reset();
 
-    if (dc_) {
-        try { dc_->close(); } catch (...) {}
-        dc_.reset();
+    extraChannels_.clear();  // 狗自建通道（弱引用，清掉即可让它们自然失效）
+    if (tp_) {
+        tp_->close();
+        tp_.reset();
     }
     if (pc_) {
         try { pc_->close(); } catch (...) {}
@@ -634,65 +635,41 @@ void RobotClient::handleMessage(const std::string& text) {
     }
 
     // 指令回执：{"type":"res","topic":"rt/api/sport/response","data":{...,"status":{"code":0}}}
+    // 解析走 core/protocol.cpp 的纯函数（M2-6 回放基座：固件差异、字段缺失都在那里处理，
+    // 并有 tests/protocol_replay_test 用固化报文回放）
     if (type == "res") {
-        int code = -1;
-        int apiId = 0;
-        int errCode = -1;
-        bool parsed = false;
-        try {
-            code = msg.at("data").at("header").at("status").at("code").get<int>();
-            parsed = true;
-        } catch (...) {
-        }
-        try {
-            apiId = msg.at("data").at("header").at("identity").at("api_id").get<int>();
-        } catch (...) {
-        }
-        if (parsed) {
-            // error_code 的位置随固件版本不同，两处都试一次
-            try {
-                errCode = msg.at("data").at("header").at("status").at("error_code").get<int>();
-            } catch (...) {
-                try {
-                    errCode = msg.at("data").at("error_code").get<int>();
-                } catch (...) {
-                }
-            }
-        }
-
-        const std::string topic = msg.value("topic", "");
-        const bool isSport = topic.find("/sport/") != std::string::npos;
+        const protocol::Response r = protocol::parseResponse(msg);
         // 把 api_id 翻成动作名，日志写「哪个动作 + 结果」，而不是一串裸 id
-        const std::string name = isSport ? labelForApiId(apiId) : std::string();
         const std::string who =
-            !name.empty() ? name + " (api " + std::to_string(apiId) + ")"
-                          : (topic.empty() ? std::string("回执") : topic);
+            !r.actionName.empty()
+                ? r.actionName + " (api " + std::to_string(r.apiId) + ")"
+                : (r.topic.empty() ? std::string("回执") : r.topic);
 
         std::string note;
-        if (parsed && code != 0 && isSport) {
-            if (errCode > 0) note = "error_code=" + std::to_string(errCode) + "；";
-            note += rejectReason(code);
+        if (r.parsed && r.code != 0 && r.isSport) {
+            if (r.errorCode > 0) note = "error_code=" + std::to_string(r.errorCode) + "；";
+            note += rejectReason(r.code);
         }
 
-        if (!parsed) {
+        if (!r.parsed) {
             // 回执结构与预期不符时打印原始 JSON，便于对照固件差异排查
-            log("[回执] " + topic + " 结构异常，原始报文: " + text.substr(0, 300));
+            log("[回执] " + r.topic + " 结构异常，原始报文: " + text.substr(0, 300));
         } else if (rawAck_.load()) {
             log("[回执原始] " + text.substr(0, 400));
-        } else if (code == 0) {
+        } else if (r.code == 0) {
             log("[回执] " + who + " —— 成功 ✔");
         } else {
-            log("[回执] " + who + " —— 失败（code=" + std::to_string(code) + "）" +
+            log("[回执] " + who + " —— 失败（code=" + std::to_string(r.code) + "）" +
                 (note.empty() ? std::string() : "：" + note));
         }
 
-        if (parsed && isSport) {
-            if (onSportAck) onSportAck(apiId, code, note);
+        if (r.parsed && r.isSport) {
+            if (onSportAck) onSportAck(r.apiId, r.code, note);
             // 被拒：先看是不是"刚就绪预热"（可自动重发），否则换另一套指令集再试
-            if (code != 0 && apiId != 0 && !scheduleRetryFor(apiId))
-                tryAlternateApiId(apiId);
+            if (r.code != 0 && r.apiId != 0 && !scheduleRetryFor(r.apiId))
+                tryAlternateApiId(r.apiId);
         }
-        if (onTopicData) onTopicData(topic, msg);
+        if (onTopicData) onTopicData(r.topic, msg);
         return;
     }
 
@@ -776,16 +753,15 @@ void RobotClient::handleValidation(const nlohmann::json& msg) {
 // ------------------------------------------------------------------ 发送
 
 bool RobotClient::sendRaw(const std::string& text) {
-    if (!dc_ || !dc_->isOpen()) return false;
-    try {
-        dc_->send(std::string(text));
-        txMessages_.fetch_add(1);
-        txBytes_.fetch_add(text.size());
-        return true;
-    } catch (const std::exception& e) {
-        log(std::string("[发送失败] ") + e.what());
+    // 唯一发送出口 —— 走 ITransport（换 DDS 时这里不用改）
+    if (!tp_ || !tp_->isOpen()) return false;
+    if (!tp_->send(text)) {
+        log("[发送失败] 通道拒绝发送（已断开？）");
         return false;
     }
+    txMessages_.fetch_add(1);
+    txBytes_.fetch_add(text.size());
+    return true;
 }
 
 std::string RobotClient::buildRequest(const std::string& topic, int apiId,

@@ -1,0 +1,6 @@
+{
+  "_说明": "固件 B：error_code 退化到 data 层 —— 解析必须两处都试",
+  "type": "res",
+  "topic": "rt/api/sport/response",
+  "data": { "header": { "identity": { "id": 1008, "api_id": 1008 }, "status": { "code": 3203 } }, "error_code": 2002, "data": "" }
+}

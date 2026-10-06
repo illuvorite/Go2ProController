@@ -476,7 +476,19 @@ int runGui(const Options& opt) {
     glslVersion = "#version 150";
 #endif
 
-    GLFWwindow* window = glfwCreateWindow(1440, 880, "Unitree Go2 控制管理台", nullptr, nullptr);
+    // 窗口尺寸可用 GO2_WIN_W / GO2_WIN_H 指定（默认 1440x880）。
+    // 用处：① 想看某个断点下的布局，不必改代码；② scripts/screenshot.sh 靠它抓
+    // 各断点的视觉基线（宽断点 600/900/1280，高断点 480/800，见 ui/layout.hpp）。
+    int winW = 1440, winH = 880;
+    if (const char* w = std::getenv("GO2_WIN_W")) {
+        const int v = std::atoi(w);
+        if (v >= 320) winW = v;
+    }
+    if (const char* h = std::getenv("GO2_WIN_H")) {
+        const int v = std::atoi(h);
+        if (v >= 320) winH = v;
+    }
+    GLFWwindow* window = glfwCreateWindow(winW, winH, "Unitree Go2 控制管理台", nullptr, nullptr);
     if (!window) {
         std::fprintf(stderr, "创建窗口失败（无显示环境？）\n");
         glfwTerminate();
@@ -641,15 +653,19 @@ int runGui(const Options& opt) {
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-        // ---- 调试截图：GO2_SHOT=1 时把渲染好的帧缓冲落盘（诊断"窗口空白"用）----
+        // ---- 调试/基线截图：GO2_SHOT=1 时把渲染好的帧缓冲落盘 ----
+        // 输出路径用 GO2_SHOT_PATH 指定（默认 /tmp/frame.ppm）。
+        // 用途：诊断"窗口空白"，以及 scripts/screenshot.sh 抓视觉回归基线。
         static bool shotDone = false;
         if (!shotDone && std::getenv("GO2_SHOT") && fbW > 0 && fbH > 0) {
             static int frames = 0;
-            if (++frames > 60) {  // 60 帧后界面已稳定
+            if (++frames > 60) {  // 60 帧后界面已稳定（字体/纹理/布局都落定）
                 std::vector<unsigned char> px(size_t(fbW) * fbH * 3);
                 glPixelStorei(GL_PACK_ALIGNMENT, 1);
                 glReadPixels(0, 0, fbW, fbH, GL_RGB, GL_UNSIGNED_BYTE, px.data());
-                if (FILE* f = std::fopen("/tmp/frame.ppm", "wb")) {
+                const char* pathEnv = std::getenv("GO2_SHOT_PATH");
+                const char* outPath = (pathEnv && *pathEnv) ? pathEnv : "/tmp/frame.ppm";
+                if (FILE* f = std::fopen(outPath, "wb")) {
                     std::fprintf(f, "P6\n%d %d\n255\n", fbW, fbH);
                     std::fwrite(px.data(), 1, px.size(), f);
                     std::fclose(f);
@@ -657,9 +673,13 @@ int runGui(const Options& opt) {
                     int uniq = 0;
                     for (size_t i = 0; i + 2 < px.size(); i += 997)
                         if (px[i] != px[0] || px[i + 1] != px[1] || px[i + 2] != px[2]) ++uniq;
-                    std::printf("[SHOT] /tmp/frame.ppm %dx%d, 采样变色数=%d\n", fbW, fbH, uniq);
+                    std::printf("[SHOT] %s %dx%d, 采样变色数=%d\n", outPath, fbW, fbH, uniq);
                 }
                 shotDone = true;
+                // GO2_SHOT_EXIT=1 → 拍完就正常退出（走完整的收尾路径：停服务、join 扫描线程、
+                // 断开连接）。scripts/screenshot.sh 用它批量抓基线，不必靠 timeout 杀进程
+                // —— 顺带每次都回归一遍退出路径。
+                if (std::getenv("GO2_SHOT_EXIT")) glfwSetWindowShouldClose(window, 1);
             }
         }
         glfwSwapBuffers(window);

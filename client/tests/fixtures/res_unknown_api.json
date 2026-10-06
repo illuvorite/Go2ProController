@@ -1,0 +1,6 @@
+{
+  "_说明": "未知 api_id：actionName 为空 —— 日志回退成 topic",
+  "type": "res",
+  "topic": "rt/api/sport/response",
+  "data": { "header": { "identity": { "id": 9999, "api_id": 9999 }, "status": { "code": 0 } }, "data": "" }
+}

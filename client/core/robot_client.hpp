@@ -1,5 +1,7 @@
 #pragma once
 
+#include "transport.hpp"  // ITransport（数据面抽象，见 core/transport.hpp）
+
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -168,9 +170,18 @@ private:
     std::string buildRequest(const std::string& topic, int apiId,
                              const nlohmann::json& parameter) const;
 
+    /// 把 this 的回调接到一条传输上（主通道与"机器狗自建通道"共用这套接线）。
+    /// @param noisy true = 收到文本时额外打一条 `[收/<label>]`（狗自建通道才需要）
+    void wireTransport(const std::shared_ptr<ITransport>& t, bool noisy);
+
     std::atomic<ConnState> state_{ConnState::Disconnected};
     std::shared_ptr<rtc::PeerConnection> pc_;
-    std::shared_ptr<rtc::DataChannel> dc_;
+    /// 数据面走 ITransport（M5 接缝）—— 换机型时换的就是这一层，见 core/transport.hpp。
+    /// 必须是 shared_ptr：内部回调用 weak_from_this 保护，见 webrtc_transport.hpp。
+    std::shared_ptr<ITransport> tp_;
+    /// 机器狗可能主动建自己的数据通道：这些也要接上（否则收不到它的回执），
+    /// 存起来只为**保活**（回调是弱引用，对象被析构就静默丢弃）。
+    std::vector<std::shared_ptr<ITransport>> extraChannels_;
     // 必须持有 track 的 shared_ptr：libdatachannel 的 addTrack 返回 shared_ptr，
     // 一旦析构就会把该 m-line 从 SDP 里移除
     std::shared_ptr<rtc::Track> audioTrack_;

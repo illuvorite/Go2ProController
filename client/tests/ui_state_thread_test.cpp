@@ -20,6 +20,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <string>
 #include <thread>
 #include <vector>
@@ -29,20 +30,20 @@ using go2test::FakeSink;
 
 namespace {
 
-constexpr int kIters = 1000;
+/// 本次运行实际使用的迭代次数（main 里按环境变量决定）
+int g_iters = 1000;
 
-#ifdef GO2_RACE_POSITIVE_CONTROL
-// ---------------------------------------------------------------------------
-// 正对照（只在 -DGO2_RACE_POSITIVE_CONTROL 时编译）：
-// 故意制造一个**没有同步**的数据竞争。
-//
-// 为什么需要它：一个"0 报告"的结论只有在"这个工具确实能抓到竞争"的前提下才有意义。
-// 开这个宏跑一遍，TSan 必须报 ≥1 条 —— 那就证明本环境下的 TSan 真的在干活，
-// 于是不带宏时的那 0 条才算证据，而不是"工具没生效"的假象。
-//
-// 平时的构建不含这段代码（宏默认关闭，见 CMakeLists 的 GO2_RACE_POSITIVE_CONTROL）。
-volatile int g_raceProbe = 0;
-#endif
+/// 默认迭代次数。可用环境变量 GO2_STRESS_ITERS 调小 ——
+/// sanitizer（ASan/TSan）插桩后单次迭代慢 10~20 倍，跑 1000 次要一分多钟；
+/// 压到 200 次仍然能覆盖全部共享状态的读写路径（约十几秒），
+/// 需要"跑久一点"时把它调回 1000+ 即可。
+int stressIters() {
+    if (const char* e = std::getenv("GO2_STRESS_ITERS")) {
+        const int v = std::atoi(e);
+        if (v > 0) return v;
+    }
+    return 1000;
+}
 
 std::string ipAt(int i) {
     return "10.0.0." + std::to_string((i % 200) + 1);
@@ -51,7 +52,7 @@ std::string ipAt(int i) {
 /// 模拟 **Web 后端线程**：与 `web_bridge.cpp` 的 `/api/state` + `/api/command` 同形状
 void webThread(UiState& ui, FakeSink& sink, std::atomic<bool>& go) {
     while (!go.load()) std::this_thread::yield();
-    for (int i = 0; i < kIters; ++i) {
+    for (int i = 0; i < g_iters; ++i) {
         // /api/state 侧：读各种状态（改造前这些读都没有同步）
         (void)ui.estop.load();
         (void)ui.mcfMode.load();
@@ -92,17 +93,13 @@ void webThread(UiState& ui, FakeSink& sink, std::atomic<bool>& go) {
             (void)r;
             ui.estop = false;  // 下一轮继续跑
         }
-
-#ifdef GO2_RACE_POSITIVE_CONTROL
-        g_raceProbe = i;  // 正对照：无同步写（见文件上方说明）
-#endif
     }
 }
 
 /// 模拟 **界面线程**：与 `ui.cpp` 每帧的读取序列同形状
 void uiThread(UiState& ui, std::atomic<bool>& go) {
     while (!go.load()) std::this_thread::yield();
-    for (int i = 0; i < kIters; ++i) {
+    for (int i = 0; i < g_iters; ++i) {
         // 顶栏：急停状态 / 角标 / 受控目标
         (void)ui.estop.load();
         (void)ui.movingSent.load();
@@ -147,16 +144,13 @@ void uiThread(UiState& ui, std::atomic<bool>& go) {
         ui.addOrUpdate(ipAt(i), false);
         ui.updateStatus(ipAt(i), float(i % 100), "trot");
         (void)ui.selectedIps();
-
-#ifdef GO2_RACE_POSITIVE_CONTROL
-        (void)g_raceProbe;  // 正对照：无同步读
-#endif
     }
 }
 
 }  // namespace
 
 int main() {
+    g_iters = stressIters();
     UiState ui;
     FakeSink sink;
     sink.ready = {"10.0.0.1", "10.0.0.2", "10.0.0.3"};
@@ -196,7 +190,7 @@ int main() {
                         .count();
 
     // 走到这里就说明没有崩溃（并发访问 std::map/std::set 崩溃是最典型的失败模式）
-    std::printf("  并发跑完 %d 次迭代 x4 线程，用时 %lld ms\n", kIters,
+    std::printf("  并发跑完 %d 次迭代 x4 线程，用时 %lld ms\n", g_iters,
                 static_cast<long long>(ms));
 
     // ---- 收尾后的基本一致性 ----
