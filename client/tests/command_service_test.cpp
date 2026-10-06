@@ -181,5 +181,45 @@ int main() {
         }
     }
 
+    // ---------------------------------------------------------------- 姿态角自动归零
+    // 姿态角是"保持型"参数：发出去一直生效，不存在"发完即失效"。
+    // 不自动归零 = 狗带着歪斜姿态一直走下去。所以归零这条语义也用假 sink 钉死。
+    {
+        UiState ui;
+        FakeSink sink;
+        sink.ready = {"10.0.0.1", "10.0.0.2"};
+        sink.selected = {"10.0.0.1"};
+
+        // 发一条非零姿态
+        ui.eulerX = 0.3f;
+        ui.eulerY = -0.2f;
+        ui.eulerZ = 0.4f;
+        CHECK(cmd::dispatchAction(sink, ui, "Euler") == 1);
+        CHECK(sink.countApi(1007) == 1);
+        CHECK(near(lastParam(sink)["x"].get<double>(), 0.3));
+        CHECK(near(lastParam(sink)["z"].get<double>(), 0.4));
+
+        // 到点归零：下发全零 + 界面三个轴清零 + 撤掉待归零任务（否则每帧都会重发）
+        CHECK(cmd::resetEuler(sink, ui) == 1);
+        {
+            const auto p = lastParam(sink);
+            CHECK(near(p["x"].get<double>(), 0.0));
+            CHECK(near(p["y"].get<double>(), 0.0));
+            CHECK(near(p["z"].get<double>(), 0.0));
+        }
+        CHECK(ui.eulerX == 0.0f);
+        CHECK(ui.eulerY == 0.0f);
+        CHECK(ui.eulerZ == 0.0f);
+        CHECK_MSG(ui.eulerResetAt < 0.0, "归零后必须撤掉计时任务，否则每帧重复下发");
+
+        // 急停锁定时也要能归零 —— 这恰恰是最需要它的场景（狗停在半歪的姿态上）
+        ui.estop = true;
+        ui.eulerX = 0.25f;
+        CHECK_MSG(cmd::moveSelected(sink, ui, 1.0f, 0.0f, 0.0f) == 0,
+                  "急停锁定后不得下发运动指令");
+        CHECK_MSG(cmd::resetEuler(sink, ui) == 1, "归零是安全方向，锁定时仍要能发");
+        CHECK(ui.eulerX == 0.0f);
+    }
+
     return go2test::summary("command_service_test");
 }

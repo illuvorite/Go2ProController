@@ -24,8 +24,9 @@ assets/web/
 ├── api.js                  # fetch 封装：GET /api/state + POST /api/command
 ├── store.js                # 响应式单例（页面/弹窗/设备/参数）+ refresh/cmd/post
 ├── motion.js               # planMotion —— 与 core/motion.hpp 同一套急停语义
-├── icons.js                # Phosphor 码点 + 动作→图标表（与 ui.cpp 的 iconGlyph 同一张）
-├── fonts/Phosphor.ttf      # 图标字体（= client/assets/fonts/Phosphor.ttf 的副本）
+├── icons.js                # 图标码点 + 动作→图标表（**由 tools/icons/gen_icons.py 生成**）
+├── fonts/                  # 图标字体：Phosphor.ttf / Phosphor-Bold.ttf / TianshuGo2.ttf
+│                           #   （= client/assets/fonts/ 的副本，同步生成）
 ├── img/go2.jpg(@2x)        # 狗卡片配图（Wikimedia Commons，CC BY 3.0，见 CREDITS.txt）
 ├── vendor/vue.esm-browser.prod.js
 └── components/
@@ -91,6 +92,36 @@ assets/web/
 - **拖滑条只改本地值，松手才 `commit`**：后端 500ms 才回一次快照，拖动中会被旧值拽回去。
 - **图标表别退回关键词匹配**：`icons.js` 的 `ACTION_ICON` 与 `ui.cpp iconGlyph()` 是同一张
   按 key 精确对应的表（关键词会把"前跳/跳跃奔跑/自由跳跃"全撞成同一个图标）。
+- **字重是渲染上下文的属性，不是图标的属性**：Phosphor 的 Regular 与 Bold
+  **码点完全一致**（1530 个图标逐一核对），所以切字重只是换一份字体/一个 CSS class，
+  字形串照旧可用。顶栏与急停等主操作区加粗，弹窗标题/狗卡片等次要层级保持 Regular。
+  C++ 端对应的是 `theme::iconFontBold()`。
+- **两套字体各司其职**（`gen_icons.py` 的 `TABLE` = 界面框架，`ACTION_ICON` = 动作）：
+  - `Phosphor.ttf` / `Phosphor-Bold.ttf`（MIT）→ **界面框架**图标
+    （设备/设置/急停/方向键…），字重靠 `.ic` / `.ic-b` 切。
+  - `TianshuGo2.ttf` → **动作图标**：宇树官方 App「天树探界遥控」那套**人形动作剪影**
+    （站立/坐下/拜年/翻滚/倒立…），由 `tools/icons/svg2font.py` 从其 APK 的 SVG 转出。
+    **为什么要单独一套**：剪影能一眼读出在做什么动作，而抽象符号（天平=平衡、床=趴下、
+    相机=摆姿势）读不出来 —— 那正是旧动作图标"廉价感"的根源。Phosphor 之类开源库
+    **没有**这类动作剪影。
+    ⚠ 授权：来自第三方 App 的专有资源，**仅限本地自用/内部部署**，
+    对外开源分发前必须替换 —— 详见 `client/assets/fonts/TIANSHU_LICENSE_NOTE.md`。
+- **动作图标按码位区间选字体**：天树私有区 U+E100~U+E1FF（UTF-8 首字节恒为 `0xEE`）。
+  网页端靠 `font-family: 'Tianshu', 'Phosphor'` 的回退链，C++ 端靠
+  `glyphIsTianshu()`（`ui_actions.cpp`）。**不要**在动作表里再维护一份
+  "这个动作用哪个字体"的标记 —— 那是最容易漂移的地方。
+- **`icons.js` 和 `fonts/` 都是生成产物，不要手改**：改图标请改
+  [`tools/icons/gen_icons.py`](../../../tools/icons/gen_icons.py) 再
+  `python tools/icons/gen_icons.py` —— 它同时产出 C++ 的 `ui/icons.hpp`、网页的
+  `icons.js` 和全部字体，所以两端**不可能**再漂移。脚本会校验每个 Phosphor 图标名
+  在 Regular/Bold 两套 CSS 里都存在、两套码点一致、每个天树引用都能解析。
+- **换图标必须先用眼睛确认**：脚本只能校验"名字存在"，**名字存在 ≠ 字形好看、
+  ≠ 语义对得上**。2026-10-06 踩过这个坑 —— 试着把前/后空翻换成 `flip-*`、
+  左/右空翻换成 `arrow-circle-*`、扭屁股换成 `waves`，渲染出来分别是
+  像"Λ"的怪形状、像时钟的圆圈箭头、像"≈"的数学符号，**全都比原来的还难看，
+  已全部回退**。所以：改完跑 `python tools/web_preview.py` 打开
+  `?page=actions` 看一眼，再决定留不留。
+- **`?page=actions` 可直接落到动作库页**（预览 / 截图时省一次点击）。
 - **网页界面不要显示 Gait 组**（group===1）：与 ImGui 端动作库口径一致（用户已裁掉）。
 
 ## 5. 维护清单（每次改前端）

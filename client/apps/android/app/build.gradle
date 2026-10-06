@@ -26,6 +26,30 @@ def syncWebAssets = tasks.register("syncWebAssets", Sync) {
     exclude "**/README.md"
 }
 
+// ---------------------------------------------------------------------------
+// 图标字体：同样**构建期同步** client/assets/fonts/Phosphor*.ttf 与 TianshuGo2.ttf。
+//
+// 为什么也要同步：Phosphor 的 Regular 与 Bold **码点完全一致**，桌面端靠换一份
+// ImFont 切字重（动作瓷砖加粗 / 界面框架保持细线）。安卓如果只带 Regular，
+// 动作图标就会退回细线、跟桌面端不一致。
+// 以前这里只有一份手抄的 Phosphor.ttf，加字重就得再手工同步一次 —— 正是
+// M4-1 消灭的那种"两处必然漂移"的问题，所以一并交给构建期。
+//
+// ★ TianshuGo2 是**动作图标字体**（宇树官方 App「天树探界遥控」的人形动作剪影），
+//   安卓端同样要带，否则动作库图标全是缺字方框。
+//
+// 注意：只同步图标字体，**不带** app/src/main/assets/fonts/ 下已有的
+// NotoSansSC（那是安卓侧单独预置的中文字体，体积 8MB，由 PUT_FONT_HERE.txt 说明）。
+// ---------------------------------------------------------------------------
+def iconFontsSrcDir = file("${rootDir}/../../assets/fonts")
+def iconFontsGenDir = layout.buildDirectory.dir("generated/iconfonts").get().asFile
+def syncIconFonts = tasks.register("syncIconFonts", Sync) {
+    from iconFontsSrcDir
+    include "Phosphor*.ttf"
+    include "TianshuGo2.ttf"
+    into new File(iconFontsGenDir, "fonts")
+}
+
 android {
     if (buildAsApplication) {
         namespace "org.libsdl.app"
@@ -70,11 +94,13 @@ android {
     }
     applicationVariants.all { variant ->
         tasks["merge${variant.name.capitalize()}Assets"]
-            .dependsOn("externalNativeBuild${variant.name.capitalize()}", syncWebAssets)
+            .dependsOn("externalNativeBuild${variant.name.capitalize()}", syncWebAssets, syncIconFonts)
     }
     // 网页资源以"同步出来的目录"为源（内容来自 client/assets/web，见文件上方说明）
+    // 图标字体同理来自 client/assets/fonts（见 syncIconFonts 的说明）
     sourceSets.main {
         assets.srcDirs += webAssetsGenDir
+        assets.srcDirs += iconFontsGenDir
     }
     if (!project.hasProperty('EXCLUDE_NATIVE_LIBS')) {
         sourceSets.main {

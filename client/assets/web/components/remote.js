@@ -71,18 +71,20 @@ export default {
           <span class="sub">一次下发，持续到下一条指令</span>
         </p>
         <div class="dpad">
+          <!-- ★ D-pad 四向统一用箭头家族：原来前进是 arrow-up、其余三个是 caret-*（尖括号），
+               四个并排按钮混着两种字形 family，粗细和视觉重量都不一样。 -->
           <button class="dp up" :disabled="!canMove || store.st.estop" @click="quick('fwd')">
             <span class="ic">{{ ICON.arrowUp }}</span>前进
           </button>
           <div class="dp-row">
             <button class="dp" :disabled="!canMove || store.st.estop" @click="quick('left')">
-              <span class="ic">{{ ICON.caretLeft }}</span>左转
+              <span class="ic">{{ ICON.arrowLeft }}</span>左转
             </button>
             <button class="dp" :disabled="!canMove || store.st.estop" @click="quick('back')">
-              <span class="ic">{{ ICON.caretDown }}</span>后退
+              <span class="ic">{{ ICON.arrowDown }}</span>后退
             </button>
             <button class="dp" :disabled="!canMove || store.st.estop" @click="quick('right')">
-              右转<span class="ic">{{ ICON.caretRight }}</span>
+              右转<span class="ic">{{ ICON.arrowRight }}</span>
             </button>
           </div>
         </div>

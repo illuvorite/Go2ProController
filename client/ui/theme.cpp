@@ -38,6 +38,17 @@ constexpr float kBaseSmall = 15.0f;
 // 断点字号一变两者一起缩，不用分别 PushFont。字形清单见 ui/icons.hpp。
 bool g_iconFont = false;
 
+// ★ 加粗图标字体（独立的一份 ImFont，只含图标字形）。
+//   Phosphor 的 Regular / Bold **码点完全一致**，所以加粗版可以直接用同一批字形串，
+//   切换只是换一份字体 —— 动作库瓷砖（84px 小格子）用加粗才立得住，
+//   界面框架图标继续用常规那份（细线更克制，不跟内容抢注意力）。
+ImFont* g_iconFontBold = nullptr;
+
+// ★ 天树动作字体（独立一份 ImFont）：宇树官方 App「天树探界遥控」那套**人形动作剪影**
+//   （站立/坐下/拜年/翻滚/倒立…）。动作图标必须用这套 —— 剪影能一眼读出动作，
+//   抽象符号（天平=平衡、床=趴下）读不出来，那正是旧图标"廉价感"的根源。
+ImFont* g_actionFont = nullptr;
+
 /// 图标字体候选路径。桌面是从 client/ 目录启动的，所以第一个就能命中；
 /// 移动端（安卓）启动时会 chdir 到应用目录，把同一份字体拷到那儿即可；
 /// 也可以用环境变量 GO2_ICON_FONT 直接指定绝对路径。
@@ -48,6 +59,35 @@ const char* kIconFontCandidates[] = {
     "../client/assets/fonts/Phosphor.ttf",
     "fonts/Phosphor.ttf",
 };
+
+/// 加粗字体的候选路径（与常规字体同目录、同套候选规则）
+const char* kIconFontBoldCandidates[] = {
+    "assets/fonts/Phosphor-Bold.ttf",
+    "../assets/fonts/Phosphor-Bold.ttf",
+    "client/assets/fonts/Phosphor-Bold.ttf",
+    "../client/assets/fonts/Phosphor-Bold.ttf",
+    "fonts/Phosphor-Bold.ttf",
+};
+
+/// 天树动作字体的候选路径
+const char* kActionFontCandidates[] = {
+    "assets/fonts/TianshuGo2.ttf",
+    "../assets/fonts/TianshuGo2.ttf",
+    "client/assets/fonts/TianshuGo2.ttf",
+    "../client/assets/fonts/TianshuGo2.ttf",
+    "fonts/TianshuGo2.ttf",
+};
+
+/// 找第一个存在的字体文件
+const char* firstExisting(const char* const* cands, int n) {
+    for (int i = 0; i < n; ++i) {
+        FILE* probe = std::fopen(cands[i], "rb");
+        if (!probe) continue;
+        std::fclose(probe);
+        return cands[i];
+    }
+    return nullptr;
+}
 
 bool mergeIconFont(float baseSize) {
     ImGuiIO& io = ImGui::GetIO();
@@ -69,12 +109,54 @@ bool mergeIconFont(float baseSize) {
         if (io.Fonts->AddFontFromFileTTF(p, baseSize, &cfg)) {
             g_iconFont = true;
             std::printf("[字体] 图标字体已合并 %s\n", p);
-            return true;
+            break;
         }
     }
-    std::printf("[字体] 未找到图标字体（图标回退为手绘形状）。可从仓库取一份放到 %s\n",
-                kIconFontCandidates[0]);
-    return false;
+    if (!g_iconFont) {
+        std::printf("[字体] 未找到图标字体（图标回退为手绘形状）。可从仓库取一份放到 %s\n",
+                    kIconFontCandidates[0]);
+        return false;
+    }
+
+    // ---- 加粗图标字体：独立一份 ImFont（不 MergeMode），只供动作瓷砖用 ----
+    // 找不到不算失败：动作图标会退回常规字重，功能不受影响。
+    const char* boldEnv = std::getenv("GO2_ICON_FONT_BOLD");
+    if (boldEnv && *boldEnv && firstExisting(&boldEnv, 1)) {
+        ImFontConfig bcfg;
+        bcfg.OversampleH = 2;  // 加粗字形边缘更硬，采样给足避免发虚
+        bcfg.OversampleV = 2;
+        g_iconFontBold = io.Fonts->AddFontFromFileTTF(boldEnv, baseSize, &bcfg);
+    } else {
+        const char* p = firstExisting(kIconFontBoldCandidates,
+                                      (int)(sizeof(kIconFontBoldCandidates) /
+                                            sizeof(kIconFontBoldCandidates[0])));
+        if (p) {
+            ImFontConfig bcfg;
+            bcfg.OversampleH = 2;
+            bcfg.OversampleV = 2;
+            g_iconFontBold = io.Fonts->AddFontFromFileTTF(p, baseSize, &bcfg);
+        }
+    }
+    if (g_iconFontBold) std::printf("[字体] 加粗图标字体已加载\n");
+    else std::printf("[字体] 未找到加粗图标字体（界面图标用常规字重）\n");
+
+    // ---- 天树动作字体：独立一份 ImFont，动作图标专用 ----
+    // 找不到不算失败：动作图标会退回 Phosphor 字形（形状不如剪影，但功能不受影响）。
+    const char* actEnv = std::getenv("GO2_ACTION_FONT");
+    const char* actPath = nullptr;
+    if (actEnv && *actEnv && firstExisting(&actEnv, 1)) actPath = actEnv;
+    else actPath = firstExisting(kActionFontCandidates,
+                                 (int)(sizeof(kActionFontCandidates) /
+                                       sizeof(kActionFontCandidates[0])));
+    if (actPath) {
+        ImFontConfig acfg;
+        acfg.OversampleH = 2;  // 剪影边缘是硬转折，采样给足避免锯齿
+        acfg.OversampleV = 2;
+        g_actionFont = io.Fonts->AddFontFromFileTTF(actPath, baseSize, &acfg);
+    }
+    if (g_actionFont) std::printf("[字体] 天树动作字体已加载 %s\n", actPath);
+    else std::printf("[字体] 未找到天树动作字体（动作图标退回 Phosphor）\n");
+    return true;
 }
 
 }  // namespace
@@ -137,6 +219,10 @@ bool loadUiFontsFromMemory(const void* data, int dataSize, float fontScale) {
 }
 
 bool iconFontLoaded() { return g_iconFont; }
+
+ImFont* iconFontBold() { return g_iconFontBold; }
+
+ImFont* actionFont() { return g_actionFont; }
 
 void setUiFontSizes(float title, float body, float small) {
     g_fonts.title = title > 6.0f ? title : kBaseTitle;

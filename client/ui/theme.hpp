@@ -32,6 +32,28 @@ bool loadUiFontsFromMemory(const void* data, int dataSize, float fontScale = 1.0
 /// 此时界面里的图标位置会退化成手绘简笔形状（见 ui.cpp 的 drawTileIcon），功能不受影响。
 bool iconFontLoaded();
 
+/// 动作专用的**加粗**图标字体（Phosphor-Bold，MIT）。
+///
+/// 为什么单独一份：Phosphor 的 Regular 与 Bold **码点完全一致**，所以切字重只是换字体，
+/// 字形串照旧可用（见 ui/icons.hpp）。动作库瓷砖只有 84px，Regular 细线在这个尺寸下
+/// 发虚、没分量；界面框架图标则相反，用细线更克制、不跟内容抢注意力。
+///
+/// 返回 nullptr = 没找到加粗字体文件（动作图标自动退回常规字重，功能不受影响）。
+ImFont* iconFontBold();
+
+/// 动作专用的**人形动作剪影**字体（TianshuGo2）。
+///
+/// 为什么单独一份：这套图标来自宇树官方 App「天树探界遥控」，是**人形动作剪影**
+/// （站立/坐下/拜年/翻滚/倒立…），一眼能读出在做什么动作；而抽象符号
+/// （天平=平衡、床=趴下、相机=摆姿势）读不出来 —— 那正是旧动作图标"廉价感"的根源。
+/// Phosphor 之类开源图标库里**没有**这类动作剪影。
+///
+/// ⚠ 授权：这些字形来自第三方 App 的专有美术资源，适合本地自用 / 内部部署；
+///   对外开源分发前必须替换为自绘或已授权图标。
+///
+/// 返回 nullptr = 没找到字体（动作图标自动退回 Phosphor 字形，功能不受影响）。
+ImFont* actionFont();
+
 /// 按断点设置三档字号（运行时可变）
 void setUiFontSizes(float title, float body, float small);
 

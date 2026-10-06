@@ -6,3 +6,6 @@
 下载示例（自行执行）：
   curl -L -o NotoSansSC-Regular.otf \
     https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf
+
+（图标字体 Phosphor*.ttf **不用**放这里 —— 它们由 build.gradle 的 syncIconFonts
+  任务在构建期从 client/assets/fonts/ 自动同步，源目录只有那一份。）

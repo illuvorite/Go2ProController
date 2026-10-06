@@ -215,37 +215,48 @@ void loadFontsFromAssets() {
     go2::loadUiFonts();  // 退回系统字体（Android 上通常只有拉丁字形）
 }
 
-/// 把 assets 里的图标字体（Phosphor，MIT）导出到**应用可写目录**，用 GO2_ICON_FONT 指过去。
+/// 把 assets 里的某个图标字体导出到**应用可写目录**，返回落盘文件名（失败返回空串）。
 ///
 /// 为什么非要落盘：`theme.cpp::mergeIconFont()` 只认磁盘路径（`fopen`），而 APK 里
 /// `assets/` 的文件不在文件系统上（只有 SDL_RWFromFile / AAssetManager 能读）。
-/// 调用前必须已经 chdir 到应用目录 —— 路径就用相对名 "Phosphor.ttf"。
+/// 调用前必须已经 chdir 到应用目录 —— 路径就用相对名。
 /// 大小一致就跳过重写（省 470KB 的写盘），也能在换字体后自动覆盖。
-void extractIconFont() {
-    const char* kAsset = "fonts/Phosphor.ttf";
-    const char* kDst = "Phosphor.ttf";
-    auto data = readAsset(kAsset);
+static std::string extractFont(const char* asset, const char* dst) {
+    auto data = readAsset(asset);
     if (data.empty()) {
-        LOGI("assets/%s 不存在 → 图标回退手绘形状", kAsset);
-        return;
+        LOGI("assets/%s 不存在 → 该字重回退", asset);
+        return std::string();
     }
     long have = 0;
-    if (FILE* f = std::fopen(kDst, "rb")) {
+    if (FILE* f = std::fopen(dst, "rb")) {
         std::fseek(f, 0, SEEK_END);
         have = std::ftell(f);
         std::fclose(f);
     }
     if (have != static_cast<long>(data.size())) {
-        FILE* w = std::fopen(kDst, "wb");
+        FILE* w = std::fopen(dst, "wb");
         if (!w) {
-            LOGE("图标字体导出失败：%s 不可写", kDst);
-            return;
+            LOGE("图标字体导出失败：%s 不可写", dst);
+            return std::string();
         }
         std::fwrite(data.data(), 1, data.size(), w);
         std::fclose(w);
-        LOGI("图标字体已导出: %s (%zu 字节)", kDst, data.size());
+        LOGI("图标字体已导出: %s (%zu 字节)", dst, data.size());
     }
-    ::setenv("GO2_ICON_FONT", kDst, 1);  // mergeIconFont 优先读这个
+    return std::string(dst);
+}
+
+/// 导出 Regular + Bold 两份图标字体。
+///
+/// ★ 两份都要：Phosphor 两种字重**码点完全一致**，桌面端靠换一份 ImFont 来切字重
+///   （动作瓷砖加粗、界面框架保持细线）。安卓少了 Bold，动作图标就会退回细线、
+///   跟桌面端不一致。找不到 Bold 不算失败 —— 自动退回常规字重。
+void extractIconFont() {
+    std::string reg = extractFont("fonts/Phosphor.ttf", "Phosphor.ttf");
+    if (!reg.empty()) ::setenv("GO2_ICON_FONT", reg.c_str(), 1);  // mergeIconFont 优先读这个
+
+    std::string bold = extractFont("fonts/Phosphor-Bold.ttf", "Phosphor-Bold.ttf");
+    if (!bold.empty()) ::setenv("GO2_ICON_FONT_BOLD", bold.c_str(), 1);
 }
 
 // ---------------------------------------------------------------- 网页界面（Vue3）资源

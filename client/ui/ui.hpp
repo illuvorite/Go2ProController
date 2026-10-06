@@ -68,6 +68,13 @@ struct UiState {
     float eulerX = 0.0f;         // 姿态角 roll（仅界面线程）
     float eulerY = 0.0f;         // pitch（仅界面线程）
     float eulerZ = 0.0f;         // yaw（仅界面线程）
+    /// 内部：姿态角自动归零的到期时刻（ImGui::GetTime 秒，<0 = 没有待归零任务；仅界面线程）
+    ///
+    /// ★ 姿态角是**保持型**参数 —— 发出去就一直生效，不存在"发完即失效"。
+    ///   所以点完不清零，狗会带着这个歪斜姿态一直走下去，这是安全隐患。
+    ///   发送时挂上"现在 + cmd::kEulerHoldSeconds"，drawUi 每帧检查，到点由
+    ///   cmd::resetEuler 下发一次全零（见 ui.cpp 顶部的挂钟、ui_actions.cpp 的发送分支）。
+    double eulerResetAt = -1.0;
     char rawJson[256] = "{}";    // 自定义 JSON 参数（仅界面线程）
     std::atomic<int> localKeyCount{0};  // 本地加载的 AES key 数量（data2=3 新固件用）
     char manualIp[256] = "192.168.2.";  // 手动添加输入框预填（支持逗号分隔多台）

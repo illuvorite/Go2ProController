@@ -25,7 +25,8 @@ export const store = reactive({
     problemCount: 0,
     keyCount: 0,
   },
-  page: 'remote',   // remote | actions
+  // 默认遥控页；?page=actions 可直接落到动作库（截图 / 预览时省一次点击）
+  page: new URLSearchParams(location.search).get('page') === 'actions' ? 'actions' : 'remote',
   modal: '',        // '' | devices | settings | log
   menu: false,      // 顶栏「⋯更多」菜单
   picker: false,    // 摇杆带中间的「单控」选择器（向上弹）

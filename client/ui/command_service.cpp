@@ -139,6 +139,33 @@ int sendAction(CommandSink& sink, UiState& ui, const SportAction& a, bool flagVa
     });
 }
 
+int resetEuler(CommandSink& sink, UiState& ui) {
+    // api_id 从指令表里查，不写死 1007 —— 表改了这里跟着改
+    const SportAction* euler = nullptr;
+    for (const SportAction& a : sportActions()) {
+        if (std::string(a.key) == "Euler") {
+            euler = &a;
+            break;
+        }
+    }
+    if (!euler) return 0;
+    const int id = resolveApiId(ui, *euler);
+    if (id == 0) return 0;
+    nlohmann::json p = nlohmann::json::object();
+    p["x"] = 0.0;
+    p["y"] = 0.0;
+    p["z"] = 0.0;
+    // 无论有没有设备收到，界面上的滑条都要归零 —— 它显示的是"狗现在是什么姿态"，
+    // 留着非零值会让人以为狗还歪着（其实下一条动作就已经把姿态覆盖了）
+    ui.eulerX = 0.0f;
+    ui.eulerY = 0.0f;
+    ui.eulerZ = 0.0f;
+    ui.eulerResetAt = -1.0;
+    return forEachSelected(sink, [&](const std::string& ip) {
+        return sink.sendSport(ip, id, p);
+    });
+}
+
 int dispatchAction(CommandSink& sink, UiState& ui, const std::string& key) {
     for (const SportAction& a : sportActions()) {
         if (key != a.key) continue;

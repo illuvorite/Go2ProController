@@ -41,7 +41,7 @@ export default {
         <span class="ic">{{ ICON.robot }}</span>设备
       </button>
       <button @click="togglePage()">
-        <span class="ic">{{ isRemote ? ICON.taiChi : ICON.joystick }}</span>{{ isRemote ? '动作库' : '遥控' }}
+        <span class="ic">{{ isRemote ? ICON.list : ICON.joystick }}</span>{{ isRemote ? '动作库' : '遥控' }}
       </button>
       <button class="icon-btn" @click="store.menu = !store.menu">
         <span class="ic">{{ ICON.dots }}</span>

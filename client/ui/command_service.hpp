@@ -113,6 +113,23 @@ int dispatchToggle(CommandSink& sink, UiState& ui, const SportAction& a, bool on
 /// @return 成功台数
 int sendAction(CommandSink& sink, UiState& ui, const SportAction& a, bool flagValue = true);
 
+/// 姿态角发送后的**保持时长**（秒）：到点自动下发一次全零（见 `resetEuler`）。
+///
+/// 为什么不是"发完立刻回正"：Go2 的姿态是闭环跟踪目标，下发后要几百毫秒才真的歪过去。
+/// 立刻补一条全零会把动作吃掉，狗根本不会倾斜 —— 看着像"点了没反应"。
+/// 1.5s 足够走到目标位姿，又不至于长到让人以为没归零。
+constexpr double kEulerHoldSeconds = 1.5;
+
+/// 下发一次姿态角全零（roll/pitch/yaw = 0）并把 `ui.eulerX/Y/Z` 清回 0、清掉待归零任务。
+///
+/// ★ **不受急停锁定约束** —— 与 `stopSelected` 同理：这是安全方向。
+///   最需要它的情况恰恰是"已经按下急停、狗停在半歪的姿态上"，此时归零比锁住更重要。
+///   它只发 `{"x":0,"y":0,"z":0}`，不会让狗移动。
+///
+/// 目标集合与普通动作指令一致（受控 ∩ 就绪），不做全量广播 —— 全量广播是急停的语义。
+/// @return 成功台数；0 = 当前指令集里没有 Euler 这条
+int resetEuler(CommandSink& sink, UiState& ui);
+
 /// 强制阻尼：对**全部就绪**设备（不限于勾选）发 Damp
 int dampAll(CommandSink& sink);
 

@@ -2,10 +2,28 @@
    深色玻璃风：渐变背景 + 半透明卡片 + 柔和投影 + 统一圆角 + 苹果风滑条
    （这些在 ImGui 里要手画几十个 draw call，CSS 里就是几行 —— 这就是"质感"的来源） */
 
-/* 图标字体：Phosphor Icons (Regular, MIT) —— 与 C++ 端 client/assets/fonts 同一份字体 */
+/* 图标字体：Phosphor Icons (MIT) —— 与 C++ 端 client/assets/fonts 同一份字体
+   Regular / Bold 两套的**码点完全一致**，所以切字重只是换 font-family，字形串照旧可用。 */
 @font-face {
   font-family: 'Phosphor';
   src: url('./fonts/Phosphor.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Phosphor';
+  src: url('./fonts/Phosphor-Bold.ttf') format('truetype');
+  font-weight: bold;
+  font-style: normal;
+  font-display: block;
+}
+/* 天树动作图标：宇树官方 App「天树探界遥控」那套人形动作剪影
+   （站立/坐下/拜年/翻滚/倒立…）。见 tools/icons/svg2font.py。
+   ⚠ 来自第三方 App 的专有资源，适合本地自用/内部部署；开源分发前须替换。 */
+@font-face {
+  font-family: 'Tianshu';
+  src: url('./fonts/TianshuGo2.ttf') format('truetype');
   font-weight: normal;
   font-style: normal;
   font-display: block;
@@ -39,7 +57,31 @@ body {
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
 }
-.ic { font-family: 'Phosphor', sans-serif; font-size: 1.15em; line-height: 1; opacity: .95; }
+/* 图标基类。
+   ★ 光学对齐：图标字形画在 em 框里偏上，直接跟文字并排会显得"浮"，
+     所以用 vertical-align 往下压一点点，肉眼才跟同一行的汉字/数字齐平。
+   ★ 尺寸分级：框架图标 1.05em（克制），动作图标用 .ic-b 加粗（见 .tile .ico）。 */
+.ic {
+  font-family: 'Phosphor', sans-serif;
+  font-size: 1.05em;
+  line-height: 1;
+  vertical-align: -0.12em;
+  opacity: .92;
+}
+/* 动作图标：加粗。小尺寸瓷砖上细线发虚没分量，加粗才立得住。
+   与 C++ 端 drawTileIconAuto() 走加粗字体是同一个决定。 */
+.ic-b { font-weight: bold; }
+
+/* 顶栏与主要操作区：图标跟着按钮走加粗。
+   顶栏按钮是全屏最上方的"主操作层"，16px 细线在深色玻璃底上偏弱发虚；
+   加粗后和按钮文字同一分量，视觉重心才对得上。
+   （次要层级 —— 弹窗标题、狗卡片、设置项 —— 保持细线，不抢注意力。
+     ★ 动作瓷砖 .tile .ico 不在这里加粗：它走 TianshuGo2 单字重字体。） */
+.tb-left .chip .ic,
+.tb-right button .ic,
+.estop-big .ic,
+.damp .ic,
+.panel-btn .ic { font-weight: bold; }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; }
 .dim { color: var(--dim); }
 
@@ -219,17 +261,56 @@ button.icon-btn { padding: 9px 12px; position: relative; }
 .act-opt .ck { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
 .group { margin-bottom: 0; }
 .group .title { margin-bottom: 7px; }
-.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 7px; }
+/* 瓷砖布局：**横向**（图标在左 / 字在右）。
+   竖排时图标和文字上下争高度，图标一大就撑高按钮；横排后高度只由图标决定，
+   文字可以更小、图标可以更大，一屏能放更多动作。 */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
 .tile {
   position: relative;
-  flex-direction: column; gap: 4px; padding: 9px 4px 7px; border-radius: 10px;
+  /* ★ display:flex 必须显式写 —— button 的浏览器默认样式是 inline-block，
+     只写 flex-direction 不会生效，图标和文字仍然会上下堆叠。 */
+  display: flex;
+  flex-direction: row; align-items: center; justify-content: center;
+  gap: 3px; padding: 5px 7px; border-radius: 9px;
   background: var(--card); transition: transform .12s, box-shadow .12s, background .12s;
 }
 .tile:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0, 0, 0, .45); background: var(--card-2); }
-.tile .ico { font-family: 'Phosphor', sans-serif; font-size: 19px; line-height: 1; opacity: .95; }
-.tile .nm { font-size: 11px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.tile .tag { font-size: 10px; color: var(--dim); }
-.tile .tag.ack { position: absolute; top: 3px; right: 5px; font-size: 10px; }
+/* 动作瓷砖图标：**天树人形动作剪影**（TianshuGo2）。
+   这套剪影的价值：站立/坐下/拜年/翻滚/倒立… 一眼能读出在做什么动作，
+   而抽象符号（天平=平衡、床=趴下）读不出来 —— 那正是旧图标廉价感的根源。
+   TianshuGo2 只有单字重（剪影本身是实心块），所以这里不用 font-weight。
+   ⚠ 这套里没有的少数动作（参数/状态查询/避障）会退回 Phosphor 码点。 */
+.tile .ico {
+  font-family: 'Tianshu', 'Phosphor', sans-serif;
+  font-size: 30px;          /* 剪影是实心块、比细线"胀"；横排后高度只由它决定，可以给足 */
+  line-height: 1;
+  display: block;
+  flex: 0 0 auto;           /* 不让 flex 压缩图标 */
+  opacity: .95;
+  /* ★ 图标字形在 em 框里**偏上**（字体基线决定），直接和文字并排会整组偏上。
+     ★ 0.2em 不是拍脑袋：真机截图像素实测 —— 30px 字号下图标视觉中心比按钮中点高约 6px（CSS px），
+       6/30 = 0.2em。改这个值时请重新量一次，别只凭感觉。
+     ★ 用 relative + top 而不是 margin-top：margin 会把盒子真往下推、按钮跟着变高，等于白改。 */
+  position: relative;
+  top: 0.2em;
+}
+.tile .nm {
+  font-size: 9.5px;
+  text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0;             /* 允许在 flex 里收缩，否则文字会把按钮撑爆 */
+  flex: 0 1 auto;           /* 按内容宽，不撑满 —— 撑满会把整组顶到左边 */
+  /* 图标下移后文字会显得偏上，同样下压一点保持整组协调（0.02em ≈ 0.2px，肉眼刚好） */
+  position: relative;
+  top: 0.02em;
+}
+/* 角标：横排且整组居中后，图标/文字都在中间，角标避到**右上角**最不碍事；
+   回执 ✓/✗ 放左上角，两边分开不会叠。 */
+.tile .tag {
+  position: absolute; top: 2px; right: 4px;
+  font-size: 8.5px; line-height: 1; color: var(--dim);
+}
+.tile .tag.ack { top: 2px; left: 4px; right: auto; font-size: 9.5px; }
 .tile .tag.ack.ok { color: var(--ok); }
 .tile .tag.ack.bad { color: #ff8b82; }
 .log-tools { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
