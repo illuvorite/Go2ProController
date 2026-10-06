@@ -155,6 +155,8 @@ ctest --output-on-failure
 | `sport_library_test` | 指令表不变量（key 唯一、两套 api_id 兜底、持续模式 id 集合、参数打包） |
 | `command_service_test` | 群控/急停语义（目标集合、锁定后不许动、开关簿记）—— 用假 sink，不碰网络 |
 | `ui_state_thread_test` | 界面线程 × Web 线程并发读写同一份 `UiState`（并发安全回归） |
+| `protocol_replay_test` | **协议回放**：把 `tests/fixtures/` 里固化的报文喂给纯解析函数（成功 / 3202 / 3203 / error_code 两种位置 / status 缺失 / 非对象 / 报文截断 / 非运动 topic / 未知 api_id），44 项断言 |
+| `sanitizer_probe_test` | 手动：设 `GO2_PROBE=asan\|tsan` 时故意制造越界/竞争，用来证明"sanitizer 0 报告"不是"工具没生效"（`verify_asan.sh` / `verify_tsan.sh` 会自动用） |
 | `discovery_test` / `cloud_test` | **手动**：需要真机 / 会访问宇树官方服务器，标了 `DISABLED` |
 
 按需（不跑真机）也能做的更强验证：
@@ -164,16 +166,27 @@ ctest --output-on-failure
 bash scripts/verify.sh --build
 
 # ② 数据竞争：TSan 跑并发自测，并带"正对照"证明 TSan 真的有效
-cmake --preset linux-tsan && cmake --build build/linux-tsan --parallel 2
+#   （脚本会先增量构建再跑，避免跑到陈旧二进制 —— 正对照是运行期开关 GO2_PROBE）
 bash scripts/verify_tsan.sh          # 期望：正式 0 条、正对照 ≥1 条
 
-# ③ 越界 / use-after-free
-cmake --preset linux-asan && cmake --build build/linux-asan --parallel 2
-ctest --test-dir build/linux-asan --output-on-failure
+# ③ 越界 / use-after-free（含两个退出场景：扫描中退出 / 启动后立刻退出）
+bash scripts/verify_asan.sh          # 期望：正式 0 报告、正对照 1 报告
 
 # ④ 免构建前端（assets/web）的语法与引用检查
 node scripts/web_check.mjs
+
+# ⑤ 界面视觉回归：4 个断点尺寸逐像素比对基线（改 ui_*.cpp 之后必跑）
+bash scripts/screenshot.sh compare   # 期望：4/4「0 像素差异」
+bash scripts/screenshot.sh capture   # 确认是预期改动后，用当前结果更新基线
 ```
+
+> `screenshot.sh` 需要图形环境（Linux 桌面 / WSLg）。无显示环境时会明确报"没抓到帧"，
+> 而不是假装通过；这种环境请改用 ⑤ 之外的离线自测。
+>
+> 单独抓一张指定尺寸的图（不比对基线）：
+> `GO2_WIN_W=820 GO2_WIN_H=460 GO2_SHOT=1 GO2_SHOT_PATH=/tmp/a.ppm ./build/go2_remote`
+> 然后 `python3 scripts/imgtool.py ppm2png /tmp/a.ppm /tmp/a.png` 打开看。
+> （`GO2_SHOT_EXIT=1` = 拍完就退出，走完整收尾路径）
 
 > 手动跑需要真机的测试：`ctest -R discovery_test --output-on-failure`
 > （`cloud_test` 会请求宇树官方服务器 —— 按项目纪律由使用者本人执行）
@@ -297,7 +310,10 @@ client/
 | 脚本 | 用途 |
 |---|---|
 | `scripts/verify.sh` | 一键取证：构建 + ctest + 方案 §5 的静态指标 |
-| `scripts/verify_tsan.sh` | TSan 数据竞争验证（含"正对照"证明工具有效） |
+| `scripts/verify_tsan.sh` | TSan 数据竞争验证（含运行期"正对照"证明工具有效） |
+| `scripts/verify_asan.sh` | ASan 验证（ctest + 退出场景 + 正对照） |
+| `scripts/screenshot.sh` | 界面视觉回归：4 个断点尺寸抓图 + 与 `docs/screenshots/` 基线逐像素比对 |
+| `scripts/imgtool.py` | 纯标准库的图片工具：`ppm2png` / `diff` / `info`（不引入图像库依赖） |
 | `scripts/web_check.mjs` | 免构建前端的语法 / import / importmap / 资源引用检查 |
 
 `.github/workflows/ci.yml` 在每次 push / PR 上跑：全量编译 + `ctest` + 前端自检。
