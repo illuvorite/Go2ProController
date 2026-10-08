@@ -591,11 +591,17 @@ for (const auto& gd : kGroups) {
         if (a.param == SportParam::Euler) {
             paramCol = 0;  // 姿态角占一整行：三个轴 + 发送
             const float ew = std::max(76.0f, (L.actAreaW - actW2 - 9.0f * 3.0f) / 3.0f);
-            const bool dx = iosSliderFloat("roll##e", &ui.eulerX, -0.5f, 0.5f, "%.2f", ew);
+            // euler* 是 atomic（HTTP 线程也会读，见 ui.hpp）→ 不能取地址绑定给 ImGui，
+            // 走项目统一的"取副本 → 控件改副本 → 写回"。
+            float ex = ui.eulerX.load(), ey = ui.eulerY.load(), ez = ui.eulerZ.load();
+            const bool dx = iosSliderFloat("roll##e", &ex, -0.5f, 0.5f, "%.2f", ew);
             ImGui::SameLine();
-            const bool dy = iosSliderFloat("pitch##e", &ui.eulerY, -0.5f, 0.5f, "%.2f", ew);
+            const bool dy = iosSliderFloat("pitch##e", &ey, -0.5f, 0.5f, "%.2f", ew);
             ImGui::SameLine();
-            const bool dz = iosSliderFloat("yaw##e", &ui.eulerZ, -0.6f, 0.6f, "%.2f", ew);
+            const bool dz = iosSliderFloat("yaw##e", &ez, -0.6f, 0.6f, "%.2f", ew);
+            ui.eulerX = ex;
+            ui.eulerY = ey;
+            ui.eulerZ = ez;
             // 手动拖滑条 = 用户要重新构图。此刻**先立刻把狗扶正**，再让用户慢慢调：
             //   · 只作废待归零任务 → 已经歪着的那一下永远没人收尾（人调着调着走开了）；
             //   · 保留待归零任务  → 回正那一刻会把用户刚拖出来的值一起抹成 0。
@@ -626,7 +632,12 @@ for (const auto& gd : kGroups) {
             paramCol = 0;
             // 输入框别拉满整行 —— 否则按钮被甩到最右边，看着和输入框没关系
             ImGui::SetNextItemWidth(std::min(std::max(L.actAreaW * 0.45f, 180.0f), 460.0f));
-            ImGui::InputText("##json", ui.rawJson, sizeof(ui.rawJson));
+            // 持锁再交给 InputText：HTTP 线程可能正在 rawJsonSnapshot() 拷这份缓冲。
+            // InputText 在锁内完成（纯内存操作，几十微秒，不会卡住谁）。
+            {
+                std::lock_guard<std::mutex> lock(ui.rawJsonMutex);
+                ImGui::InputText("##json", ui.rawJson, sizeof(ui.rawJson));
+            }
             ImGui::SameLine();
             if (ImGui::Button((label + "##b").c_str(), ImVec2(actW3, actH))) sendAction(a);
             actionTip(id);

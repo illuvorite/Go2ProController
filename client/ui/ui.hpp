@@ -43,10 +43,12 @@ enum class UiPage { Remote, Actions };
 /// 因此：
 ///   · 会被两端**同时读写**的标量 → 一律 `std::atomic`（原实现是裸 `bool/float/int`，
 ///     属于数据竞争；`std::map/std::set` 更是会在并发重哈希时崩溃）；
-///   · `robots` 由 `robotsMutex` 保护；`names`/`toggles`/`activeToggleIds` 各自有锁 +
-///     访问器，**不要**直接碰成员；
-///   · 只在界面线程用的东西（`eulerX`、`rawJson`、弹窗开关、改名缓冲、`lastMoveSend` 等）
-///     保持普通成员，不加锁 —— 别为了"整齐"把它们也变成 atomic，那只会让代码变难读。
+///   · `robots` 由 `robotsMutex` 保护（**读列表一律走 `robotsSnapshot()`**）；
+///     `names`/`toggles`/`activeToggleIds` 各自有锁 + 访问器，**不要**直接碰成员；
+///   · `rawJson` 由 `rawJsonMutex` 保护（读用 `rawJsonSnapshot()`）；
+///   · 只在界面线程用的东西（`eulerResetAt`、弹窗开关、改名缓冲、`lastMoveSend`、
+///     `joyLx/joyLy/joyRx` 等）保持普通成员，不加锁 —— 别为了"整齐"把它们也变成
+///     atomic，那只会让代码变难读。
 ///
 /// ⚠ 把 atomic 交给 ImGui 控件要当心：`ImGui::Checkbox(..., &ui.mcfMode)` 这种取址绑定
 ///   编译不过。正确写法是"取出副本 → 控件改副本 → 写回"，见 `ui.cpp` 的 `drawActionPageHeader`。
@@ -65,9 +67,14 @@ struct UiState {
     std::atomic<int>   gaitType{1};             // SwitchGait: 0 idle / 1 trot / 2 trot-run / 3 climb / 4 obstacle
     std::atomic<float> bodyHeight{0.28f};       // BodyHeight (m)
     std::atomic<float> footRaise{0.06f};        // FootRaiseHeight (m)
-    float eulerX = 0.0f;         // 姿态角 roll（仅界面线程）
-    float eulerY = 0.0f;         // pitch（仅界面线程）
-    float eulerZ = 0.0f;         // yaw（仅界面线程）
+    // ★ 这三个必须是 atomic（不是"仅界面线程"的裸 float）：
+    //   界面线程每帧被滑条写，而 command_service::packParam 会从 **HTTP 线程**读它们
+    //   （网页端下发 action 时同样要打包参数）。裸 float 的并发读写是数据竞争，
+    //   撕裂读出来的角度会**直接发给狗**，让它歪到一个莫名其妙的姿态。
+    //   注意：atomic 不能取地址，所以滑条要"取副本 → 控件改副本 → 写回"（见 ui_actions.cpp）。
+    std::atomic<float> eulerX{0.0f};    // 姿态角 roll
+    std::atomic<float> eulerY{0.0f};    // pitch
+    std::atomic<float> eulerZ{0.0f};    // yaw
     /// 内部：姿态角自动归零的到期时刻（ImGui::GetTime 秒，<0 = 没有待归零任务；仅界面线程）
     ///
     /// ★ 姿态角是**保持型**参数 —— 发出去就一直生效，不存在"发完即失效"。
@@ -75,7 +82,12 @@ struct UiState {
     ///   发送时挂上"现在 + cmd::kEulerHoldSeconds"，drawUi 每帧检查，到点由
     ///   cmd::resetEuler 下发一次全零（见 ui.cpp 顶部的挂钟、ui_actions.cpp 的发送分支）。
     double eulerResetAt = -1.0;
-    char rawJson[256] = "{}";    // 自定义 JSON 参数（仅界面线程）
+    /// 自定义 JSON 参数。ImGui 的 InputText 要求一个可写的 char 缓冲，所以是 char[] 而非 string。
+    /// ★ 同样会被 HTTP 线程读（网页端 action → packParam）→ **不要在锁外直接读这个数组**，
+    ///   一律走 rawJsonSnapshot()（它持 rawJsonMutex 拷一份出来）。
+    char rawJson[256] = "{}";
+    mutable std::mutex rawJsonMutex;
+    std::string rawJsonSnapshot() const;
     std::atomic<int> localKeyCount{0};  // 本地加载的 AES key 数量（data2=3 新固件用）
     char manualIp[256] = "192.168.2.";  // 手动添加输入框预填（支持逗号分隔多台）
 
@@ -227,6 +239,12 @@ struct UiState {
     // ---- 设备列表辅助（内部已加锁）----
     bool addOrUpdate(const std::string& ip, bool manual);  // 新增返回 true
     bool remove(const std::string& ip);
+    /// 设备列表的一致快照（内部持 robotsMutex 拷贝一份）。
+    ///
+    /// ★ **不要直接读 `robots` 成员**：扫描线程在 push_back（ui_state.cpp 的
+    ///   runScan），Web 端 add/remove 也在写，而界面线程每帧遍历它 ——
+    ///   边遍历边被 push_back 会迭代器失效，直接崩。读列表一律走这个快照。
+    std::vector<RobotEntry> robotsSnapshot();
     bool isSelected(const std::string& ip);
     void setSelected(const std::string& ip, bool sel);
     void updateStatus(const std::string& ip, float battery, const std::string& mode);

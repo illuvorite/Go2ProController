@@ -176,6 +176,10 @@ bool startWebUi(RobotManager& mgr, UiState& ui, int port) {
     const std::string dir = "assets/web";
     auto* svr = new httplib::Server();
     svr->set_base_dir(dir);  // 静态页面（index.html / app.js / vendor/...）
+    // ★ 请求体上限。httplib 的 vendored 默认是 100MB —— 绑到非回环后，
+    //   一个请求就能把内存吃满（随后还要 nlohmann::json::parse 整个 body，
+    //   而 parse 对超深嵌套没有保护）。这个接口的正常请求只有几百字节。
+    svr->set_payload_max_length(256 * 1024);
 
     // ---------------------------------------------------------------- 访问控制
     // ⚠ 这个服务**没有账号体系**：谁连上谁就能让机器狗动。所以：
@@ -226,6 +230,11 @@ bool startWebUi(RobotManager& mgr, UiState& ui, int port) {
                 out["ok"] = sendActionByKey(mgr, ui, in.value("key", ""));
             } else if (cmd == "select") {
                 const std::string mode = in.value("mode", "");
+                // ★ 改受控集合之前先抓一份"现在受控的是谁"：Go2 的速度是保持型的，
+                //   取消勾选/切单控只是改 bool 不会让狗停下，而 stopSelected 只遍历
+                //   **新的**集合 → 被移出去那台会一直走，且此后再也停不到它。
+                //   收尾逻辑在 cmd::stopDeselected（服务层唯一实现，见其注释）。
+                const std::vector<std::string> before = ui.selectedIps();
                 if (mode == "all") {
                     ui.selectAll();
                     ui.addLog("[WebUI] 群控：全选");
@@ -250,6 +259,13 @@ bool startWebUi(RobotManager& mgr, UiState& ui, int port) {
                 } else {
                     ui.selectOnly(in.value("ip", ""));
                     ui.addLog("[WebUI] 单控：" + in.value("ip", std::string()));
+                }
+                {
+                    // 收尾：被移出受控集合的设备逐台停车（否则它会保持最后的速度继续走）
+                    ManagerSink sink(mgr, ui);
+                    const int stopped = cmd::stopDeselected(sink, before);
+                    if (stopped > 0)
+                        ui.addLog("[WebUI] 移出受控的 " + std::to_string(stopped) + " 台已停车");
                 }
                 out["ok"] = true;
             } else if (cmd == "estop") {
@@ -299,8 +315,12 @@ bool startWebUi(RobotManager& mgr, UiState& ui, int port) {
                     const float vx = in.value("x", 0.0f);
                     const float vy = in.value("y", 0.0f);
                     const float vz = in.value("z", 0.0f);
-                    const int n = cmd::moveSelected(sink, ui, vx, vy, vz);
-                    ui.cmdVx = vx; ui.cmdVy = vy; ui.cmdVz = vz;
+                    // ★ 限幅在服务层做（clampMotion），不是只靠浏览器里的 motion.js ——
+                    //   换客户端 / 脚本调用 / 前端算错都不能让狗全速冲出去。
+                    cmd::Motion sent;
+                    const int n = cmd::moveSelectedClamped(sink, ui, vx, vy, vz, &sent);
+                    // 记**限幅后实际下发**的值：界面显示它，cmd::unestop 也用它判"是否回中"
+                    ui.cmdVx = sent.vx; ui.cmdVy = sent.vy; ui.cmdVz = sent.vz;
                     ui.movingSent = n > 0;
                     out["ok"] = true;
                 }
@@ -348,10 +368,15 @@ bool startWebUi(RobotManager& mgr, UiState& ui, int port) {
                 ui.addLog("[WebUI][急停] 强制阻尼 → " + std::to_string(n) + " 台");
                 out["ok"] = true;
             } else if (cmd == "unestop") {
-                ui.estop = false;
-                ui.movingSent = false;
-                ui.addLog("[WebUI][急停] 已解除，可以继续遥控");
-                out["ok"] = true;
+                // 回中闸门在**服务层**（cmd::unestop），不只在浏览器里 ——
+                // 前端那个 :disabled="!store.stickIdle" 只是提示，不是防线。
+                if (cmd::unestop(ui)) {
+                    ui.addLog("[WebUI][急停] 已解除，可以继续遥控");
+                    out["ok"] = true;
+                } else {
+                    out["ok"] = false;
+                    out["error"] = "摇杆未回中，请先松开摇杆再解除急停";
+                }
             } else if (cmd == "remove") {
                 out["ok"] = ui.remove(in.value("ip", ""));
             } else if (cmd == "keyprobe") {

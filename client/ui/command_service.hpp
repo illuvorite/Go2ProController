@@ -95,8 +95,57 @@ int forEachSelected(CommandSink& sink,
 ///   （停车 `stopSelected` 不受此限 —— 它本身就是安全方向。）
 int moveSelected(CommandSink& sink, const UiState& ui, float x, float y, float z);
 
+/// 一次摇杆输入经**服务层限幅**后、实际该下发的速度。
+struct Motion {
+    float vx = 0.0f, vy = 0.0f, vz = 0.0f;
+};
+
+/// 网页端摇杆输入的限幅（纯函数，好测）。
+///
+/// 桌面端不需要这一步 —— 摇杆值经 `core/motion.hpp` 的 planMotion 归一化后天然落在
+/// `maxLinSpeed` / `yawRate` 之内。网页端原本把浏览器给的 x/y/z 原样转发，
+/// 限幅只存在于 `assets/web/motion.js`（浏览器里）：换个客户端、写个脚本、或前端算错
+/// 一次，就能让狗以任意速度冲出去。**安全边界必须在服务端，不能只靠前端自觉。**
+/// 规则：平移按 `hypot(vx,vy)` 合成限幅（斜推也不超），转向单独限幅，
+/// 两者都再夹一层硬上限；非有限值（NaN / Inf）一律按 0 处理。
+Motion clampMotion(const UiState& ui, float x, float y, float z);
+
+/// 网页端摇杆入口：`clampMotion` 限幅后下发，返回成功台数。
+/// @param sent 出参：实际下发的值。**调用方负责**把它回填 `ui.cmdVx/Vy/Vz` ——
+///              界面显示与 `cmd::unestop` 的"是否回中"判据都必须用**限幅后**的真值。
+///              本函数不改 UiState。
+int moveSelectedClamped(CommandSink& sink, const UiState& ui, float x, float y, float z,
+                        Motion* sent = nullptr);
+
 /// 松手 / 急停停车：对受控设备发 StopMove（任何状态下都允许）
 int stopSelected(CommandSink& sink);
+
+/// 受控集合变更后的**收尾**：把"刚刚被移出集合"的设备停掉，返回成功台数。
+/// @param before 变更**之前**的受控集合（调用方在改 `selected` 之前抓一份
+///                `ui.selectedIps()` 下来）
+///
+/// ★ 为什么必须有这一步：Go2 的速度是**保持型**的 —— 唯一的清除手段就是 StopMove。
+///   改造前取消勾选 / 切单控只是改了个 bool，没有任何收尾，于是：
+///     · 取消勾选一台正在行走的狗 → 它继续走；
+///     · 而 `stopSelected` 只遍历**新的**受控集合，从此再也停不到它
+///       （唯一补救是按急停全量停车，那不该是"取消勾选"的代价）。
+///   仍在新集合里的设备不动（它们归 `stopSelected` 管）。
+int stopDeselected(CommandSink& sink, const std::vector<std::string>& before);
+
+/// 解除急停锁定。**摇杆未回中时拒绝**（返回 false，锁保持不动）。
+///
+/// 桌面端的"解除急停"按钮本来就要求双杆回中（`ui_remote.cpp` 的 centered 闸门），
+/// 但网页端那个检查只活在浏览器里 —— 安全闸门不能只放在前端：换个客户端、开第二个
+/// 标签页、或一次脚本调用，都能在摇杆还推着的时候把锁解开，紧接着摇杆带的 10Hz
+/// 循环立刻以旧值全力输出。
+///
+/// 判据（两条都过才解锁）：
+///   1. `extraCentered` —— 调用方额外知道的"摇杆是否回中"。桌面端每帧都在算真实的双杆
+///      状态，传进来；网页端没有摇杆概念，用默认值。
+///   2. 最近一次下发的速度 `ui.cmdVx/Vy/Vz` 是否为零。网页端靠它：急停锁定期间 `move`
+///      会被服务层挡下、`cmdV*` 停在急停前的值上，所以"锁着但杆还推着"必然被抓到。
+/// 成功时顺带把 `cmdVx/Vy/Vz` 与 `movingSent` 清零。
+bool unestop(UiState& ui, bool extraCentered = true);
 
 /// 快捷方向：fwd / back / left / right（步速取 `ui.speedScale`）。
 /// 未知方向返回 -1，其余返回成功台数；同样受急停锁定约束。

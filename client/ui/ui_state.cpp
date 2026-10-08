@@ -56,6 +56,18 @@ bool UiState::remove(const std::string& ip) {
     return false;
 }
 
+std::vector<RobotEntry> UiState::robotsSnapshot() {
+    std::lock_guard<std::mutex> lock(robotsMutex);
+    return robots;
+}
+
+std::string UiState::rawJsonSnapshot() const {
+    // 持锁拷一份出来。裸读这个 char[] 的话，界面线程正在 InputText 里改它，
+    // 拷出来的可能是半截字符串 —— 好在下游 parse 有 try/catch，但不该靠那个兜。
+    std::lock_guard<std::mutex> lock(rawJsonMutex);
+    return std::string(rawJson);
+}
+
 bool UiState::isSelected(const std::string& ip) {
     std::lock_guard<std::mutex> lock(robotsMutex);
     for (auto& r : robots)

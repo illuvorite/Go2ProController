@@ -4,7 +4,9 @@
 #include "robot_manager.hpp"
 #include "ui.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <thread>
 
 namespace go2 {
@@ -48,6 +50,13 @@ int ManagerSink::disablePersistent(const std::string& ip, const std::vector<int>
 
 namespace cmd {
 
+namespace {
+/// 服务层限幅的**硬上限**（与界面滑条的范围一致）。
+/// 即便有人把 maxLinSpeed / yawRate 配成了离谱的值，下发出去也不会超过这两个数。
+constexpr float kHardMaxLin = 1.5f;  // m/s
+constexpr float kHardMaxYaw = 2.0f;  // rad/s
+}  // namespace
+
 int resolveApiId(const UiState& ui, const SportAction& a, bool* fellBack) {
     const bool mcf = ui.mcfMode.load();
     int id = apiIdFor(a, mcf);
@@ -74,8 +83,10 @@ nlohmann::json packParam(const UiState& ui, const SportAction& a, bool flagValue
     float realVal = ui.bodyHeight.load();
     if (key == "FootRaiseHeight") realVal = ui.footRaise.load();
     const int intVal = (key == "SwitchGait") ? ui.gaitType.load() : ui.speedLevel.load();
-    return buildSportParam(a, intVal, realVal, ui.eulerX, ui.eulerY, ui.eulerZ,
-                           std::string(ui.rawJson));
+    // euler* 是 atomic（界面线程每帧写，这里可能是 HTTP 线程在读）、rawJson 走锁取快照 ——
+    // 直接裸读就是数据竞争，读出来的角度会原样发给狗。
+    return buildSportParam(a, intVal, realVal, ui.eulerX.load(), ui.eulerY.load(),
+                           ui.eulerZ.load(), ui.rawJsonSnapshot());
 }
 
 int forEachSelected(CommandSink& sink, const std::function<bool(const std::string&)>& fn) {
@@ -97,8 +108,61 @@ int moveSelected(CommandSink& sink, const UiState& ui, float x, float y, float z
     });
 }
 
+Motion clampMotion(const UiState& ui, float x, float y, float z) {
+    // 限幅值 = min(界面上的设置, 硬上限)。设置本身异常（非有限 / <=0）时直接用硬上限 ——
+    // 否则 std::clamp 的 lo > hi 是 UB，限幅反而成了崩溃源。
+    const float rawLin = ui.maxLinSpeed.load();
+    const float rawYaw = ui.yawRate.load();
+    const float lin =
+        (std::isfinite(rawLin) && rawLin > 0.0f) ? std::min(rawLin, kHardMaxLin) : kHardMaxLin;
+    const float yaw =
+        (std::isfinite(rawYaw) && rawYaw > 0.0f) ? std::min(rawYaw, kHardMaxYaw) : kHardMaxYaw;
+    Motion m;
+    m.vx = std::isfinite(x) ? x : 0.0f;
+    m.vy = std::isfinite(y) ? y : 0.0f;
+    const float mag = std::hypot(m.vx, m.vy);
+    if (mag > lin && mag > 0.0f) {  // 斜推时按比例缩回，保持方向
+        m.vx *= lin / mag;
+        m.vy *= lin / mag;
+    }
+    m.vz = std::clamp(std::isfinite(z) ? z : 0.0f, -yaw, yaw);
+    return m;
+}
+
+int moveSelectedClamped(CommandSink& sink, const UiState& ui, float x, float y, float z,
+                        Motion* sent) {
+    const Motion m = clampMotion(ui, x, y, z);
+    if (sent) *sent = m;
+    return moveSelected(sink, ui, m.vx, m.vy, m.vz);
+}
+
 int stopSelected(CommandSink& sink) {
     return forEachSelected(sink, [&](const std::string& ip) { return sink.stopMove(ip); });
+}
+
+int stopDeselected(CommandSink& sink, const std::vector<std::string>& before) {
+    const std::vector<std::string> after = sink.selectedReadyIps();
+    int n = 0;
+    for (const auto& ip : before) {
+        // 还在新的受控集合里 → 不归这里管（由 stopSelected 统一处理）
+        if (std::find(after.begin(), after.end(), ip) != after.end()) continue;
+        if (sink.stopMove(ip)) ++n;
+    }
+    return n;
+}
+
+bool unestop(UiState& ui, bool extraCentered) {
+    if (!extraCentered) return false;
+    // 判据 2：最近一次下发的速度仍非零 = 摇杆还推着 → 拒绝解锁
+    if (std::fabs(ui.cmdVx.load()) > 1e-3f || std::fabs(ui.cmdVy.load()) > 1e-3f ||
+        std::fabs(ui.cmdVz.load()) > 1e-3f)
+        return false;
+    ui.estop = false;
+    ui.movingSent = false;
+    ui.cmdVx = 0.0f;
+    ui.cmdVy = 0.0f;
+    ui.cmdVz = 0.0f;
+    return true;
 }
 
 int quickMove(CommandSink& sink, const UiState& ui, const std::string& dir) {

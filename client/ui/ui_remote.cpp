@@ -99,9 +99,12 @@ if (ui.estop) {
     ImGui::BeginDisabled(!centered);
     if (bigButton(compactLabel ? "解除急停" : "解除急停（需双杆回中）",
                   ImVec2(-1, L.btnH > 0.0f ? L.btnH + 18.0f : 34.0f))) {
-        ui.estop = false;
-        ui.movingSent = false;
-        ui.addLog("[急停] 已解除，可以继续遥控");
+        // 语义在 cmd::unestop（与网页端同一份）：centered 是界面每帧算的真实双杆状态，
+        // 服务层还会再查一次"最近一次下发的速度是否为零"。
+        if (cmd::unestop(ui, centered))
+            ui.addLog("[急停] 已解除，可以继续遥控");
+        else
+            ui.addLog("[急停] 摇杆未回中，拒绝解除");
     }
     ImGui::EndDisabled();
     if (!centered)

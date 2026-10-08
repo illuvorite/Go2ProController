@@ -94,8 +94,10 @@ std::string maskIps(const std::string& text, bool on);
 // 顶栏、设备弹窗、摇杆带都用这几个；放在这里免得各写一份。
 void ensureNamesLoaded(UiState& ui);
 void selectGroupAll(UiState& ui);
-void selectOne(UiState& ui, const std::string& ip);
-void clearSelection(UiState& ui);
+/// 单控 / 取消单控：会**缩小**受控集合，所以要拿 mgr 走 cmd::stopDeselected
+/// 把被移出去、可能正在走的那台停掉（见 command_service.hpp 的说明）。
+void selectOne(RobotManager& mgr, UiState& ui, const std::string& ip);
+void clearSelection(RobotManager& mgr, UiState& ui);
 
 // ---------------------------------------------------------------- 动作 → 图标
 /// 动作 → Phosphor 字形。动作库瓷砖与底部快捷栏**共用同一份表**（见 ui_actions.cpp）。

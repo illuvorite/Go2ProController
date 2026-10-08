@@ -38,7 +38,10 @@ export async function send(body) {
     headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   })
-  const j = await r.json()
-  if (j.ok === false) throw new Error(j.error || '指令失败')
+  // 错误响应未必是 JSON（服务没起来时是浏览器的 HTML 错误页、反代返回 502 …）。
+  // 直接 r.json() 会抛一个看不懂的 SyntaxError，用户只看到"Unexpected token '<'"。
+  const j = await r.json().catch(() => null)
+  if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status))
+  if (j && j.ok === false) throw new Error(j.error || '指令失败')
   return j
 }

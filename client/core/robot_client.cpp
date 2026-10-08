@@ -565,6 +565,18 @@ void RobotClient::disconnect() {
         try { stopMove(); } catch (...) {}
     }
 
+    // ★ 作废所有"待重试的运动指令"。
+    //   retryQueue_ 存的是"刚就绪被拒、稍后自动重发"的指令（可能是 Move）。
+    //   断开**不**清它的话：用户在"被拒→排队"这个窗口里断开再重连，新连接一就绪
+    //   monitor 就会把上一条会话排队的旧速度指令原样补发给狗 —— 人已经不在操作了，
+    //   狗却自己起步。这是本文件最直接的失控路径。
+    //   pendingCmds_ 同理：那是"最近下发的运动指令"，只服务于本次会话的重试判断。
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex_);
+        retryQueue_.clear();
+        pendingCmds_.clear();
+    }
+
     running_.store(false);
     monitorStop_.store(true);
     if (monitorThread_.joinable()) monitorThread_.join();
@@ -590,6 +602,27 @@ void RobotClient::disconnect() {
 // ------------------------------------------------------------------ 消息
 
 void RobotClient::handleMessage(const std::string& text) {
+    // ★ 整个处理过程必须被兜住，一个都不能漏。
+    //
+    //   这个函数跑在 libdatachannel 的**网络回调线程**上：任何逃出这里的异常都会
+    //   一路穿到库线程的顶层 → std::terminate() → 整个遥控端当场崩掉（连带所有
+    //   已连上的机器狗失去控制）。
+    //
+    //   消息内容来自网络，所以"格式一定对"这个前提不成立。原来只有 `parse` 被
+    //   try 包住，而紧随其后的 `msg.value("type","")` 同样是会抛的 ——
+    //   nlohmann 的 value() 在"key 存在但类型不符"时抛 type_error.302。
+    //   狗固件回一个 {"type": 123} 就能让整个应用崩掉。
+    //   （core/protocol.cpp 里已经为同类问题专门写过 safeStr，这里是同一类漏网。）
+    try {
+        handleMessageImpl(text);
+    } catch (const std::exception& e) {
+        log(std::string("[收] 处理异常（已忽略，不会影响其它设备）: ") + e.what());
+    } catch (...) {
+        log("[收] 处理异常（已忽略，不会影响其它设备）");
+    }
+}
+
+void RobotClient::handleMessageImpl(const std::string& text) {
     nlohmann::json msg;
     try {
         msg = nlohmann::json::parse(text);

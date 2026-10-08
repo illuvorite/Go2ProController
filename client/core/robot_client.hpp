@@ -153,6 +153,9 @@ private:
     void setState(ConnState s, const std::string& note = {});
     void log(const std::string& msg);
     void handleMessage(const std::string& text);
+    /// handleMessage 的真正实现。单独拆出来是为了让**整个**处理过程落在一个
+    /// 异常边界内（见 robot_client.cpp 里 handleMessage 的注释）。
+    void handleMessageImpl(const std::string& text);
     void handleValidation(const nlohmann::json& msg);
     void startMonitor();
     void stopMonitor();

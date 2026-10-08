@@ -50,6 +50,17 @@ export default {
       }
     }
 
+    // ★ 归零并停车。摇杆值是非零时，那个 10Hz 循环会一直把速度往下发 ——
+    //   手指离开窗口、被别的应用抢走焦点、页面被切到后台，都可能收不到 pointerup。
+    //   走一遍这里就一定收得住。stickIdle 也一起复位。
+    function releaseAll() {
+      stopTimer()
+      lx.value = 0; ly.value = 0; rx.value = 0
+      store.stickIdle = true
+      if (movingSent) { post({ cmd: 'move', stop: true }); movingSent = false }
+      store.st.cmd = { vx: 0, vy: 0, vz: 0 }
+    }
+
     function onChange(which, v) {
       if (which === 'L') { lx.value = v.x; ly.value = v.y } else { rx.value = v.x }
       const idle = lx.value === 0 && ly.value === 0 && rx.value === 0
@@ -57,8 +68,22 @@ export default {
       if (idle) { tick(); return }
       if (!timer) { tick(); timer = setInterval(tick, 100) }  // 10Hz 持续下发
     }
-    // 弹窗打开 / 组件卸载：数值清零并停车（别让"看着弹窗、手指还在推"继续下发）
-    onUnmounted(() => { stopTimer(); if (movingSent) post({ cmd: 'move', stop: true }) })
+
+    // 失焦 / 切后台 / 页面被隐藏 / 指针捕获丢失：统统归零停车。
+    // pointercancel 已经覆盖了浏览器主动取消的场合，但 alt-tab、通知栏下拉、
+    // 锁屏这类系统级打断不保证有 pointercancel，所以再兜一层。
+    const onBlur = () => releaseAll()
+    const onVisibility = () => { if (document.hidden) releaseAll() }
+    onMounted(() => {
+      window.addEventListener('blur', onBlur)
+      window.addEventListener('pagehide', onBlur)
+      document.addEventListener('visibilitychange', onVisibility)
+    })
+    // 弹窗打开 / 切到动作库页 / 组件卸载：整条摇杆带被撤掉（见 app.js 的 showBand），
+    // 数值必须清零并停车 —— 别让"眼睛看弹窗、手指还在推"继续下发。
+    // ★ stickIdle 也必须复位：否则推着摇杆点开设备弹窗，急停后就再也解不开
+    //   （按钮 :disabled="!store.stickIdle"，而 onChange 再也不会触发）。
+    onUnmounted(() => releaseAll())
 
     // 勾选式受控：点一台勾一台（可多选），勾选集合 = 精确发给后端的 ips。
     // ★ 勾上 = 真的能控：还没连上的顺手发起连接（不然勾了也没反应，看着像无效）

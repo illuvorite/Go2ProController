@@ -242,7 +242,16 @@ void drawJoysticks(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
                             dl->AddCircle(cc, 8.0f, ImGui::GetColorU32(ImVec4(1, 1, 1, 0.40f)));
                         }
                         dl->PopClipRect();
-                        if (hit) ui.setSelected(e.ip, !sel);  // 勾一台 / 取消一台（可多选）
+                        if (hit) {  // 勾一台 / 取消一台（可多选）
+                            // ★ 取消勾选必须先停车：速度是保持型的，而 stopSelected
+                            //   只遍历**新的**集合 —— 不收尾的话这台会一直走、
+                            //   且此后谁都停不到它（收尾见 cmd::stopDeselected）。
+                            const std::vector<std::string> before = ui.selectedIps();
+                            ui.setSelected(e.ip, !sel);
+                            ManagerSink sink(mgr, ui);
+                            if (cmd::stopDeselected(sink, before) > 0)
+                                ui.addLog("[受控] 取消勾选的那台已停车");
+                        }
                         ImGui::PopID();
                         ImGui::SameLine(0.0f, 6.0f);
                     }
@@ -318,7 +327,7 @@ void drawJoysticks(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
                             const std::string label =
                                 (nm.empty() ? e.ip : nm) + std::string("    ") + stateText(st);
                             if (ImGui::Selectable(label.c_str(), ui.isSelected(e.ip))) {
-                                selectOne(ui, e.ip);
+                                selectOne(mgr, ui, e.ip);
                                 ImGui::CloseCurrentPopup();
                             }
                             if (!nm.empty()) helpTip((e.ip + "（已起名，这里只显示名字）").c_str());
@@ -331,7 +340,7 @@ void drawJoysticks(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
                             (ic ? std::string(icon::HandPalm) + "    " : std::string()) +
                             "取消单控（不控制任何设备）";
                         if (ImGui::Selectable(cancelLabel.c_str())) {
-                            clearSelection(ui);
+                            clearSelection(mgr, ui);
                             ImGui::CloseCurrentPopup();
                         }
                         helpTip("取消后摇杆 / 动作 / 快捷都不再发给任何设备；\n"

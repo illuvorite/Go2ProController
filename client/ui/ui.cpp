@@ -479,17 +479,29 @@ void selectGroupAll(UiState& ui) {
 }
 
 /// 单控：只控制这一台（其余全部取消勾选）
-void selectOne(UiState& ui, const std::string& ip) {
+void selectOne(RobotManager& mgr, UiState& ui, const std::string& ip) {
     const std::string nm = ui.nameOf(ip);
+    // ★ 先记下"现在受控的是谁"：Go2 的速度是保持型的，光改 selected 不会让狗停下，
+    //   而 stopSelected 只遍历**新的**集合 → 被移出去那台会一直走、且再也停不到。
+    const std::vector<std::string> before = ui.selectedIps();
     ui.selectOnly(ip);
+    ManagerSink sink(mgr, ui);
+    const int stopped = cmd::stopDeselected(sink, before);
     ui.addLog("[单控] 只控制 " + ip + (nm.empty() ? "" : "（" + nm + "）"));
+    if (stopped > 0)
+        ui.addLog("[单控] 移出受控的 " + std::to_string(stopped) + " 台已停车");
 }
 
 /// 取消单控：谁都不控制（摇杆 / 动作 / 快捷都不再发给任何设备）
-void clearSelection(UiState& ui) {
+void clearSelection(RobotManager& mgr, UiState& ui) {
     if (ui.selectedCount() == 0) return;
+    const std::vector<std::string> before = ui.selectedIps();
     ui.selectOnly("");  // 没有哪台的 ip 是空串 → 等于全部取消勾选
+    ManagerSink sink(mgr, ui);
+    const int stopped = cmd::stopDeselected(sink, before);
     ui.addLog("[单控] 已取消：当前不控制任何设备（再点「单控」挑一台即可恢复）");
+    if (stopped > 0)
+        ui.addLog("[单控] 移出受控的 " + std::to_string(stopped) + " 台已停车");
 }
 }  // namespace uix
 

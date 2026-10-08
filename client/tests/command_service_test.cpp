@@ -17,8 +17,10 @@
 #include "ui.hpp"
 
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <string>
+#include <vector>
 
 using namespace go2;
 using go2test::FakeSink;
@@ -219,6 +221,128 @@ int main() {
                   "急停锁定后不得下发运动指令");
         CHECK_MSG(cmd::resetEuler(sink, ui) == 1, "归零是安全方向，锁定时仍要能发");
         CHECK(ui.eulerX == 0.0f);
+    }
+
+    // ---------------------------------------------------------------- 受控集合收尾
+    // 取消勾选 / 切单控时，被移出集合的那台必须停车 ——
+    // 速度是保持型的，而 stopSelected 只遍历**新的**集合，不收尾就再也停不到它。
+    {
+        UiState ui;
+        FakeSink sink;
+        sink.ready = {"10.0.0.1", "10.0.0.2", "10.0.0.3"};
+        sink.selected = {"10.0.0.1", "10.0.0.2"};
+
+        // 从两台改成一台：只有被移出去的那台该收停车
+        const std::vector<std::string> before = {"10.0.0.1", "10.0.0.2"};
+        sink.selected = {"10.0.0.1"};
+        CHECK(cmd::stopDeselected(sink, before) == 1);
+        {
+            std::lock_guard<std::mutex> lock(sink.mtx);
+            CHECK_MSG(sink.stopped.size() == 1 && sink.stopped[0] == "10.0.0.2",
+                      "只应停被移出受控集合的那台，仍在集合里的不动");
+        }
+
+        // 全部取消：两台都要停
+        sink.reset();
+        sink.selected = {};
+        CHECK(cmd::stopDeselected(sink, {"10.0.0.1", "10.0.0.2", "10.0.0.9"}) == 2);
+        CHECK_MSG(sink.countTo("10.0.0.9") == 0, "未就绪的设备不产生下发，也不该计入");
+
+        // 集合没变 → 什么都不做（不能顺手把还在受控的狗停掉）
+        sink.reset();
+        sink.selected = {"10.0.0.1"};
+        CHECK(cmd::stopDeselected(sink, {"10.0.0.1"}) == 0);
+        CHECK(sink.stoppedCount() == 0);
+    }
+
+    // ---------------------------------------------------------------- 解除急停的回中闸门
+    // 桌面端按钮要求双杆回中；网页端那个检查原本只在浏览器里 → 换客户端就能
+    // 在摇杆还推着的时候解锁。判据必须落在服务层。
+    {
+        UiState ui;
+        FakeSink sink;
+        sink.ready = {"10.0.0.1"};
+        sink.selected = {"10.0.0.1"};
+        cmd::estop(borrow(sink), ui, /*asyncClose=*/false);
+
+        // 杆还推着（最近一次下发的速度非零）→ 拒绝
+        ui.cmdVx = 0.6f;
+        CHECK_MSG(!cmd::unestop(ui), "摇杆未回中时必须拒绝解除急停");
+        CHECK_MSG(ui.estop.load(), "被拒绝时锁必须保持不动");
+
+        // 调用方明确说"没回中"（桌面端的 centered 闸门）→ 也拒绝
+        ui.cmdVx = 0.0f;
+        CHECK_MSG(!cmd::unestop(ui, /*extraCentered=*/false), "调用方判定未回中时必须拒绝");
+
+        // 回中了 → 放行，并顺手清干净速度状态
+        ui.cmdVx = 0.0f; ui.cmdVy = 0.0f; ui.cmdVz = 0.0f;
+        ui.movingSent = true;
+        CHECK(cmd::unestop(ui, /*extraCentered=*/true));
+        CHECK(!ui.estop.load());
+        CHECK(!ui.movingSent.load());
+        CHECK(near(ui.cmdVx.load(), 0.0) && near(ui.cmdVz.load(), 0.0));
+    }
+
+    // ---------------------------------------------------------------- 网页端摇杆的服务层限幅
+    // 限幅原本只存在于浏览器里的 motion.js：换个客户端 / 写个脚本 / 前端算错一次，
+    // 就能让狗以任意速度冲出去。安全边界必须在服务端。
+    {
+        UiState ui;
+        FakeSink sink;
+        sink.ready = {"10.0.0.1"};
+        sink.selected = {"10.0.0.1"};
+        ui.maxLinSpeed = 0.6f;
+        ui.yawRate = 1.2f;
+
+        // 超出线速度上限 → 夹回上限
+        cmd::Motion sent;
+        CHECK(cmd::moveSelectedClamped(sink, ui, 5.0f, 0.0f, 0.0f, &sent) == 1);
+        CHECK_MSG(near(sent.vx, 0.6), "超速的摇杆输入必须被夹到 maxLinSpeed");
+        CHECK(near(lastParam(sink)["x"].get<double>(), 0.6));
+        CHECK_MSG(near(sent.vx, lastParam(sink)["x"].get<double>()),
+                  "sent 必须是真正发出去的值：调用方要拿它回填 cmdV*（界面显示与 "
+                  "cmd::unestop 的回中判据都靠那个）；服务层只负责限幅，不改 UiState");
+
+        // 斜推：合成幅值受限，方向不变
+        {
+            const cmd::Motion d = cmd::clampMotion(ui, 3.0f, 3.0f, 0.0f);
+            CHECK_MSG(near(std::hypot(d.vx, d.vy), 0.6), "斜推的合成幅值也必须受限");
+            CHECK(d.vx > 0.0f && d.vy > 0.0f);
+        }
+
+        // 转向单独限幅
+        {
+            const cmd::Motion d = cmd::clampMotion(ui, 0.0f, 0.0f, 9.0f);
+            CHECK_MSG(near(d.vz, 1.2), "转向角速度必须夹到 yawRate");
+            const cmd::Motion n = cmd::clampMotion(ui, 0.0f, 0.0f, -9.0f);
+            CHECK(near(n.vz, -1.2));
+        }
+
+        // 硬上限：即使用户把限幅值配成离谱的大，也不得超过 1.5 / 2.0
+        {
+            ui.maxLinSpeed = 100.0f;
+            ui.yawRate = 100.0f;
+            const cmd::Motion d = cmd::clampMotion(ui, 50.0f, 0.0f, 50.0f);
+            CHECK_MSG(near(d.vx, 1.5) && near(d.vz, 2.0), "必须还有一层与界面滑条一致的硬上限");
+        }
+
+        // 限幅值本身被配坏（非有限 / <=0）→ 退回硬上限，而不是让 clamp 的 lo>hi 变 UB
+        {
+            ui.maxLinSpeed = 0.0f;
+            ui.yawRate = std::numeric_limits<float>::quiet_NaN();
+            const cmd::Motion d = cmd::clampMotion(ui, 9.0f, 0.0f, 9.0f);
+            CHECK_MSG(near(d.vx, 1.5) && near(d.vz, 2.0), "限幅值异常时退回硬上限");
+        }
+
+        // 非有限输入一律当 0（JSON 里塞得进来的极端数字）
+        {
+            ui.maxLinSpeed = 0.6f;
+            ui.yawRate = 1.2f;
+            const float inf = std::numeric_limits<float>::infinity();
+            const cmd::Motion d = cmd::clampMotion(ui, inf, -inf, inf);
+            CHECK_MSG(near(d.vx, 0.0) && near(d.vy, 0.0) && near(d.vz, 0.0),
+                      "NaN/Inf 输入不得变成 NaN 发给狗");
+        }
     }
 
     return go2test::summary("command_service_test");

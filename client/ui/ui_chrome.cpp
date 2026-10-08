@@ -55,7 +55,10 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     const float sp = ImGui::GetStyle().ItemSpacing.x;
     const ImVec4 accent(col::kAccent.x, col::kAccent.y, col::kAccent.z, 0.80f);
     const int sel = ui.selectedCount();
-    const int total = static_cast<int>(ui.robots.size());
+    // ★ 走快照而不是直接读 ui.robots：扫描线程/Web 端正在 push_back 与 erase，
+    //   顶栏每帧遍历它 —— 边遍历边被改就是迭代器失效（ui.hpp 的线程契约）。
+    const std::vector<RobotEntry> robots = ui.robotsSnapshot();
+    const int total = static_cast<int>(robots.size());
 
     // 按钮文案带图标（Phosphor 字形，见 ui/icons.hpp）。
     // 图标字体没加载成功时退回纯文字 —— 免得按钮上出现一片"缺字方块"。
@@ -108,7 +111,7 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     // 电量胶囊：取**受控设备里最低**的那台 —— 最需要关注的那台
     const auto batteryChip = [&]() -> bool {
         float low = -1.0f;
-        for (const auto& e : ui.robots) {
+        for (const auto& e : robots) {
             if (!e.selected || e.battery < 0.0f) continue;
             if (low < 0.0f || e.battery < low) low = e.battery;
         }

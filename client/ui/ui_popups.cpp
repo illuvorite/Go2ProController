@@ -59,7 +59,16 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
         {
             // ---- 第一行：勾选 · 状态灯 · 名称 · 状态胶囊 · 操作 ----
             bool sel = ui.isSelected(e.ip);
-            if (ImGui::Checkbox("##sel", &sel)) ui.setSelected(e.ip, sel);
+            if (ImGui::Checkbox("##sel", &sel)) {
+                // ★ 取消勾选一台正在行走的狗 → 它会保持最后的速度继续走，而且
+                //   stopSelected 只遍历**新的**集合，从此再也停不到它。
+                //   所以改集合之前先记一份，收尾交给 cmd::stopDeselected。
+                const std::vector<std::string> before = ui.selectedIps();
+                ui.setSelected(e.ip, sel);
+                ManagerSink sink(mgr, ui);
+                if (cmd::stopDeselected(sink, before) > 0)
+                    ui.addLog("[受控] 取消勾选的那台已停车");
+            }
             ImGui::SameLine(0, 4);
             statusDot(stc);
             ImGui::SameLine(0, 2);
@@ -121,9 +130,8 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
                         "存在 robot_names.json（应用目录），下次启动还在。");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("单控")) {
-                    const std::string nm = ui.nameOf(e.ip);
-                    ui.selectOnly(e.ip);
-                    ui.addLog("[单控] 只控制 " + e.ip + (nm.empty() ? "" : "（" + nm + "）"));
+                    // 与摇杆带里的"单控"同一份语义（含"被移出受控的设备要停车"）
+                    selectOne(mgr, ui, e.ip);
                 }
                 helpTip("只让这一台接收指令（其余设备自动取消勾选）");
                 ImGui::SameLine(0, 14);
