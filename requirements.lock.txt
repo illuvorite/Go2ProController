@@ -81,7 +81,11 @@ termcolor==3.3.0
 tomli==2.4.1
 typing_extensions==4.16.0
 tzdata==2026.4
-unitree_sdk2py @ file:///tmp/sdk2py
+# unitree_sdk2py 原本被 pip freeze 记成了 `unitree_sdk2py @ file:///tmp/sdk2py` ——
+# 那是本机 /tmp 下的临时 sdist，**任何别的机器都装不了**，会让上面那句"一条命令装出
+# 同版本环境"直接失败。它也不是 requirements.txt 里的直接依赖（宇树官方 SDK2 的
+# Python 绑定，没有公开发行到 PyPI），所以这里从锁定清单里去掉。
+# 需要它的人：自行从宇树官方渠道拿到 SDK2 后单独安装，不要写进本文件。
 urllib3==2.8.0
 wasmtime==49.0.0
 wcwidth==0.8.4

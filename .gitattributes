@@ -1,0 +1,36 @@
+# 换行符策略：一次性把噪音钉死。
+#
+# 为什么需要它（真实发生过）：仓库没有这个文件，而本机 git 配了 core.autocrlf=true，
+# 于是 `git status` 长期把 client/apps/android/gradlew.bat 报成"已修改"，
+# `git diff` 却是空的 —— 纯粹是 LF/CRLF 差异。每次提交都白背一个假 diff，
+# 久了就没人看 `git status` 了，真正改了什么反而被淹没。
+
+# 默认：入库统一存 LF，工作区也是 LF
+* text=auto eol=lf
+
+# Windows 批处理必须是 CRLF —— cmd.exe 对 LF 脚本的处理不可靠
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# PowerShell 脚本按 CRLF 入库（Windows 上最常见、最不容易出灵异问题）
+*.ps1 text eol=crlf
+
+# 明确标成二进制：绝不做换行符/文本转换
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.apk   binary
+*.a     binary
+*.so    binary
+*.o     binary
+*.obj   binary
+*.dll   binary
+*.dylib binary
+*.lib   binary
+*.pdb   binary

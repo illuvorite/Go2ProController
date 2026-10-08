@@ -55,10 +55,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "GO2_SANITIZE": "address",
-        "FETCHCONTENT_SOURCE_DIR_CPPHTTPLIB": "${sourceDir}/build/_deps/cpphttplib-src",
-        "FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON": "${sourceDir}/build/_deps/nlohmann_json-src",
-        "FETCHCONTENT_SOURCE_DIR_IMGUI": "${sourceDir}/build/_deps/imgui-src",
-        "FETCHCONTENT_SOURCE_DIR_LIBDATACHANNEL": "${sourceDir}/build/_deps/libdatachannel-src"
+        "FETCHCONTENT_BASE_DIR": "${sourceDir}/build/_deps"
       }
     },
     {
@@ -69,10 +66,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "GO2_SANITIZE": "thread",
-        "FETCHCONTENT_SOURCE_DIR_CPPHTTPLIB": "${sourceDir}/build/_deps/cpphttplib-src",
-        "FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON": "${sourceDir}/build/_deps/nlohmann_json-src",
-        "FETCHCONTENT_SOURCE_DIR_IMGUI": "${sourceDir}/build/_deps/imgui-src",
-        "FETCHCONTENT_SOURCE_DIR_LIBDATACHANNEL": "${sourceDir}/build/_deps/libdatachannel-src"
+        "FETCHCONTENT_BASE_DIR": "${sourceDir}/build/_deps"
       }
     }
   ],

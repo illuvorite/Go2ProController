@@ -12,12 +12,16 @@
 # NOTE: keep this file ASCII-only - Windows PowerShell 5.1 reads .ps1 as ANSI(GBK)
 #       when there is no BOM, and Chinese text then eats the following quote char.
 #
+# NOTE: paths are derived from $PSScriptRoot on purpose. They used to be hardcoded
+#       to one developer's checkout ("d:\code\project\Go2ProController\..."), which
+#       broke the moment anyone else cloned the repo.
+#
 # Log: _deps_arm64.log  (steps [1/4]..[4/4]; failure writes FAILED)
 # ============================================================================
 $ErrorActionPreference = "Continue"
 
-$base     = "d:\code\project\Go2ProController\client\apps\android"
-$client   = "d:\code\project\Go2ProController\client"
+$base     = $PSScriptRoot
+$client   = (Resolve-Path (Join-Path $base "..\..")).Path
 $prefix   = "$base\_deps_arm64"
 $ndk      = "$base\_sdk\ndk\26.1.10909125"
 $cmakeBin = "$base\_sdk\cmake\3.22.1\bin"
