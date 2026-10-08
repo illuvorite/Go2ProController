@@ -1,4 +1,4 @@
-# Go2ProController 优化方案（2026-10-06）
+# Go2ProController 优化方案（2026-10-06，第二轮审查 2026-10-07）
 
 > 依据：`client/` 源码实测 + `docs/go2_webrtc_protocol.md` + 既有 `docs/multi_go2_pro_solution.md` 记忆。
 > 所有"问题"条目均带**代码位置证据**，不用推测。
@@ -238,4 +238,63 @@
 | G1 / DDS 传输实现 | ⏳ 立项后做 | M5 只落了接口与 WebRTC 实现；`DdsTransport`（`rt/api/sport/request` + `rt/lowcmd`）留到 G1 立项。注意**多机 DDS 隔离**是前置条件（见 G1 评估：同域同名 topic 会互相串扰）。 |
 | `clang-format` 机器校验 | ⚠️ | 环境里没有 `clang-format` 可执行文件，配置只做了 YAML 语法校验。装了之后先跑 `clang-format --style=file --dry-run -Werror <新改的文件>`（注意：对 `ui_actions.cpp` 这类**整段搬移**的文件先别跑，会产生大量与逻辑无关的 diff） |
 | 提交 | ⏳ 按纪律未做 | 本轮全部改动留在工作区，由使用者决定提交时机与粒度（见 `MEMORY.md` 的工程约定：AI 不主动 commit） |
+
+---
+
+## 8. 第二轮全项目审查（2026-10-07）
+
+第一轮把"能跑"变成"可回归"，这一轮是**在已有基线上做独立复核**：不信任 §7 的声明，逐条用代码证据核实，并对 core / ui / 前端 / 工程基建四个面各做一遍深审。
+
+### 8.1 核实结论：§7 的声明哪些站得住
+
+| §7 声明 | 结论 | 证据 |
+|---|---|---|
+| 跨线程共享已收敛（标量 atomic、容器加锁） | **部分属实** | `names`/`toggles`/`activeToggleIds` 确实到位；但 `ui.robots` 在 `ui_chrome.cpp:58,111` 无锁直读（违反 `ui.hpp:46` 契约），`eulerX/Y/Z` 与 `rawJson` 被 HTTP 线程经 `command_service::packParam` 读 —— 两者都已在 §8.2 修掉 |
+| Web 控制面已收紧 | **属实** | 默认回环、非回环强制 token、`X-Go2-Token`/`?token=`、只拦 `/api/*` 全部核实通过。补一条：httplib 默认 100MB 请求体上限从未收紧过（§8.2 已设 256KB） |
+| 指令集兜底 / 参数打包 / 群控循环已唯一实现 | **部分属实** | 动作下发确实收敛到 `cmd::`。但**安全闸门没跟上**：解除急停的"回中"检查只在浏览器里、摇杆限幅只在浏览器里（§8.2 已收进服务层）。另 `ui_actions.cpp:191` 另存了一份 `resolveId`、`ui_remote.cpp:76` 另建阻尼循环 |
+| `ITransport` + `weak_from_this` 保护 | **部分属实** | `WebRtcTransport` 自身保护到位；但只覆盖它自己 —— `robot_client.cpp:540-559` 的四个回调仍捕获裸 `this`，`webrtc_transport.hpp` 的承诺管不到 `RobotClient` |
+| 协议回放（11 报文 / 44 断言） | **属实** | `tests/fixtures/` 实测 11 个 json，`protocol_replay_test` 断言数吻合 |
+| `ui.cpp` 拆到阈值内 | **属实** | 582 行（文档里写 572，以实测为准） |
+| 告警清零 | **部分属实** | 自有目标 0 告警属实，但 `crypto.cpp:231-235` 是用 `#pragma GCC diagnostic ignored` **屏蔽** OpenSSL 3.0 弃用告警，且该屏蔽在 MSVC `/W4` 下不生效 |
+| ctest 8 绿 / CI 已建 | **属实** | 8 个启用测试全绿；CI 双 job 真实存在（但无超时、缓存整个构建目录、漏 Android 与 sanitizer） |
+| 网页资源单源 | **属实** | 安卓端副本已删，Gradle `syncWebAssets` 路径配对正确（但字体在 `assets/fonts` 与 `assets/web/fonts` 双份入库，APK 内完整性无 CI 验证） |
+| 依赖锁定"一条命令装出同版本环境" | **不属实** | `requirements.lock.txt:84` 记的是 `unitree_sdk2py @ file:///tmp/sdk2py` —— 本机临时路径，任何别的机器都装不了（已处理，见 §8.2） |
+
+### 8.2 本轮已落地（全部有回归证据）
+
+| # | 问题 | 严重度 | 落地 | 证据 |
+|---|---|---|---|---|
+| **R1** | `handleMessage` 里 `msg.value("type","")` 抛 `type_error.302`（key 存在但类型不符）→ 异常穿到 libdatachannel 线程 → `std::terminate`，整个遥控端连带所有狗一起崩。消息来自网络，`{"type":123}` 即可触发 | P0 崩溃 | 拆出 `handleMessageImpl`，`handleMessage` 成为包住**整个**处理过程的异常边界 | 构建 0 告警；`ui_state_thread_test` 4.7s 通过 |
+| **R2** | `disconnect()` 不清 `retryQueue_` / `pendingCmds_` → 用户在"指令被拒→排队重试"窗口里断开再重连，新连接一就绪 monitor 就把**上一条会话的旧速度指令**补发给狗 | P0 安全 | `disconnect()` 开头清空两个队列 | `ctest` 8/8 |
+| **R3** | `ui_chrome.cpp:58,111` 无锁遍历 `ui.robots`，与扫描线程 `push_back`、Web 端 `add/remove` 并发 → 迭代器失效崩溃 | P0 崩溃 | 新增 `UiState::robotsSnapshot()`，顶栏改走快照 | `ctest` 8/8 |
+| **R4** | `eulerX/Y/Z`（裸 float）与 `rawJson`（char 数组）被界面线程每帧写、被 HTTP 线程经 `packParam` 读 → 数据竞争；撕裂读出的姿态角**会直接发给狗** | P0 安全 | 三个轴改 `std::atomic<float>`（滑条走"取副本→改→写回"）；`rawJson` 加 `rawJsonMutex` + `rawJsonSnapshot()` | `bash scripts/verify_tsan.sh` 0 条 race |
+| **R5** | 取消勾选 / 切单控只改 `selected` 不收尾 → 被移出集合的狗保持最后速度继续走，且 `stopSelected` 只遍历**新**集合，此后谁都停不到它 | P0 安全 | 服务层新增 `cmd::stopDeselected`，接到网页端 `select` 与桌面端 4 处勾选/单控路径 | `command_service_test` 85 项断言全过 |
+| **R6** | 解除急停的"摇杆回中"闸门只在浏览器里（`remote.js` 的 `:disabled`）→ 换客户端/开第二个标签页就能在杆还推着时解锁，10Hz 循环立刻全力输出 | P0 安全 | 服务层新增 `cmd::unestop(ui, extraCentered)`：桌面端传真实双杆状态，网页端用"最近下发速度是否非零"兜底 | 同上 |
+| **R7** | 网页端摇杆 x/y/z 原样转发，限幅只存在于 `assets/web/motion.js` → 换客户端/脚本/前端算错即可让狗全速冲出去 | P0 安全 | 服务层新增 `cmd::clampMotion` + `moveSelectedClamped`（含硬上限 1.5 m/s、2.0 rad/s 与非有限值归零），`web_bridge` 改走它并回填限幅后的 `cmdV*` | 同上 |
+| **R8** | `/api/command` 未设请求体上限，vendored httplib 默认 100MB，绑非回环后一个请求即可吃满内存 | P0 安全 | `set_payload_max_length(256KB)` | 构建 0 告警 |
+| **R9** | 前端推着摇杆点开设备弹窗 → 摇杆带被 `v-if` 撤掉，但 `stickIdle` 没复位 → "解除急停"按钮此后**永久禁用**，最需要解锁时解不开 | P0 安全 | 抽出 `releaseAll()`：卸载/切页时归零 + 停车 + 复位 `stickIdle` | `node scripts/web_check.mjs` 71 项 0 失败 |
+| **R10** | 失焦 / 切后台 / 页面隐藏 / 指针捕获丢失时收不到 `pointerup` → 摇杆值保持非零，10Hz 循环无限续发 | P0 安全 | `band.js` 监听 `blur` / `pagehide` / `visibilitychange` 统一走 `releaseAll()` | 同上 |
+| **R11** | `api.js` 的 `send()` 不判 `r.ok`，非 JSON 错误响应抛浏览器原生 `SyntaxError`（用户看到 `Unexpected token '<'`） | P1 | 判状态码 + `json()` 兜 `catch`，优先回传后端的 `error` 文案 | 同上 |
+| **R12** | 仓库无 `.gitattributes` + 本机 `core.autocrlf=true` → `gradlew.bat` 长期显示"已修改"而 `git diff` 为空 | P1 | 新增根 `.gitattributes`（默认 LF，`.bat/.cmd/.ps1` 强制 CRLF，二进制标 `binary`） | `git status` 噪音消除 |
+| **R13** | `build_android_deps.ps1` / `build_deps_arm64.ps1` 硬编码本机绝对路径 + 个人代理 `127.0.0.1:7897` + `D:\vcpkg` → 换机必然失败 | P0 构建 | 路径改由 `$PSScriptRoot` 推导；代理改为 `GO2_VCPKG_PROXY` 显式开启；vcpkg 走 `$env:VCPKG_ROOT` | 人工核对 |
+| **R14** | `requirements.lock.txt` 含 `file:///tmp/sdk2py` → "一条命令装出同版本环境"必然失败 | P0 构建 | 移除该行并写明它不是直接依赖、需自行从官方渠道安装 | 文件内容 |
+| **R15** | `linux-asan` / `linux-tsan` preset 把 `FETCHCONTENT_SOURCE_DIR_*` 钉死在 `build/_deps/*-src`，而该目录只有先跑过 `linux` 才存在 → 干净 clone 上配置期就失败（且 `verify_asan.sh` 恰恰指导直接跑该 preset，循环依赖） | P0 构建 | 改用 `FETCHCONTENT_BASE_DIR`（存在则复用、不存在则下载） | CMakePresets 可解析 |
+
+### 8.3 仍然未做（按严重度排序，均需先决策或需真机）
+
+| # | 问题 | 证据 | 为什么这轮没动 |
+|---|---|---|---|
+| **Q1** | **急停锁定被动作库完全绕过**：锁定期间摇杆与快捷步都失效（两端都显式禁用），但动作库瓷砖只按 `selectedCount()==0` 禁用 → 点急停后进动作库照样能下发"自由行走/前空翻"这类动作 | `command_service.cpp` 只有 `moveSelected` 查 `ui.estop`；`dispatchToggle`/`sendAction`/`dispatchAction` 都不查；`ui_actions.cpp:265`、`remote.js:76-87` | **这是安全策略问题，不是 bug**：锁定期间该不该放行"一次性动作"（狗固件本身不接受打断）取决于产品判断，硬改会改变真机行为 |
+| **Q2** | **全链路没有看门狗（deadman）**：两端都是"握着才 10Hz 下发"。发送方进程崩了 / 浏览器标签被关 / 网络断了，狗会保持最后速度一直走。`stopMove()` 是 `sendSportCommand(1003)`，只在显式路径调用；`retryQueue_` 那条路径本轮已堵 | 全仓无任何"超时未收到移动指令则停车"的逻辑；安卓入口在切后台/退出时是显式 `stopMove()`（`main_android.cpp:472,864`），说明项目认可这个兜底，但只覆盖了安卓 | 新增功能，且需要一个 watchdog 线程 + 超时阈值（发送 100ms、超时取多少要权衡误停与漏停） |
+| **Q3** | `monitorThread_` 被 worker 线程 `startMonitor()` 赋值、被 `disconnect()` join，无互斥 → UI 点断开与信令成功并发时可能复活 monitor 或析构 joinable 线程 | `robot_client.cpp:285` / `:570` | 生命周期改造影响连接正确性，必须配真机回归（本轮无设备） |
+| **Q4** | `extraChannels_` / `tp_` / `pc_` 三个裸 `shared_ptr` 跨线程读写（`push_back` 在库线程、`clear`/`reset` 在 UI 线程） | `robot_client.cpp:359` vs `:575,578` | 同 Q3，建议与 Q3 一起收进同一把锁 |
+| **Q5** | `wireTransport` 四个回调捕获裸 `this`，`weak_from_this` 只保护 `WebRtcTransport` 自己 | `robot_client.cpp:540-559` vs `webrtc_transport.hpp:6-11` | 同 Q3 |
+| **Q6** | `cmd::estop` 的异步收尾线程 `detach()` 且持裸 `UiState*`，退出时不 join（`joinScans()` 管不到它）→ 急停后立刻退出是 UAF | `command_service.cpp:207-217`；`main.cpp` 只 `stopWebUi()`+`joinScans()` | 与 Q3 同批做才安全（要一起定退出顺序） |
+| **Q7** | `keyprobe` 的 detached 线程同样引用栈上 `mgr/ui` | `web_bridge.cpp:375`、`ui_popups.cpp:322` | 同 Q6 |
+| **Q8** | `crypto.cpp:61-67` `base64Decode` 用函数内 `static bool init` 做惰性初始化，多线程首调竞争 | `crypto.cpp` | 换 `std::call_once` 即可，但属于 core 内部细节，本轮未动 core 的加密路径 |
+| **Q9** | `discovery.cpp:218` 单台畸形响应（HTML 错误页）会让 `base64Decode` 抛异常，`scanSubnet` 未捕获 → 一次异常丢掉**整个网段**的扫描结果 | `discovery.cpp:291` | 需配真机验证扫描行为 |
+| **Q10** | `bodyHeight` 两套范围：网页端夹 `[-0.18, 0.12]`（增量语义）、界面滑条夹 `[0.0, 0.35]`（绝对语义） | `web_bridge.cpp:335` vs `ui_actions.cpp:580` | 改范围会改变真机行为，需先确认哪个是本意 |
+| **Q11** | CI 无 `timeout-minutes`、缓存整个构建目录（key 漏 `patches/apply_go2_fix.cmake`，改补丁不会失效）、不覆盖 Android 与 sanitizer | `.github/workflows/ci.yml` | 纯工程改进，无行为风险，可直接做（本轮未做，留给下一轮） |
+| **Q12** | 字体双份入库（`assets/fonts/` 与 `assets/web/fonts/` 同名同大小，约 980KB 重复打进 APK），与 `app/build.gradle:11-18` 自称"全仓库只保留一份"矛盾 | 逐文件比对 | 需确认 APK 内哪条路径被 `main_android.cpp` 读取 |
+| **Q13** | `ui_actions.cpp:191-203` 另存一份 `resolveId`、`ui_remote.cpp:76` 桌面端自建阻尼循环、`ui.hpp:121` 的 `saveNames()` 无调用点、`isHex32` 两份实现 —— 收敛未彻底 | 逐处比对 | 纯重构，无行为风险，适合下一轮 |
 
