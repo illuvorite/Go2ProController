@@ -9,11 +9,14 @@
 
 namespace go2 {
 
-WebRtcTransport::WebRtcTransport(std::shared_ptr<rtc::DataChannel> dc) : dc_(std::move(dc)) {
+WebRtcTransport::WebRtcTransport(std::shared_ptr<rtc::DataChannel> dc) : dc_(std::move(dc)) {}
+
+void WebRtcTransport::wireCallbacks() {
     if (!dc_) return;
 
-    // 回调在构造时就挂到通道上；setOnXxx 只是替换"转发目标"。
-    // 捕获 weak_ptr 而不是 this：见 hpp 顶部的生命周期说明。
+    // 回调在"本对象已被 shared_ptr 接管之后"才挂到通道上（见 hpp 的说明）：
+    // weak_from_this() 在构造函数里拿到的是空指针，在那里注册会让全部回调静默失效。
+    // setOnXxx 只是替换"转发目标"，所以这里捕获 weak_ptr、不捕获 this。
     dc_->onOpen([w = weak_from_this()] {
         if (auto self = w.lock()) self->fireOpen();
     });
@@ -91,7 +94,10 @@ void WebRtcTransport::fireBinary(std::size_t n, const std::string& hex) {
 
 std::shared_ptr<WebRtcTransport> makeWebRtcTransport(std::shared_ptr<rtc::DataChannel> dc) {
     if (!dc) return nullptr;
-    return std::make_shared<WebRtcTransport>(std::move(dc));
+    // ★ 必须先建出 shared_ptr，再挂回调 —— 见 WebRtcTransport::wireCallbacks() 的说明。
+    auto transport = std::make_shared<WebRtcTransport>(std::move(dc));
+    transport->wireCallbacks();
+    return transport;
 }
 
 }  // namespace go2

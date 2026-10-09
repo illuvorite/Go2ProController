@@ -303,7 +303,13 @@ bool startWebUi(RobotManager& mgr, UiState& ui, int port) {
                 ManagerSink sink(mgr, ui);
                 if (in.value("stop", false)) {
                     const int n = cmd::stopSelected(sink);
-                    ui.movingSent = false;
+                    ui.webMovingSent = false;  // 只清网页界面自己的标志（见 ui.hpp 的说明）
+                    // ★ 松手/急停停车 = 此刻没有任何速度在下发 → "最近一次下发速度"必须清零。
+                    //   cmd::unestop 的"是否回中"判据读的正是这三个值；不清的话它们会一直
+                    //   留着松手前的旧速度，解除急停永远报"摇杆未回中"（2026-10-09 实机踩到）。
+                    ui.cmdVx = 0.0f;
+                    ui.cmdVy = 0.0f;
+                    ui.cmdVz = 0.0f;
                     if (n > 0)
                         ui.addLog(std::string(ui.estop ? "[WebUI][急停] 停车 → " : "[WebUI] 松手停车 → ") +
                                   std::to_string(n) + " 台");
@@ -321,7 +327,7 @@ bool startWebUi(RobotManager& mgr, UiState& ui, int port) {
                     const int n = cmd::moveSelectedClamped(sink, ui, vx, vy, vz, &sent);
                     // 记**限幅后实际下发**的值：界面显示它，cmd::unestop 也用它判"是否回中"
                     ui.cmdVx = sent.vx; ui.cmdVy = sent.vy; ui.cmdVz = sent.vz;
-                    ui.movingSent = n > 0;
+                    ui.webMovingSent = n > 0;  // 只记网页界面自己的（别碰 ImGui 的 movingSent）
                     out["ok"] = true;
                 }
             } else if (cmd == "quick") {

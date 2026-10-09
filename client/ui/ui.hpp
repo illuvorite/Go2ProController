@@ -98,7 +98,14 @@ struct UiState {
     std::atomic<float> cmdVx{0.0f};         // 最近一次下发的速度（仅显示；Web 端会读）
     std::atomic<float> cmdVy{0.0f};
     std::atomic<float> cmdVz{0.0f};
-    std::atomic<bool>  movingSent{false};   // 内部：当前正在持续下发速度指令
+    // ★ 两个界面各有各的"我正在下发速度"标志，**绝不能共用**：
+    //   ImGui 遥控页与网页界面（WebView）可能同时在跑（安卓端就是如此，桌面端
+    //   "开着浏览器遥控"同理）。共用时，网页摇杆发出的移动会把 ImGui 那边的
+    //   `movingSent` 置真 → ImGui 自己的杆是回中的 → 判定"松手了" → 立刻补发
+    //   StopMove 并清零 → 下一页又被网页置真 …… 结果是 10Hz 的"移动/停车"
+    //   来回抢，狗看着像纹丝不动（2026-10-09 实机踩到）。
+    std::atomic<bool>  movingSent{false};     // ImGui 遥控页：正在持续下发速度指令
+    std::atomic<bool>  webMovingSent{false};  // 网页界面：正在持续下发速度指令
     double lastMoveSend = 0.0;  // 内部：上次下发时间（ImGui::GetTime，秒；仅界面线程）
 
     // ---- 双摇杆（-1..1，y 向下为正）+ 急停锁定 ----
@@ -251,12 +258,23 @@ struct UiState {
     std::vector<std::string> selectedIps();
     int selectedCount();
 
+    /// 从 robot_devices.json 恢复设备列表（IP + 手动标记）。
+    ///
+    /// 设备列表原来**只在内存**里：原生侧一旦被重建/重启（换界面、进程被回收、
+    /// 按返回键退出），列表立刻清空，用户看到的就是"刚扫描到的狗没了"。
+    /// 这里补上落盘；`addOrUpdate` / `remove` 会顺手保存。
+    /// 只恢复列表、**不自动连接**（连着谁由用户点）。
+    void loadDevices();
+
 private:
     // ---- 受 namesMutex 保护的名称表 ----
     mutable std::mutex namesMutex;
     std::map<std::string, std::string> names;  // ip -> 用户起的名字
     std::string nameOfLocked(const std::string& ip) const;  // 需已持有 namesMutex
     void saveNamesLocked() const;                           // 需已持有 namesMutex
+
+    /// 设备列表落盘（robot_devices.json）。**调用方必须已持有 robotsMutex**。
+    void saveDevicesLocked() const;
 
     // ---- 受 toggleMutex 保护的持续模式开关状态 ----
     mutable std::mutex toggleMutex;

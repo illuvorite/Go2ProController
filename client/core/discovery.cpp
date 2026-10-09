@@ -274,8 +274,12 @@ std::vector<DiscoveredRobot> Discovery::scanSubnet(
         }
     };
 
+    // 探测代价 ≈ 254 台 × 2 个端口 × timeoutMs / workers：
+    // 空闲主机要等 ARP 失败（吃满 timeout），所以并发数是决定性的。
+    // 实测：workers 只有 4~8 时整轮要 20~30 秒，用户直接感知成"扫描很慢"；
+    // 这类探测只是 connect + close，几乎不吃 CPU，适度放大并发把耗时压到几秒。
     const unsigned hw = std::thread::hardware_concurrency();
-    const int workers = std::max(4, std::min(64, int(hw ? hw : 8)));
+    const int workers = std::max(16, std::min(128, int(hw ? hw : 8) * 8));
     {
         std::vector<std::thread> pool;
         for (int i = 0; i < workers; ++i) pool.emplace_back(probe);

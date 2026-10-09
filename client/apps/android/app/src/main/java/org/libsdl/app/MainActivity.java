@@ -41,10 +41,36 @@ public class MainActivity extends SDLActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        // ⚠ WebUiActivity 的 onStop（在另一个任务里）可能晚于本 onResume 才执行
-        //   → 延迟一点再检查，不然标志还没置位、检查扑空
+        // 生命周期埋点（tag `go2ui`）：排查"点连接时 ImGui/WebView 来回跳"用。
+        // 现象要发生，MainActivity 必然先被 resume —— 这条日志能直接证明/排除它。
+        android.util.Log.i("go2ui", "MainActivity.onResume → 检查是否要把网页界面盖回来");
+        // ★ 先**立刻**试一次：从桌面点回应用（最常走的那条路）时，
+        //   WebUiActivity.onStop 早就执行过了、标志已置好，这里可以零延迟盖上，
+        //   把"先看到 ImGui 再进网页"的闪烁从 300ms 压到几乎没有。
+        com.go2.remote.WebUiActivity.reopenIfBackgrounded(this);
+        // ⚠ 兜底：WebUiActivity 的 onStop（在另一个任务里）可能**晚于**本 onResume 才执行，
+        //   第一次检查会扑空（标志还没置位），所以再延迟补一次。
+        //   reopenIfBackgrounded 自己会把标志清掉，重复调用不会开两个实例。
         new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
                 () -> com.go2.remote.WebUiActivity.reopenIfBackgrounded(this), 300);
+    }
+
+    @Override
+    protected void onPause() {
+        android.util.Log.i("go2ui", "MainActivity.onPause");
+        super.onPause();
+    }
+
+    @Override
+    protected void onStop() {
+        android.util.Log.i("go2ui", "MainActivity.onStop");
+        super.onStop();
+    }
+
+    @Override
+    protected void onDestroy() {
+        android.util.Log.i("go2ui", "MainActivity.onDestroy");
+        super.onDestroy();
     }
 
     /** 原生侧调用：申请组播锁 */

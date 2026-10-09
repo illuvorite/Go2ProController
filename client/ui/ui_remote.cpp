@@ -200,9 +200,14 @@ const MotionPlan plan = planMotion(lxEff, ui.joyLy, ui.joyRx, ui.joyRy, ui.estop
                                    ui.maxLinSpeed, ui.yawRate, ui.movingSent);
 const int mask = (std::fabs(lxEff) > 1e-3f || std::fabs(ui.joyLy) > 1e-3f ? 1 : 0) |
                  (std::fabs(ui.joyRx) > 1e-3f ? 2 : 0);
-ui.cmdVx = plan.vx;
-ui.cmdVy = plan.vy;
-ui.cmdVz = plan.vz;
+// ★ 只有"本页摇杆正在驱动"（或上一帧是本页在驱动）时才回写共享速度。
+//   否则网页界面正在摇杆时，这里每帧把 cmdVx/Vy/Vz 踩成 0 ——
+//   既让网页端读数归零，也让"回中判定"（cmd::unestop 读 cmdVx/Vy/Vz）失效。
+if (plan.send || ui.movingSent.load()) {
+    ui.cmdVx = plan.vx;
+    ui.cmdVy = plan.vy;
+    ui.cmdVz = plan.vz;
+}
 
 ImGui::Spacing();
 {

@@ -154,7 +154,8 @@ int main(int argc, char** argv) {
 
     go2::RobotManager manager;
     go2::UiState ui;
-    ui.loadNames();  // 设备名映射（robot_names.json）—— 界面版是在绘制时惰性加载的
+    ui.loadNames();    // 设备名映射（robot_names.json）—— 界面版是在绘制时惰性加载的
+    ui.loadDevices();  // 设备列表（robot_devices.json）—— 同上，服务端没有绘制这一步
 
     std::mutex printMutex;
     auto printLine = [&ui, &opt, &printMutex](const std::string& line) {

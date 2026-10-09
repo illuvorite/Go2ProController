@@ -8,6 +8,11 @@
 //   **内部线程**异步调用的，可能在通道关闭之后才到；如果回调直接捕获裸 `this`，
 //   而本对象已经析构 → use-after-free（本项目历史上真出过同类崩溃）。
 //   用 weak_ptr 之后，对象没了回调就静默丢弃，不会踩到已释放内存。
+//
+// ★ 回调注册时机：必须用 `makeWebRtcTransport()` 构造，**不要**自己 make_shared。
+//   构造函数里 `weak_from_this()` 还是空指针（shared_ptr 尚未建立 weak 引用），
+//   在那里注册回调会让 open/closed/message 全部静默失效 —— 现象是"连上但
+//   一直停在通道建立中、收不到任何数据"（2026-10-09 踩过）。
 // ============================================================================
 
 #include "transport.hpp"
@@ -35,6 +40,10 @@ public:
     void setOnClosed(std::function<void()> cb) override;
     void setOnMessage(std::function<void(const std::string&)> cb) override;
     void setOnBinary(std::function<void(std::size_t, const std::string&)> cb) override;
+
+    /// 把本对象的回调挂到 DataChannel 上。**只允许** makeWebRtcTransport() 调用：
+    /// 必须在 shared_ptr 建立之后执行，否则 weak_from_this() 为空、回调全部失效。
+    void wireCallbacks();
 
 private:
     void fireOpen();

@@ -464,12 +464,14 @@ std::string maskIps(const std::string& text, bool on) {
 // ============================================================================
 
 // ---------------------------------------------------------------- 顶栏与全局操作
-/// 名称文件只在第一次画界面时读一次（桌面与安卓共用这条路径，入口不用各自记得初始化）
+/// 持久化的界面状态（名称 + 设备列表）只在第一次画界面时读一次
+///（桌面与安卓共用这条路径，入口不用各自记得初始化）
 void ensureNamesLoaded(UiState& ui) {
     static bool loaded = false;
     if (loaded) return;
     loaded = true;
-    ui.loadNames();   // robot_names.json
+    ui.loadNames();     // robot_names.json  —— 设备名
+    ui.loadDevices();   // robot_devices.json —— 设备列表（否则重启/重建后列表清空）
 }
 
 /// 群控：全选（指令只发给已就绪的）

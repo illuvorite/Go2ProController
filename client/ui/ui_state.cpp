@@ -43,6 +43,7 @@ bool UiState::addOrUpdate(const std::string& ip, bool manual) {
     for (auto& r : robots)
         if (r.ip == ip) return false;
     robots.push_back({ip, false, manual, -1.0f, "-"});
+    saveDevicesLocked();  // 列表要落盘，否则原生侧重启后"扫描到的狗就没了"
     return true;
 }
 
@@ -51,9 +52,46 @@ bool UiState::remove(const std::string& ip) {
     for (auto it = robots.begin(); it != robots.end(); ++it)
         if (it->ip == ip) {
             robots.erase(it);
+            saveDevicesLocked();
             return true;
         }
     return false;
+}
+
+// ---------------------------------------------------------------- 设备列表持久化
+// 与名称文件同一套规矩：只读写**本应用目录**下的文件（安卓启动时已 chdir 到应用目录）。
+// 没有它的话，只要原生侧被重建，设备列表就清空 —— 用户看到的是"刚扫描到的狗没了"。
+void UiState::loadDevices() {
+    std::lock_guard<std::mutex> lock(robotsMutex);
+    std::ifstream f("robot_devices.json");
+    if (!f) return;
+    try {
+        nlohmann::json j;
+        f >> j;
+        if (!j.is_array()) return;
+        for (const auto& e : j) {
+            if (!e.is_object()) continue;
+            const std::string ip = e.value("ip", std::string());
+            if (ip.empty()) continue;
+            bool dup = false;
+            for (const auto& r : robots)
+                if (r.ip == ip) { dup = true; break; }
+            if (dup) continue;  // 本次启动已经加过了（比如刚扫描到）→ 不重复
+            robots.push_back({ip, false, e.value("manual", false), -1.0f, "-"});
+        }
+    } catch (...) {
+        // 文件损坏就当没存过 —— 绝不能因为一个列表文件让界面起不来
+    }
+}
+
+void UiState::saveDevicesLocked() const {
+    nlohmann::json j = nlohmann::json::array();
+    for (const auto& r : robots) {
+        if (r.ip.empty()) continue;
+        j.push_back({{"ip", r.ip}, {"manual", r.manual}});
+    }
+    std::ofstream f("robot_devices.json", std::ios::trunc);
+    if (f) f << j.dump(2) << "\n";
 }
 
 std::vector<RobotEntry> UiState::robotsSnapshot() {

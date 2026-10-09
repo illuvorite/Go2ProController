@@ -39,6 +39,8 @@ public class WebUiActivity extends Activity {
 
     /// MainActivity.onResume 调用：网页界面是"被切后台"而非"被关掉"时，重新盖上来
     public static void reopenIfBackgrounded(Context ctx) {
+        android.util.Log.i("go2ui", "reopenIfBackgrounded: sWentBackgrounded=" + sWentBackgrounded
+                + " sShowing=" + sShowing);
         if (sWentBackgrounded) {
             sWentBackgrounded = false;
             open(ctx, null);   // url 为空 → 用 WebUiActivity 里记住的地址
@@ -50,6 +52,7 @@ public class WebUiActivity extends Activity {
         new Handler(Looper.getMainLooper()).post(new Runnable() {
             @Override
             public void run() {
+                android.util.Log.i("go2ui", "WebUiActivity.open() → startActivity");
                 Intent i = new Intent(ctx, WebUiActivity.class);
                 if (url != null) i.putExtra("url", url);
                 // ★ NEW_TASK：MainActivity 是 singleInstance（任务独占），WebView 开在**另一个任务**里。
@@ -65,6 +68,9 @@ public class WebUiActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // 生命周期埋点（tag `go2ui`）：排查"点连接时 ImGui/WebView 来回跳"用。
+        // onCreate 再次出现 = WebView 被重建 → 那一下闪烁就有据可查。
+        android.util.Log.i("go2ui", "WebUiActivity.onCreate @" + System.identityHashCode(this));
         web = new WebView(this);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);          // Vue3 免构建运行需要
@@ -94,12 +100,14 @@ public class WebUiActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        android.util.Log.i("go2ui", "WebUiActivity.onResume @" + System.identityHashCode(this));
         sShowing = true;
         sWentBackgrounded = false;   // 已经回到网页界面了，别再让 MainActivity 重复开一次
     }
 
     @Override
     protected void onPause() {
+        android.util.Log.i("go2ui", "WebUiActivity.onPause @" + System.identityHashCode(this));
         sShowing = false;
         super.onPause();
     }
@@ -108,17 +116,21 @@ public class WebUiActivity extends Activity {
     protected void onStop() {
         // 没被 finish 却离开前台 = 按了 Home / 锁屏 / 切走 → 记下来，
         // 等 MainActivity.onResume 时把网页重新盖上来（用户要求网页界面常驻）
+        android.util.Log.i("go2ui", "WebUiActivity.onStop isFinishing=" + isFinishing()
+                + " @" + System.identityHashCode(this));
         if (!isFinishing()) sWentBackgrounded = true;
         super.onStop();
     }
 
     @Override
     public void onBackPressed() {
+        android.util.Log.i("go2ui", "WebUiActivity.onBackPressed → finish()");
         finish();   // 回到 ImGui 界面
     }
 
     @Override
     protected void onDestroy() {
+        android.util.Log.i("go2ui", "WebUiActivity.onDestroy @" + System.identityHashCode(this));
         if (web != null) { web.destroy(); web = null; }
         super.onDestroy();
     }

@@ -159,6 +159,7 @@ bool unestop(UiState& ui, bool extraCentered) {
         return false;
     ui.estop = false;
     ui.movingSent = false;
+    ui.webMovingSent = false;
     ui.cmdVx = 0.0f;
     ui.cmdVy = 0.0f;
     ui.cmdVz = 0.0f;
@@ -288,6 +289,7 @@ EstopResult estop(const std::shared_ptr<CommandSink>& sink, UiState& ui, bool as
     ui.clearToggles();
     ui.clearActiveToggles();
     ui.movingSent = false;
+    ui.webMovingSent = false;  // 两个界面都不再"正在下发"
     return r;
 }
 

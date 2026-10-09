@@ -333,13 +333,16 @@ bool RobotClient::runSignaling(const RobotProfile& profile) {
         }
     });
 
-    // 关键：offer 里必须有 audio / video 两条 m-line，否则机器狗 SCTP 协商失败
+    // 关键：offer 里必须有 audio / video 两条 m-line，否则机器狗 SCTP 协商失败。
+    // mid 必须用数字序号 "0"/"1"/"2"：机器狗的 answer 是把 mid 硬编码成 0/1/2 回的
+    // （参考实现 aiortc 同样用 0/1/2），而 libdatachannel 默认会给成 "audio"/"video"/"0"，
+    // 导致 answer 的 mid 与 offer 对不上。
     {
-        auto audio = rtc::Description::Audio("audio", rtc::Description::Direction::SendRecv);
+        auto audio = rtc::Description::Audio("0", rtc::Description::Direction::SendRecv);
         audio.addOpusCodec(111);
         audioTrack_ = pc_->addTrack(audio);
 
-        auto video = rtc::Description::Video("video", rtc::Description::Direction::RecvOnly);
+        auto video = rtc::Description::Video("1", rtc::Description::Direction::RecvOnly);
         video.addH264Codec(96);
         video.addH264Codec(97);
         videoTrack_ = pc_->addTrack(video);
@@ -527,7 +530,23 @@ bool RobotClient::runSignaling(const RobotProfile& profile) {
         log("[answer] " + keys);
     }
 
-    pc_->setRemoteDescription(rtc::Description(answerSdp, answer.value("type", "answer")));
+    // 固件 ≥1.1.15 的 answer 里，host 候选会多带非标准的 "raddr 0.0.0.0 rport 0"
+    // （RFC 5245 只在 srflx/prflx/relay 上定义 raddr/rport）。libjuice 解析不了这种
+    // 候选 → 远程候选为空 → ICE 永远停在 checking → 后续 DTLS/SCTP 全部无从开始。
+    // 实测：把这两个字段去掉后 ICE 立刻 connected，DTLS 握手 + SCTP 建链随即完成。
+    std::string answerSdpClean = answerSdp;
+    {
+        size_t q = 0;
+        while ((q = answerSdpClean.find(" raddr ", q)) != std::string::npos) {
+            size_t e = answerSdpClean.find("\r\n", q);
+            if (e == std::string::npos) e = answerSdpClean.size();
+            answerSdpClean.erase(q, e - q);
+        }
+        if (answerSdpClean.size() != answerSdp.size())
+            log("[SDP] 修正 answer 候选中的非标准 raddr/rport（"
+                "固件 ≥1.1.15 引入，libjuice 无法解析）");
+    }
+    pc_->setRemoteDescription(rtc::Description(answerSdpClean, answer.value("type", "answer")));
     return true;
 }
 
@@ -739,8 +758,20 @@ std::string RobotClient::rejectReason(int ackCode) const {
     if (soc >= 0 && soc < 20)
         why = "电量仅 " + std::to_string(soc) +
               "%，低电量保护：运动指令会被拒（RecoveryStand/StopMove 之类放行），请先充电";
-    else if (ec == 1013)
-        why = "运动服务预热中（连接后约 10 秒内会被拒），稍后自动重试即可";
+    else if (ec == 1013) {
+        // 1013 = 运动服务未就绪。刚就绪的十几秒内属正常预热（会自动重试）；
+        // 但已过预热窗口还持续 1013，就不是"预热"了 —— 实测这台 Go2 Pro 出现过
+        // 状态帧长时间停在 mode=0 / error_code=1013、**连「平衡站立」都被拒**的情形，
+        // 那是机器狗整体处于"不接受运动指令"的状态，只能重启机器狗恢复。
+        // 文案必须区分这两种，否则用户会一直等一个永远不会来的"预热结束"。
+        const long long readyAt = readyAtMs_.load();
+        const bool warming = readyAt > 0 && (nowMs() - readyAt) <= 15000;
+        why = warming
+                  ? "运动服务预热中（连接后约 10 秒内会被拒），稍后自动重试即可"
+                  : "机器人当前不接受运动指令（error_code=1013 且已过预热期）——"
+                    "通常是机器狗处于不可运动的状态/模式；请重启机器狗，"
+                    "或先用官方 App 确认它能正常走动";
+    }
     else if (ackCode == 3203 || ec == 100)
         why = "该指令不在当前固件的指令表里（指令集不匹配或固件不支持）——"
               "被拒时会自动改用另一套 api_id 重试，仍失败则说明固件确实没有这条动作";
