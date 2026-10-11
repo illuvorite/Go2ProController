@@ -572,12 +572,15 @@ int runQuickAction(const std::shared_ptr<CommandSink>& sink, UiState& ui, const 
     if (!sink) return 0;
     const QuickAction* q = findQuickAction(key);
     if (!q) return -1;
-    // 「恢复移动」本身就是安全方向，急停锁定时也允许（与 stopSelected 同理）
-    if (ui.estop.load() && q->kind != QuickKind::StopMove) return 0;
+    // 急停锁定期间一律不下发（与 cmd::moveSelected 同一口径）。
+    // 注：表里现在没有"只发一条 StopMove"的快捷动作 —— 它就是动作库里的「停止移动」，
+    //     不再另设入口（见 quick_actions.hpp 的说明）。
+    if (ui.estop.load()) return 0;
     if (sink->selectedReadyIps().empty()) return 0;
 
     switch (q->kind) {
         case QuickKind::StopMove:
+            // 表里没有这条了（「恢复移动」= 动作库的「停止移动」，已删）；保留分支防漏 switch
             return stopSelected(*sink);
         case QuickKind::BodyHeight: {
             const int id = apiKeyId(ui, "BodyHeight", 1013);

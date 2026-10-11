@@ -534,7 +534,8 @@ int main() {
     }
 
     // ---------------------------------------------------------------- 快捷动作
-    // 来源：参考实现「天树探界遥控」Go2 页的复合按钮（姿态预设 / 平移 / 机身高度 / 恢复移动）
+    // 来源：参考实现「天树探界遥控」Go2 页里的复合按钮（姿态预设 / 平移 / 机身高度 / 脚本）。
+    // 它们在界面上并进动作库的原有分组网格，但执行语义在这一层。
     {
         UiState ui;
         FakeSink sink;
@@ -544,12 +545,10 @@ int main() {
         // 未知 key → -1（界面据此报"没有这条快捷动作"，而不是静默什么都不做）
         CHECK(cmd::runQuickAction(borrow(sink), ui, "Nope") == -1);
 
-        // 「恢复移动」= 一条 StopMove，打到两台
-        CHECK(cmd::runQuickAction(borrow(sink), ui, "ResumeMove") == 2);
-        CHECK(sink.stoppedCount() == 2);
+        // 「恢复移动」已删除：它就是动作库里的「停止移动」，不该有第二个入口
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "ResumeMove") == -1);
 
         // 「机身最低」= BodyHeight(1013) 带 data=-0.18（对齐参考实现的取值）
-        sink.reset();
         CHECK(cmd::runQuickAction(borrow(sink), ui, "BodyLowest") == 2);
         CHECK(sink.countApi(1013) == 2);
         CHECK(near(lastParam(sink)["data"].get<double>(), -0.18));
@@ -560,14 +559,12 @@ int main() {
         CHECK(cmd::runQuickAction(borrow(sink), ui, "BodyHighest") == 0);
         CHECK(sink.sentCount() == 0);
 
-        // 急停锁定：除「恢复移动」外一律不下发（恢复移动是安全方向，仍允许）
+        // 急停锁定：一律不下发
         ui.estop = true;
         sink.selected = {"10.0.0.1", "10.0.0.2"};
         sink.reset();
         CHECK(cmd::runQuickAction(borrow(sink), ui, "BodyLowest") == 0);
         CHECK(sink.sentCount() == 0);
-        CHECK(cmd::runQuickAction(borrow(sink), ui, "ResumeMove") == 2);
-        CHECK(sink.stoppedCount() == 2);
         ui.estop = false;
     }
 

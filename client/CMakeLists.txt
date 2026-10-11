@@ -279,6 +279,7 @@ add_executable(tianshu_parity_test
     core/telemetry.cpp
     core/quick_actions.cpp
     core/dance.cpp
+    core/sport_library.cpp   # 快捷动作的分组复用 SportGroup，还要查 key 撞不撞
 )
 target_include_directories(tianshu_parity_test PRIVATE core)
 target_link_libraries(tianshu_parity_test PRIVATE nlohmann_json::nlohmann_json)

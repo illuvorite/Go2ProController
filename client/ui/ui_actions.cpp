@@ -3,6 +3,7 @@
 #include "command_service.hpp"
 #include "icons.hpp"
 #include "layout.hpp"
+#include "quick_actions.hpp"  // 快捷动作表（并进本页的网格里，不另起一条）
 #include "sport_library.hpp"
 #include "textures.hpp"
 #include "theme.hpp"
@@ -13,7 +14,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -205,12 +208,6 @@ void drawActionPageBody(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     const float actW3 = L.actW3;
     const float actH = L.actH;
 
-    // ★ 最上面先摆「快捷动作」一条（实现在 ui_tianshu.cpp）：
-    //   参考实现「天树探界遥控」里这批按钮就在"动作执行"页里，位置也在动作网格之前。
-    //   它们点下去是**一段脚本**（先平衡站立再发姿态角 / 连发 1 秒再停车 / 闭环回正），
-    //   跟下面那些"一条指令一个瓷砖"的动作不是一回事，所以单独一条、不混进分组网格。
-    drawQuickActionSection(mgr, ui, L);
-
 // 参数类动作（带滑条的那些）：一行放 2 个、滑条自动撑满格子。
 // 用户反馈"整体太空了" —— 整屏页面上如果每行只有左边一小截滑条，右边全是空白，非常难看。
 // 横排瓷砖：图标在左、字在右，高度只需容纳图标（+少量余量）。
@@ -358,8 +355,10 @@ auto sendAction = [&](const SportAction& a, bool flagValue = true) {
 // 找不到图标字体时（iconFontLoaded()==false）自动退回下面的手绘简笔形状，功能不受影响。
 enum class TileIcon { Figure, Hand, Heart, Jump, Dance, Sit, Stand, Walk, Gear, Query, Lock };
 
-const auto iconFor = [](const SportAction& a) -> TileIcon {
-    const std::string l = a.label;
+/// 没有图标字体时的**手绘简笔兜底**：按中文标签猜一个形状。
+/// 收 label 而不是 SportAction —— 快捷动作也要用（见 drawTileIconAuto）。
+const auto iconFor = [](const std::string& label) -> TileIcon {
+    const std::string& l = label;
     auto has = [&](const char* s) { return l.find(s) != std::string::npos; };
     if (has("跳") || has("翻") || has("扑")) return TileIcon::Jump;
     if (has("舞蹈") || has("拜年") || has("太空步") || has("扭")) return TileIcon::Dance;
@@ -471,10 +470,12 @@ const auto drawTileIcon = [](ImDrawList* dl, TileIcon ic, ImVec2 c, float s, ImU
 };
 
 /// 瓷砖图标：有图标字体就画字形，否则回退手绘简笔。
+/// 收 key+label 而不是 SportAction —— 快捷动作（core/quick_actions.hpp）不是 SportAction，
+/// 但和普通动作**画在同一个网格里**，必须共用这一份绘制。
 const auto drawTileIconAuto = [&iconFor, &drawTileIcon](
-                                  ImDrawList* dl, const SportAction& a, ImVec2 c, float s,
-                                  ImU32 col) {
-    const char* g = iconGlyph(a.key, a.label);
+                                  ImDrawList* dl, const char* key, const std::string& label,
+                                  ImVec2 c, float s, ImU32 col) {
+    const char* g = iconGlyph(key, label);
     const bool isTianshu = glyphIsTianshu(g);
     ImFont* f = nullptr;
     float gs = s;
@@ -498,13 +499,13 @@ const auto drawTileIconAuto = [&iconFor, &drawTileIcon](
         dl->AddText(f, gs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), col, g);
         return;
     }
-    drawTileIcon(dl, iconFor(a), c, s, col);
+    drawTileIcon(dl, iconFor(label), c, s, col);
 };
 
 /// 官方 App 风格的"图标瓷砖"。返回是否被点击。
-/// @param st 上次执行结果：0=没试过 1=成功 2=失败（右上角小圆点）
+/// @param st 上次执行结果：0=没试过 1=成功 2=失败（左上角小圆点）
 /// @param on 持续模式开关的当前状态（高亮）
-const auto actionTile = [&drawTileIconAuto](const SportAction& a, const std::string& label,
+const auto actionTile = [&drawTileIconAuto](const char* key, const std::string& label,
                                             bool risky, int st, bool on,
                                             const ImVec2& size) -> bool {
     const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -552,7 +553,7 @@ const auto actionTile = [&drawTileIconAuto](const SportAction& a, const std::str
     const float midY = (p.y + b.y) * 0.5f;
     // ★ 图标字形在 em 框里偏上（字体基线决定）：按实测偏移 0.2em 把它压下来，
     //   否则图标视觉中心比按钮中点高 6px，整组看着偏上。
-    drawTileIconAuto(dl, a, ImVec2(gx + iconSz * 0.5f, midY + iconSz * 0.2f), iconSz,
+    drawTileIconAuto(dl, key, label, ImVec2(gx + iconSz * 0.5f, midY + iconSz * 0.2f), iconSz,
                      ImGui::GetColorU32(col::kText));
     {
         FontScope fs = fontSmall();
@@ -620,7 +621,7 @@ for (const auto& gd : kGroups) {
             ++col;
             bool on = ui.toggleState(a.key);
             const std::string t = tileLabel(a, fellBack) + (on ? " · 开" : " · 关");
-            if (actionTile(a, t, false, apiState(id), on, ImVec2(actW1, tileH))) {
+            if (actionTile(a.key, t, false, apiState(id), on, ImVec2(actW1, tileH))) {
                 on = !on;
                 // 开关状态维护（toggles / activeToggleIds）在 cmd::dispatchToggle 里，
                 // 与网页端同一份 —— 这里不再自己 insert/erase
@@ -727,11 +728,51 @@ for (const auto& gd : kGroups) {
 
         if (L.actCols > 1 && (col % L.actCols) != 0) ImGui::SameLine();
         ++col;
-        if (actionTile(a, tileLabel(a, fellBack), a.risky, apiState(id), false,
+        if (actionTile(a.key, tileLabel(a, fellBack), a.risky, apiState(id), false,
                        ImVec2(actW1, tileH)))
             sendAction(a);
         actionTip(id);
 
+        ImGui::PopID();
+    }
+
+    // 该组里的「快捷动作」（复合指令：姿态预设 / 平移 / 机身高度 / 方向回正 / 原地踏步）。
+    //
+    // ★ 为什么**排进同一个网格、同一组**，而不是另起一条"快捷动作"：
+    //   参考实现「天树探界遥控」的 Go2 页只有"基础动作 / 高级技能"两块网格，
+    //   这批按钮就在网格里，没有单独的区块。另起一条会让"同一个功能两个入口"，
+    //   也把本来紧凑的一页撑长（2026-10-11 用户指出后改成本写法）。
+    //   它们的区别只在**执行方式**（有的要先平衡站立、有的要连发再停车），
+    //   那属于实现细节，不该体现在菜单结构上 —— 悬停说明里写清楚就够了。
+    for (const QuickAction& q : quickActions()) {
+        if (q.group != gd.g) continue;
+        // 机型不支持时不隐藏（回执驱动的判定只覆盖 api_id；快捷动作里带脚本，没法按 id 判）
+        ImGui::PushID(q.key);
+        if (L.actCols > 1 && (col % L.actCols) != 0) ImGui::SameLine();
+        ++col;
+        // 机身高度那三条是纯一条 api_id(1013)，能按机型记回执 → 给它带上结果小点；
+        // 其余是脚本（多个 api_id），不标点。
+        int qst = 0;
+        if (q.kind == QuickKind::BodyHeight) {
+            for (const SportAction& a : sportActions())
+                if (std::strcmp(a.key, "BodyHeight") == 0) {
+                    const int id = resolveId(a, nullptr);  // 尊重当前指令集
+                    if (id != 0) qst = apiState(id);
+                    break;
+                }
+        }
+        if (actionTile(q.key, q.label, false, qst, false, ImVec2(actW1, tileH))) {
+            const auto sink = std::make_shared<ManagerSink>(mgr, ui);
+            const int n = cmd::runQuickAction(sink, ui, q.key);
+            if (n < 0)
+                ui.addLog(std::string("[动作库] 未知快捷动作: ") + q.key);
+            else if (n == 0)
+                ui.addLog(std::string("[动作库] ") + q.label +
+                          " 未执行：急停锁定中或没有受控就绪设备");
+            else
+                ui.addLog(std::string("[动作库] ") + q.label + " → " + std::to_string(n) + " 台");
+        }
+        helpTip(q.hint);
         ImGui::PopID();
     }
 }

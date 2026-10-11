@@ -190,16 +190,18 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
     }
     j["actions"] = acts;
 
-    // 快捷动作（天树探界的复合按钮：姿态预设 / 平移 / 机身高度 / 方向回正 / 原地踏步 / 恢复移动）
+    // 快捷动作（复合指令：姿态预设 / 平移 / 机身高度 / 方向回正 / 原地踏步）。
+    // ★ `group` 与 `actions[]` 是**同一套分组编号** —— 前端把它们混排进同一个网格里，
+    //   不另起一条（参考实现「天树探界遥控」本身就只有一块网格）。
     nlohmann::json quicks = nlohmann::json::array();
     for (const QuickAction& q : quickActions()) {
         nlohmann::json o = nlohmann::json::object();
         o["key"] = q.key;
         o["label"] = q.label;
         o["group"] = static_cast<int>(q.group);
-        o["groupName"] = quickGroupName(q.group);
         o["hint"] = q.hint;
-        o["script"] = (q.kind != QuickKind::StopMove && q.kind != QuickKind::BodyHeight);
+        // script=true 表示它要发一串指令（有的先平衡站立、有的连发再停车）
+        o["script"] = (q.kind != QuickKind::BodyHeight);
         quicks.push_back(o);
     }
     j["quickActions"] = quicks;

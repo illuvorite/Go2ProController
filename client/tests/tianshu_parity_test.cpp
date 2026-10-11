@@ -118,6 +118,8 @@ void testQuickTable() {
     CHECK(q != nullptr);
     CHECK_MSG(q->kind == QuickKind::EulerPreset, "左扭应是「先平衡站立再发姿态角」的脚本");
     CHECK(q->z == 0.5f);
+    // 分组复用动作库那一套 —— 界面据此把它们排进**同一个网格**（不另起一条）
+    CHECK_MSG(q->group == SportGroup::Basic, "姿态预设应排在「基础姿态」组");
 
     q = findQuickAction("LeanLeft");
     CHECK(q != nullptr && q->x == -0.75f);  // 左倾为负（与参考实现一致，符号错了会往右倒）
@@ -125,8 +127,13 @@ void testQuickTable() {
     CHECK(q != nullptr && q->y == -0.4f);
     q = findQuickAction("BodyLowest");
     CHECK(q != nullptr && q->kind == QuickKind::BodyHeight && q->data == -0.18f);
-    q = findQuickAction("ResumeMove");
-    CHECK(q != nullptr && q->kind == QuickKind::StopMove);
+    CHECK(q != nullptr && q->group == SportGroup::Advanced);
+    q = findQuickAction("AdjustYaw");
+    CHECK(q != nullptr && q->kind == QuickKind::AdjustOrientation);
+
+    // ★ 不设「恢复移动」：它就是 StopMove(1003)，动作库「基础姿态」里已经有「停止移动」。
+    //   再摆一个按钮 = 同一个功能两个入口（2026-10-11 用户指出后删除）。
+    CHECK_MSG(findQuickAction("ResumeMove") == nullptr, "不该再有「恢复移动」这个重复入口");
 
     CHECK(findQuickAction("NoSuchThing") == nullptr);
     CHECK(findQuickAction("") == nullptr);
@@ -135,6 +142,11 @@ void testQuickTable() {
     for (const auto& a : quickActions())
         for (const auto& b : quickActions())
             if (&a != &b) CHECK_MSG(std::string(a.key) != b.key, std::string("key 重复: ") + a.key);
+
+    // 也不能和动作库的 key 撞（两边共用同一张图标表与同一个网格）
+    for (const auto& q : quickActions())
+        for (const auto& a : sportActions())
+            CHECK_MSG(std::string(q.key) != a.key, std::string("与动作库 key 撞了: ") + q.key);
 }
 
 // ---------------------------------------------------------------- 舞蹈编排

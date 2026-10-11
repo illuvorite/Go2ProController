@@ -114,9 +114,6 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
 void drawDeviceList(RobotManager& mgr, UiState& ui);
 void drawDevicePanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
 void drawActionPage(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
-/// 动作执行页顶部的「快捷动作」一条（复合指令：姿态预设 / 平移 / 机身高度 / 脚本）。
-/// 实现在 ui_tianshu.cpp。
-void drawQuickActionSection(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
 /// 模式设置页（普通 / AI / MCF）。实现在 ui_tianshu.cpp。
 void drawModePage(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
 /// 舞蹈编排页（本地序列：新建 / 编辑 / 播放 / 删除 / 急停）。实现在 ui_tianshu.cpp。

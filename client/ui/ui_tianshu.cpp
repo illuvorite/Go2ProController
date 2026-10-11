@@ -1,8 +1,11 @@
 // ============================================================================
-// 对齐参考实现「天树探界遥控」Go2 页的三块界面：
-//   · 快捷动作（复合指令）—— 动作执行页顶部的一条
-//   · 模式设置页          —— 普通 / AI / MCF
-//   · 舞蹈编排页          —— 本地序列：新建 / 编辑 / 播放 / 删除 / 急停
+// 对齐参考实现「天树探界遥控」Go2 页的两块独立界面：
+//   · 模式设置页 —— 普通 / AI / MCF
+//   · 舞蹈编排页 —— 本地序列：新建 / 编辑 / 播放 / 删除 / 急停
+//
+// ⚠ 「快捷动作」（姿态预设 / 平移 / 机身高度 / 方向回正 / 原地踏步）**不在这里**：
+//   它们并进了动作库页的原有分组网格（见 ui_actions.cpp 的组循环）——
+//   参考实现本身就是"一个网格"，另起一条会让同一个功能有两个入口。
 //
 // 为什么单独一个 TU：这几块逻辑彼此相关（都源自同一份参考实现），
 // 但跟既有的"遥控 / 动作库"两块界面关系不大 —— 塞进 ui_actions.cpp 只会让它更长。
@@ -17,7 +20,6 @@
 #include "command_service.hpp"
 #include "dance.hpp"
 #include "icons.hpp"
-#include "quick_actions.hpp"
 #include "theme.hpp"
 
 #include <cstdio>
@@ -55,52 +57,12 @@ std::string stepLabel(const std::string& key) {
     if (key == "wait") return "等待";
     for (const SportAction& a : sportActions())
         if (key == a.key) return a.label;
-    for (const QuickAction& q : quickActions())
-        if (key == q.key) return q.label;
+    // 注：编排里只能选动作表里的动作；快捷动作（脚本）不进编排 —— 它们的时序
+    //     自己就带节奏（平衡站立前置 / 连发再停），跟"按 delay 顺序播放"是两回事。
     return key;
 }
 
-/// 触发一条快捷动作（脚本型会在后台按节奏下发）
-void runQuick(RobotManager& mgr, UiState& ui, const QuickAction& q) {
-    const auto sink = std::make_shared<ManagerSink>(mgr, ui);
-    const int n = cmd::runQuickAction(sink, ui, q.key);
-    if (n < 0)
-        ui.addLog(std::string("[快捷动作] 未知动作: ") + q.key);
-    else if (n == 0)
-        ui.addLog(std::string("[快捷动作] ") + q.label +
-                  " 未执行：急停锁定中或没有受控就绪设备");
-    else
-        ui.addLog(std::string("[快捷动作] ") + q.label + " → " + std::to_string(n) + " 台");
-}
-
 }  // namespace
-
-// ---------------------------------------------------------------- 快捷动作
-
-void drawQuickActionSection(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
-    using namespace go2::icon;  // NOLINT
-    const bool ic = iconFontLoaded();
-    sectionTitle(ic ? (std::string(Wave) + " 快捷动作").c_str() : "快捷动作");
-
-    const float gap = ImGui::GetStyle().ItemSpacing.x;
-    const float h = g_touchUi ? 44.0f : 32.0f;  // 触摸要 44dp 起，鼠标可以矮一点
-    const float w = std::max(88.0f, (L.actAreaW - gap * 3.0f) / 4.0f);  // 一行 4 个
-    int col = 0;
-    for (const QuickAction& q : quickActions()) {
-        const std::string label =
-            ic ? std::string(iconGlyph(q.key, q.label)) + " " + q.label : std::string(q.label);
-        if (col > 0 && col % 4 != 0) ImGui::SameLine();
-        // 「恢复移动」是安全方向（StopMove），单独给个蓝色，跟其它动作区分开
-        const bool safe = (q.kind == QuickKind::StopMove);
-        if (safe) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.45f, 0.80f, 0.85f));
-        const bool hit = ImGui::Button(label.c_str(), ImVec2(w, h));
-        if (safe) ImGui::PopStyleColor();
-        helpTip(q.hint);
-        if (hit) runQuick(mgr, ui, q);
-        ++col;
-    }
-    ImGui::NewLine();
-}
 
 // ---------------------------------------------------------------- 模式设置页
 
