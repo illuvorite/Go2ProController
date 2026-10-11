@@ -54,14 +54,16 @@ assets/web/
 
 | 字段 | 说明 |
 |---|---|
-| `robots[]` | `{ip, name, label, selected, battery, mode, state, ready}` |
+| `robots[]` | `{ip, name, label, selected, battery, mode, sn, model, state, ready}`（`model` = `Air`/`Pro`/`Edu`，空 = 拿不到 SN，由多播发现给出） |
 | `selectedCount` / `target` / `batteryMin` | 受控台数 / 一句话（`单控 · 名字`）/ 受控里最低电量 |
-| `actions[]` | `{key, label, group(0-5), risky, toggle, ack?}`（group=1 是 Gait 组，前端跳过；`ack` 为上次回执 code——0 成功 / 3203 固件不支持，未试过不下发该字段） |
-| `toggles` | 开关型动作当前状态（`{key: bool}`） |
+| `controlModel` | **受控集合的机型**（`Air`/`Pro`/`Edu`）。空 = 机型未知或群控混机型 —— 此时动作库不做机型过滤 |
+| `actions[]` | `{key, label, group(0-5), risky, toggle, ack?}`（group=1 是 Gait 组，前端跳过；`ack` 为**该机型**上次回执 code——0 成功 / 非 0 本机型不支持，未试过不下发该字段） |
+| `toggles` | 开关型动作当前状态（`{key: bool}`）。★ 开关是"乐观置位 + 回执确认"：点击后立刻为 `true`，若机器人拒绝（且自动换 id 重试也没成功）会在约 2.5s 后**回滚**成 `false` —— 前端不需要自己处理，跟着轮询结果刷新即可 |
 | `params` | `maxLinSpeed / yawRate / speedScale / bodyHeight / footRaise / speedLevel / gaitType / mcf / privacy / hideUnsupported` |
 | `cmd` | 最近一次下发的 `{vx, vy, vz}` |
 | `log[]` | 最近 40 条日志（新版在前） |
 | `estop` / `problemUnread` / `keyCount` / `scanning` | 急停锁 / 未读异常数 / 钥匙数 / 局域网扫描中 |
+| `poseMode` | 「摆姿势」是否开启。**开时摇杆语义变成"调姿态"**（服务端下发 `Euler` 而非 `Move`），前端据此改摇杆标签与提示 |
 | `keyScan` | `{running, note, candidates[]}` —— 「从机器狗找钥匙」的结果 |
 
 ### `POST /api/command`（body 为 JSON，返回 `{ok[, error]}`）

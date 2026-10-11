@@ -148,16 +148,21 @@ void drawJoysticks(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     drawJoystickAt("##joyR", fg, cxR, L.joyCenterY, L.joyRadius, rx, ry, rActive);
 
     // 杆下方的极简标签
+    // ★ 「摆姿势」开着时标签跟着变：这时摇杆**不走路**，只让狗上下左右摆姿势
+    //   （与参考实现「天树探界遥控」一致：把 move 换成 euler）。标签不改的话
+    //   用户会以为"推了没反应"。
+    const bool poseMode = ui.toggleState("Pose");
     const ImU32 dim = ImGui::GetColorU32(ImVec4(1, 1, 1, 0.38f));
     const float fs = ImGui::GetFontSize() * 0.95f;
     ImFont* font = ImGui::GetFont();
-    const char* labels[2] = {"左 · 移动", "右 · 转向"};
+    const char* labels[2] = {poseMode ? "左 · 摆姿势（左右/前后）" : "左 · 移动",
+                             poseMode ? "右 · 摆姿势（扭转）" : "右 · 转向"};
     const float xs[2] = {cxL, cxR};
     for (int i = 0; i < 2; ++i) {
         const ImVec2 sz = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, labels[i]);
         fg->AddText(font, fs,
-                    ImVec2(xs[i] - sz.x * 0.5f, L.joyCenterY + L.joyRadius + 8.0f), dim,
-                    labels[i]);
+                    ImVec2(xs[i] - sz.x * 0.5f, L.joyCenterY + L.joyRadius + 8.0f),
+                    poseMode ? ImGui::GetColorU32(col::kAccent) : dim, labels[i]);
     }
 
     // ---- 两杆中间：「单控 / 群控」面板（用户要求按钮放这里）----

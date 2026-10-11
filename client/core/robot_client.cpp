@@ -716,7 +716,7 @@ void RobotClient::handleMessageImpl(const std::string& text) {
         }
 
         if (r.parsed && r.isSport) {
-            if (onSportAck) onSportAck(r.apiId, r.code, note);
+            if (onSportAck) onSportAck(targetIp_, r.apiId, r.code, note);
             // 被拒：先看是不是"刚就绪预热"（可自动重发），否则换另一套指令集再试
             if (r.code != 0 && r.apiId != 0 && !scheduleRetryFor(r.apiId))
                 tryAlternateApiId(r.apiId);

@@ -43,14 +43,18 @@ STATE = {
     'keyCount': 4,
     'params': {'maxLinSpeed': 0.60, 'yawRate': 1.20, 'speedScale': 0.50,
                'bodyHeight': 0.28, 'footRaise': 0.06, 'speedLevel': 1,
-               'gaitType': 1, 'mcf': False, 'privacy': False},
+               'gaitType': 1, 'mcf': False, 'privacy': False, 'hideUnsupported': False},
     'cmd': {'vx': 0.0, 'vy': 0.0, 'vz': 0.0},
-    'toggles': {'FreeWalk': True},
+    'toggles': {'Pose': True, 'FreeWalk': True},
+    # 受控集合的机型（空串 = 机型未知/混机型 → 前端不做机型过滤）
+    'controlModel': 'Pro',
     'robots': [
         {'ip': '192.168.123.161', 'name': '小黑', 'label': '小黑', 'selected': True,
-         'battery': 78.0, 'mode': 'pro', 'state': '就绪', 'ready': True},
+         'battery': 78.0, 'mode': 'pro', 'sn': 'B210223456789ABC', 'model': 'Pro',
+         'state': '就绪', 'ready': True},
         {'ip': '192.168.123.18', 'name': '', 'label': '192.168.123.18', 'selected': False,
-         'battery': 42.0, 'mode': 'air', 'state': '未连接', 'ready': False},
+         'battery': 42.0, 'mode': 'air', 'sn': 'B210123456789ABC', 'model': 'Air',
+         'state': '未连接', 'ready': False},
     ],
     'actions': [
         {'key': 'Damp', 'label': '阻尼', 'group': 0, 'risky': False, 'toggle': False},
@@ -67,9 +71,13 @@ STATE = {
         {'key': 'Dance1', 'label': '舞蹈 1', 'group': 2, 'risky': False, 'toggle': False},
         {'key': 'Dance2', 'label': '舞蹈 2', 'group': 2, 'risky': False, 'toggle': False},
         {'key': 'MoonWalk', 'label': '太空步', 'group': 2, 'risky': False, 'toggle': False},
+        # 摆姿势：持续模式开关（开着的状态见上面的 toggles）
+        {'key': 'Pose', 'label': '摆姿势', 'group': 2, 'risky': False, 'toggle': True},
         {'key': 'FreeWalk', 'label': '自由行走', 'group': 2, 'risky': False, 'toggle': True},
         {'key': 'FrontJump', 'label': '前跳', 'group': 3, 'risky': True, 'toggle': False},
-        {'key': 'BackFlip', 'label': '后空翻', 'group': 3, 'risky': True, 'toggle': False},
+        # ack=3203：本机型（Pro）试过且被拒 → 悬停/勾「隐藏机型不支持的」时可看出效果
+        {'key': 'BackFlip', 'label': '后空翻', 'group': 3, 'risky': True, 'toggle': False,
+         'ack': 3203},
         {'key': 'LeftFlip', 'label': '左空翻', 'group': 3, 'risky': True, 'toggle': False},
         {'key': 'RightFlip', 'label': '右空翻', 'group': 3, 'risky': True, 'toggle': False},
         {'key': 'Handstand', 'label': '倒立', 'group': 3, 'risky': True, 'toggle': False},
@@ -137,6 +145,10 @@ class Handler(BaseHTTPRequestHandler):
                 else:                   # one：只控这一台
                     r['selected'] = (r['ip'] == body.get('ip'))
             cnt = sum(1 for r in STATE['robots'] if r['selected'])
+            # 受控机型：全部同机型才算数，混机型/有机型未知 → 空串（与 C++ 端 controlModel() 同语义）
+            sel = [r for r in STATE['robots'] if r['selected']]
+            models = {r.get('model') or '' for r in sel}
+            STATE['controlModel'] = models.pop() if (sel and len(models) == 1 and '' not in models) else ''
             STATE['selectedCount'] = cnt
             if cnt == 0:
                 STATE['target'] = '未选择受控'

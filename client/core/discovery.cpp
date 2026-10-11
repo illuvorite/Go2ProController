@@ -57,9 +57,8 @@ constexpr const char* kSnQueryName = "unitree_dapengche";
 
 }  // namespace
 
-std::vector<std::string> Discovery::localSubnets() {
+std::vector<std::string> Discovery::localIPv4Addresses() {
 #ifdef _WIN32
-    // Windows：GetAdaptersAddresses 枚举本机 IPv4，取 /24
     std::set<std::string> winOut;
     ULONG size = 16 * 1024;
     std::vector<char> buf(size);
@@ -76,44 +75,47 @@ std::vector<std::string> Discovery::localSubnets() {
     for (auto* a = addrs; a; a = a->Next) {
         if (a->OperStatus != IfOperStatusUp) continue;
         for (auto* ua = a->FirstUnicastAddress; ua; ua = ua->Next) {
-            if (!ua->Address.lpSockaddr ||
-                ua->Address.lpSockaddr->sa_family != AF_INET)
-                continue;
-            const auto* sin =
-                reinterpret_cast<const sockaddr_in*>(ua->Address.lpSockaddr);
+            if (!ua->Address.lpSockaddr || ua->Address.lpSockaddr->sa_family != AF_INET) continue;
+            const auto* sin = reinterpret_cast<const sockaddr_in*>(ua->Address.lpSockaddr);
             char ip[INET_ADDRSTRLEN] = {0};
             if (!::inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip))) continue;
             const std::string ws(ip);
             if (ws.rfind("127.", 0) == 0 || ws.rfind("169.254.", 0) == 0) continue;
-            const size_t pos = ws.rfind('.');
-            if (pos != std::string::npos) winOut.insert(ws.substr(0, pos) + ".0/24");
+            winOut.insert(ws);
         }
     }
     return {winOut.begin(), winOut.end()};
 #else
-
     std::set<std::string> out;
     struct ifaddrs* ifs = nullptr;
     if (getifaddrs(&ifs) != 0) return {};
-
     for (struct ifaddrs* ifa = ifs; ifa; ifa = ifa->ifa_next) {
         if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
         const auto* sa = reinterpret_cast<const sockaddr_in*>(ifa->ifa_addr);
         char buf[INET_ADDRSTRLEN] = {0};
         if (!inet_ntop(AF_INET, &sa->sin_addr, buf, sizeof(buf))) continue;
-
         const std::string ip(buf);
-        if (ip.rfind("127.", 0) == 0) continue;      // 回环
-        if (ip.rfind("169.254.", 0) == 0) continue;  // 链路本地
-
-        const size_t pos = ip.rfind('.');
-        if (pos == std::string::npos) continue;
-        out.insert(ip.substr(0, pos) + ".0/24");
+        if (ip.rfind("127.", 0) == 0) continue;
+        if (ip.rfind("169.254.", 0) == 0) continue;
+        out.insert(ip);
     }
     freeifaddrs(ifs);
     return {out.begin(), out.end()};
 #endif
 }
+
+std::vector<std::string> Discovery::localSubnets() {
+    // 由地址列表推出 /24 —— 两处口径必须一致（过滤规则只有一份）
+    std::set<std::string> out;
+    for (const auto& ip : localIPv4Addresses()) {
+        const size_t pos = ip.rfind('.');
+        if (pos == std::string::npos) continue;
+        out.insert(ip.substr(0, pos) + ".0/24");
+    }
+    return {out.begin(), out.end()};
+}
+// （原 localSubnets 的按平台实现已上移：现在统一由 localIPv4Addresses() 推出 /24，
+//   过滤规则只留一份，避免"地址列表"和"网段列表"两处口径漂移。）
 
 bool Discovery::tcpPortOpen(const std::string& ip, uint16_t port, int timeoutMs) {
 #ifdef _WIN32
@@ -321,38 +323,19 @@ std::vector<std::pair<std::string, std::string>> Discovery::multicastSnScan(
     int timeoutMs, const std::function<void(const std::string&)>& progress) {
 
     std::vector<std::pair<std::string, std::string>> out;
+    std::set<std::string> seenSn;  // 同一台狗在多张网卡上都可能回一次 → 按 SN 去重
 
-    const int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) return out;
-
-    int reuse = 1;
-    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-
-    sockaddr_in local{};
-    local.sin_family = AF_INET;
-    local.sin_addr.s_addr = htonl(INADDR_ANY);
-    local.sin_port = htons(kSnRecvPort);
-    if (::bind(fd, reinterpret_cast<sockaddr*>(&local), sizeof(local)) != 0) {
-        if (progress)
-            progress("多播发现跳过：本机 " + std::to_string(kSnRecvPort) +
-                     " 端口被占用（另一个客户端正在运行？）");
-        ::close(fd);
+    const std::vector<std::string> ifaces = localIPv4Addresses();
+    if (ifaces.empty()) {
+        if (progress) progress("多播发现跳过：本机没有可用的 IPv4 网卡");
         return out;
     }
-
-    ip_mreq mreq{};
-    mreq.imr_multiaddr.s_addr = ::inet_addr(kSnQueryGroup);
-    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-    if (::setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
-        if (progress) progress("多播发现跳过：加入多播组失败（该网卡可能不支持多播）");
-        ::close(fd);
-        return out;
+    // 打出实际使用的网卡：多播"0 回包"时，第一眼要看的就是它到底从哪张网卡发的
+    if (progress) {
+        std::string list;
+        for (const auto& a : ifaces) list += (list.empty() ? "" : ", ") + a;
+        progress("多播发现：经 " + std::to_string(ifaces.size()) + " 张网卡查询 SN -> " + list);
     }
-
-    timeval tv{};
-    tv.tv_sec = 0;
-    tv.tv_usec = 200 * 1000;  // 发送间隔期用短超时抢收回复
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     sockaddr_in target{};
     target.sin_family = AF_INET;
@@ -360,50 +343,102 @@ std::vector<std::pair<std::string, std::string>> Discovery::multicastSnScan(
     target.sin_port = htons(kSnQueryPort);
 
     const std::string query = std::string("{\"name\":\"") + kSnQueryName + "\"}";
-    std::set<std::string> seenSn;
 
-    auto collect = [&]() {
-        char buf[1024];
-        for (;;) {
-            sockaddr_in from{};
-            socklen_t fromLen = sizeof(from);
-            const ssize_t n = ::recvfrom(fd, buf, sizeof(buf) - 1, 0,
-                                         reinterpret_cast<sockaddr*>(&from), &fromLen);
-            if (n <= 0) return;
-            buf[n] = '\0';
-            nlohmann::json j;
-            try {
-                j = nlohmann::json::parse(buf);
-            } catch (...) {
-                continue;
+    // ★ 逐张网卡各发一遍 —— 见 hpp 里 localIPv4Addresses() 的说明。
+    //   只用 INADDR_ANY 时，Android 会把多播出口落到蜂窝、多网卡 PC 会落到
+    //   虚拟网卡，机器狗收不到查询；现象是"绑定/入组/发送全成功但 0 回包"。
+    for (size_t i = 0; i < ifaces.size(); ++i) {
+        const std::string& bindIp = ifaces[i];
+        const int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+        if (fd < 0) continue;
+
+        int reuse = 1;
+        ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+        sockaddr_in local{};
+        local.sin_family = AF_INET;
+        local.sin_addr.s_addr = htonl(INADDR_ANY);
+        local.sin_port = htons(kSnRecvPort);
+        if (::bind(fd, reinterpret_cast<sockaddr*>(&local), sizeof(local)) != 0) {
+            if (progress && i == 0)
+                progress("多播发现跳过：本机 " + std::to_string(kSnRecvPort) +
+                         " 端口被占用（另一个客户端正在运行？）");
+            ::close(fd);
+            continue;
+        }
+
+        in_addr ifAddr{};
+        if (::inet_pton(AF_INET, bindIp.c_str(), &ifAddr) != 1) {
+            ::close(fd);
+            continue;
+        }
+        // 出口网卡 + 入组网卡都钉死在这张网卡上（两个都要设：只设一个不够）
+        ::setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &ifAddr, sizeof(ifAddr));
+
+        ip_mreq mreq{};
+        mreq.imr_multiaddr.s_addr = ::inet_addr(kSnQueryGroup);
+        mreq.imr_interface = ifAddr;
+        if (::setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
+            if (progress) progress("多播发现跳过：在 " + bindIp + " 上加入多播组失败");
+            ::close(fd);
+            continue;
+        }
+
+        auto setRecvTimeout = [&](int ms) {
+            timeval tv{};
+            tv.tv_sec = ms / 1000;
+            tv.tv_usec = (ms % 1000) * 1000;
+            ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        };
+
+        // 收一轮（反复 recvfrom 直到超时）
+        auto collect = [&]() {
+            char buf[1024];
+            for (;;) {
+                sockaddr_in from{};
+                socklen_t fromLen = sizeof(from);
+                const ssize_t n = ::recvfrom(fd, buf, sizeof(buf) - 1, 0,
+                                             reinterpret_cast<sockaddr*>(&from), &fromLen);
+                if (n <= 0) return;
+                buf[n] = '\0';
+                nlohmann::json j;
+                try {
+                    j = nlohmann::json::parse(buf);
+                } catch (...) {
+                    continue;  // 不是我们能认的包（别人也在用这个多播组？）就丢掉
+                }
+                const std::string sn = j.value("sn", "");
+                if (sn.empty() || !seenSn.insert(sn).second) continue;
+                char ipBuf[INET_ADDRSTRLEN] = {0};
+                ::inet_ntop(AF_INET, &from.sin_addr, ipBuf, sizeof(ipBuf));
+                std::string ip = j.value("ip", std::string(ipBuf));
+                if (progress) progress("多播发现: SN=" + sn + " IP=" + ip + " (经 " + bindIp + ")");
+                out.emplace_back(sn, ip);
             }
-            const std::string sn = j.value("sn", "");
-            if (sn.empty() || !seenSn.insert(sn).second) continue;
-            char ipBuf[INET_ADDRSTRLEN] = {0};
-            ::inet_ntop(AF_INET, &from.sin_addr, ipBuf, sizeof(ipBuf));
-            std::string ip = j.value("ip", std::string(ipBuf));
-            if (progress) progress("多播发现: SN=" + sn + "  IP=" + ip);
-            out.emplace_back(sn, ip);
-        }
-    };
+        };
 
-    for (int attempt = 0; attempt < 3; ++attempt) {
-        if (::sendto(fd, query.data(), query.size(), 0,
-                     reinterpret_cast<sockaddr*>(&target), sizeof(target)) < 0) {
-            if (progress)
-                progress("多播发现跳过：发送查询失败（多播路由不可用，改用网段扫描）");
-            break;
+        bool sendOk = true;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            if (::sendto(fd, query.data(), query.size(), 0,
+                         reinterpret_cast<sockaddr*>(&target), sizeof(target)) < 0) {
+                sendOk = false;
+                break;
+            }
+            setRecvTimeout(220);  // 发送间隔期用短超时抢收回复
+            collect();
         }
-        collect();
+        if (!sendOk) {
+            if (progress && i == 0)
+                progress("多播发现跳过：在 " + bindIp + " 上发送查询失败（多播路由不可用）");
+        } else {
+            // 第一张网卡给足等待时间；后续网卡短等即可（同一台狗不会只回某一张网卡）
+            setRecvTimeout(i == 0 ? timeoutMs : (timeoutMs < 700 ? timeoutMs : 700));
+            collect();
+        }
+
+        ::setsockopt(fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, sizeof(mreq));
+        ::close(fd);
     }
-
-    tv.tv_usec = (timeoutMs % 1000) * 1000;
-    tv.tv_sec = timeoutMs / 1000;
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    collect();
-
-    ::setsockopt(fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, sizeof(mreq));
-    ::close(fd);
     return out;
 }
 

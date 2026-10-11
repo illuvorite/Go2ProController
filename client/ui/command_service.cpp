@@ -55,6 +55,14 @@ namespace {
 /// 即便有人把 maxLinSpeed / yawRate 配成了离谱的值，下发出去也不会超过这两个数。
 constexpr float kHardMaxLin = 1.5f;  // m/s
 constexpr float kHardMaxYaw = 2.0f;  // rad/s
+
+/// 「摆姿势」模式下摇杆满推对应的最大姿态角（弧度）。
+/// 取值对齐参考实现「天树探界遥控」：它把摇杆行程直接当 euler 角用，
+/// 左右倾斜最多 1.0、前后俯仰与扭转最多 0.8。这里照抄同样的量级，
+/// 想更保守就改这三个数 —— 只此一处。
+constexpr float kPoseMaxRoll = 1.0f;
+constexpr float kPoseMaxPitch = 0.8f;
+constexpr float kPoseMaxYaw = 0.8f;
 }  // namespace
 
 int resolveApiId(const UiState& ui, const SportAction& a, bool* fellBack) {
@@ -99,12 +107,60 @@ int forEachSelected(CommandSink& sink, const std::function<bool(const std::strin
 int moveSelected(CommandSink& sink, const UiState& ui, float x, float y, float z) {
     // 安全语义：急停锁定期间绝不下发运动（见 hpp 里的说明）
     if (ui.estop.load()) return 0;
+    // ★ 摆姿势开着 → 摇杆只调姿态、不走路（与参考实现「天树探界」一致）。
+    //   判断放这里而不是各界面里：桌面 / 网页 / 安卓共用同一处，
+    //   不会出现"一个界面在摆姿势、另一个界面还在让狗走"的互抢。
+    if (ui.toggleState("Pose")) return poseAdjustSelected(sink, ui, x, y, z);
     nlohmann::json p = nlohmann::json::object();
     p["x"] = x;
     p["y"] = y;
     p["z"] = z;
     return forEachSelected(sink, [&](const std::string& ip) {
         return sink.sendSport(ip, kApiMove, p);
+    });
+}
+
+/// 指令表里按 key 找一条（找不到返回 nullptr）
+const SportAction* actionByKey(const char* key) {
+    for (const SportAction& a : sportActions())
+        if (std::string(a.key) == key) return &a;
+    return nullptr;
+}
+
+int poseAdjustSelected(CommandSink& sink, const UiState& ui, float x, float y, float z) {
+    const SportAction* euler = actionByKey("Euler");
+    if (!euler) return 0;
+    const int id = resolveApiId(ui, *euler);
+    if (id == 0) return 0;  // 当前指令集没有 Euler 这条 → 不发（不要退化成 Move）
+
+    // 归一化成"摇杆行程比例"：除以上限就是满推时的比例。
+    // 上限沿用 clampMotion 的取值口径（界面设置与硬上限取小），保证同一个杆位
+    // 在"走路"和"摆姿势"两种模式下的相对力度一致。
+    const float rawLin = ui.maxLinSpeed.load();
+    const float rawYaw = ui.yawRate.load();
+    const float lin =
+        (std::isfinite(rawLin) && rawLin > 0.0f) ? std::min(rawLin, kHardMaxLin) : kHardMaxLin;
+    const float yaw =
+        (std::isfinite(rawYaw) && rawYaw > 0.0f) ? std::min(rawYaw, kHardMaxYaw) : kHardMaxYaw;
+
+    const auto ratio = [](float v, float full) {
+        if (!std::isfinite(v) || full <= 0.0f) return 0.0f;
+        return std::clamp(v / full, -1.0f, 1.0f);
+    };
+    const float nx = ratio(x, lin);  // 前后（正=前进）
+    const float ny = ratio(y, lin);  // 左右（正=左）
+    const float nz = ratio(z, yaw);  // 转向（正=左转）
+
+    nlohmann::json p = nlohmann::json::object();
+    // 符号按参考实现定：
+    //   roll  = -左右 → 左倾为负（我方正 y = 左，故取负）
+    //   pitch = -前后 → 抬头为负（我方正 x = 前进，故取负）
+    //   yaw   = +转向 → 左扭为正（我方正 z = 左转，符号一致）
+    p["x"] = -ny * kPoseMaxRoll;
+    p["y"] = -nx * kPoseMaxPitch;
+    p["z"] = nz * kPoseMaxYaw;
+    return forEachSelected(sink, [&](const std::string& ip) {
+        return sink.sendSport(ip, id, p);
     });
 }
 
@@ -181,16 +237,27 @@ int quickMove(CommandSink& sink, const UiState& ui, const std::string& dir) {
 int dispatchToggle(CommandSink& sink, UiState& ui, const SportAction& a, bool on) {
     const int id = resolveApiId(ui, a);
     if (id == 0) return 0;
+    const bool prev = ui.toggleState(a.key);  // 回滚目标（发送前的状态）
     nlohmann::json p = nlohmann::json::object();
     p["data"] = on;
     const int n = forEachSelected(sink, [&](const std::string& ip) {
         return sink.sendSport(ip, id, p);
     });
+    // ★ 关闭「摆姿势」时额外补一条 StopMove —— 参考实现（天树探界遥控）里
+    //   `commandsNeedStopMove = ['freejump','freebound','pose']` 就是这么做的：
+    //   摆姿势期间摇杆一直在下发 Euler，退出时把最后一次摆动速度收干净，
+    //   否则松手/关闭后狗还会带着一点"摆动余速"。
+    if (!on && std::string(a.key) == "Pose")
+        forEachSelected(sink, [&](const std::string& ip) { return sink.stopMove(ip); });
     ui.setToggle(a.key, on);
     // 记录"真正开过的开关"（含另一套指令集的 id）—— 急停只关这些，避免把通道灌爆
     std::vector<int> ids{id};
     for (int alt : alternateApiIds(id)) ids.push_back(alt);
     for (int tid : ids) ui.setToggleActive(tid, on);
+    // ★ 置位是**乐观**的，同时挂一条"待确认"：机器人拒绝这条指令时（回执 code≠0 且
+    //   自动换 id 重试也没成功），`reapUnconfirmedToggles` 会把状态回滚回去。
+    //   没有这一步，界面会在不支持的机型上谎报"已开启"，摆姿势还会顺手把摇杆换成 Euler。
+    ui.noteToggleSent(a.key, ids, on, prev, n);
     return n;
 }
 

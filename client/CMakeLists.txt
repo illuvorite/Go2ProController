@@ -113,6 +113,7 @@ add_library(go2_core STATIC
     core/local_keys.cpp
     core/webrtc_transport.cpp
     core/sport_library.cpp
+    core/robot_model.cpp
     core/unitree_cloud.cpp
 )
 target_include_directories(go2_core PUBLIC core platform)
@@ -258,6 +259,13 @@ target_include_directories(sport_library_test PRIVATE core)
 target_link_libraries(sport_library_test PRIVATE nlohmann_json::nlohmann_json)
 go2_add_warnings(sport_library_test)
 add_test(NAME sport_library_test COMMAND sport_library_test)
+
+# ---- 机型识别（纯逻辑）：SN 第 5 位 → Air / Pro / Edu ----
+# 这条映射是"动作库按机型过滤"的唯一依据，判错一位就会藏掉能用的动作。
+add_executable(robot_model_test tests/robot_model_test.cpp core/robot_model.cpp)
+target_include_directories(robot_model_test PRIVATE core)
+go2_add_warnings(robot_model_test)
+add_test(NAME robot_model_test COMMAND robot_model_test)
 
 # ---- 协议回放测试（M2-6）----
 # 把固化报文喂给纯解析函数。fixture 目录用编译期常量传进去（绝对路径），

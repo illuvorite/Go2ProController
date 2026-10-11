@@ -492,9 +492,14 @@ void managerWireUp(go2::RobotManager& mgr, go2::UiState& ui) {
             pc->subscribe("rt/lf/sportmodestate");
             pc->subscribe("rt/lf/lowstate");
         };
-        // 动作回执 → 动作库界面的 ✓/✗ 标注
-        c.onSportAck = [&ui](int apiId, int code, const std::string& note) {
-            ui.noteApiResult(apiId, code, note);
+        // 动作回执 → 动作库界面的 ✓/✗ 标注（带 ip：按机型分开记录）
+        c.onSportAck = [&ui](const std::string& ackIp, int apiId, int code, const std::string& note) {
+            ui.noteApiResult(ackIp, apiId, code, note);
+        };
+        // 握手成功 → 用"命中 GCM 的那把钥匙"反查 SN 得到机型（不依赖多播 SN 发现）
+        c.onHandshake = [&ui](const std::string& hsIp, int, const std::string& usedKeyHex) {
+            const std::string model = ui.noteHandshakeKey(hsIp, usedKeyHex);
+            if (!model.empty()) ui.addLog("[机型] " + hsIp + " → Go2 " + model + "（由钥匙反查 SN）");
         };
         c.onTopicData = [&ui, pc](const std::string& topic, const nlohmann::json& msg) {
             float battery = -1.0f;
@@ -519,6 +524,7 @@ void managerWireUp(go2::RobotManager& mgr, go2::UiState& ui) {
     // 规矩：只读本应用专属目录里的钥匙文件，**不碰官方宇树 App 的任何东西**
     // （不读它的日志/私有数据，连路径都不再探测），也不扫描平板存储。
     const auto lk = go2::loadLocalAesKeys();
+    ui.setKeySnTable(lk.snByKey);  // key→SN 反查表：握手成功后据此定机型
     ui.localKeyCount = static_cast<int>(lk.keys.size());
     if (lk.keys.empty()) {
         const char* ext = SDL_AndroidGetExternalStoragePath();

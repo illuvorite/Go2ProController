@@ -27,6 +27,13 @@ export default {
       document.documentElement.style.setProperty('--band-h', (radius.value * 2 + 56) + 'px')
     })
 
+    // ★ 「摆姿势」开着时，摇杆**不走路**、只让狗上下左右摆姿势
+    //   （服务端把 Move 换成 Euler，与参考实现「天树探界遥控」一致）。
+    //   标签/提示必须跟着变，否则用户会以为"推了没反应"。
+    const poseMode = computed(() => !!store.st.poseMode)
+    const joyLabelL = computed(() => (poseMode.value ? '摆姿势 · 左右/前后' : '移动'))
+    const joyLabelR = computed(() => (poseMode.value ? '摆姿势 · 扭转' : '转向'))
+
     const lx = ref(0), ly = ref(0), rx = ref(0)
     let movingSent = false
     let timer = null
@@ -104,11 +111,12 @@ export default {
     function pickNone() { store.picker = false; cmd({ cmd: 'select', mode: 'none' }) }
 
     return { ICON, store, radius, lx, ly, rx, onChange, toggleSel, toggleAll, pick, pickNone, maskIp,
+             poseMode, joyLabelL, joyLabelR,
              batteryText: (v) => (v >= 0 ? Math.round(v) + '%' : '—') }
   },
   template: `
   <div class="band">
-    <Joystick class="joy-left" label="移动" :radius="radius" axis="xy"
+    <Joystick class="joy-left" :label="joyLabelL" :radius="radius" axis="xy"
               @change="v => onChange('L', v)" />
 
     <div class="band-panel">
@@ -143,6 +151,7 @@ export default {
         <span class="dot" :class="{ready: store.st.selectedCount > 0}"></span>
         {{ store.st.target || '未选择受控' }}
       </span>
+      <span v-if="poseMode" class="pose-hint">摆姿势中：摇杆只调姿态（左右/前后摆动 + 扭转），不会行走</span>
 
       <!-- 单控选择器：**向上弹**（底边贴着按钮顶边），点一台就只控它 -->
       <div v-if="store.picker" class="picker-backdrop" @click="store.picker = false"></div>
@@ -161,7 +170,7 @@ export default {
     </div>
 
     <!-- 两个杆都是 360° 全向（不锁方向）：旋钮跟着手指走满一圈 -->
-    <Joystick class="joy-right" label="转向" :radius="radius" axis="xy"
+    <Joystick class="joy-right" :label="joyLabelR" :radius="radius" axis="xy"
               @change="v => onChange('R', v)" />
   </div>
   `,

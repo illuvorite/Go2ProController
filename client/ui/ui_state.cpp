@@ -12,7 +12,11 @@
 
 #include "discovery.hpp"
 #include "robot_manager.hpp"
+#include "robot_model.hpp"
+#include "sport_library.hpp"  // labelForApiId：回滚日志要写中文动作名
 
+#include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <thread>
 
@@ -38,11 +42,26 @@ void UiState::addLog(const std::string& line) {
 
 // ---------------------------------------------------------------- 设备列表
 
-bool UiState::addOrUpdate(const std::string& ip, bool manual) {
+bool UiState::addOrUpdate(const std::string& ip, bool manual, const std::string& sn) {
+    const std::string model = sn.empty() ? std::string() : std::string(modelName(modelFromSn(sn)));
     std::lock_guard<std::mutex> lock(robotsMutex);
-    for (auto& r : robots)
-        if (r.ip == ip) return false;
-    robots.push_back({ip, false, manual, -1.0f, "-"});
+    for (auto& r : robots) {
+        if (r.ip != ip) continue;
+        // 已存在：补一次机型。典型场景 —— 先手动填 IP 加进来（没有 SN），
+        // 后一轮扫描/多播又拿到了 SN → 这里把机型补上，不用重加一台。
+        if (r.sn.empty() && !sn.empty()) {
+            r.sn = sn;
+            r.model = model;
+            saveDevicesLocked();
+        }
+        return false;
+    }
+    RobotEntry e;
+    e.ip = ip;
+    e.manual = manual;
+    e.sn = sn;
+    e.model = model;
+    robots.push_back(std::move(e));
     saveDevicesLocked();  // 列表要落盘，否则原生侧重启后"扫描到的狗就没了"
     return true;
 }
@@ -77,7 +96,16 @@ void UiState::loadDevices() {
             for (const auto& r : robots)
                 if (r.ip == ip) { dup = true; break; }
             if (dup) continue;  // 本次启动已经加过了（比如刚扫描到）→ 不重复
-            robots.push_back({ip, false, e.value("manual", false), -1.0f, "-"});
+            RobotEntry re;
+            re.ip = ip;
+            re.manual = e.value("manual", false);
+            re.sn = e.value("sn", std::string());
+            re.model = e.value("model", std::string());
+            // 老版本的 robot_devices.json 没有 sn/model 字段 → 这里补一次推导，
+            // 免得升级后所有历史设备都退化成"机型未知"
+            if (re.model.empty() && !re.sn.empty())
+                re.model = std::string(modelName(modelFromSn(re.sn)));
+            robots.push_back(std::move(re));
         }
     } catch (...) {
         // 文件损坏就当没存过 —— 绝不能因为一个列表文件让界面起不来
@@ -88,7 +116,10 @@ void UiState::saveDevicesLocked() const {
     nlohmann::json j = nlohmann::json::array();
     for (const auto& r : robots) {
         if (r.ip.empty()) continue;
-        j.push_back({{"ip", r.ip}, {"manual", r.manual}});
+        nlohmann::json o = {{"ip", r.ip}, {"manual", r.manual}};
+        if (!r.sn.empty()) o["sn"] = r.sn;        // 有才写：不拿空字段污染文件
+        if (!r.model.empty()) o["model"] = r.model;
+        j.push_back(std::move(o));
     }
     std::ofstream f("robot_devices.json", std::ios::trunc);
     if (f) f << j.dump(2) << "\n";
@@ -229,6 +260,60 @@ void UiState::setToggle(const std::string& key, bool on) {
 void UiState::clearToggles() {
     std::lock_guard<std::mutex> lock(toggleMutex);
     toggles.clear();
+    // 待确认也一并清掉：急停已经把开关全关了，别再过期回滚一次去"复活"某个开关
+    pendingToggles.clear();
+}
+
+void UiState::noteToggleSent(const std::string& key, const std::vector<int>& ids, bool want,
+                             bool prev, int sentCount) {
+    std::lock_guard<std::mutex> lock(toggleMutex);
+    PendingToggle p;
+    p.want = want;
+    p.prev = prev;
+    p.sent = sentCount;
+    p.ids = ids;
+    p.sentAt = std::chrono::steady_clock::now();
+    pendingToggles[key] = std::move(p);
+}
+
+int UiState::reapUnconfirmedToggles(double timeoutSeconds) {
+    std::vector<std::pair<std::string, PendingToggle>> expired;
+    {
+        std::lock_guard<std::mutex> lock(toggleMutex);
+        const auto now = std::chrono::steady_clock::now();
+        for (auto it = pendingToggles.begin(); it != pendingToggles.end();) {
+            const double age = std::chrono::duration<double>(now - it->second.sentAt).count();
+            if (age < timeoutSeconds) {
+                ++it;
+                continue;
+            }
+            // 回滚：状态回到发送前，"真正开过的开关"集合也一起还原
+            // （否则急停会去关一个从来没打开成功过的开关）
+            toggles[it->first] = it->second.prev;
+            for (int id : it->second.ids) {
+                if (it->second.prev)
+                    activeToggleIds.insert(id);
+                else
+                    activeToggleIds.erase(id);
+            }
+            expired.emplace_back(it->first, it->second);
+            it = pendingToggles.erase(it);
+        }
+    }
+    for (const auto& kv : expired) {
+        std::string name = kv.first;
+        if (!kv.second.ids.empty()) {
+            const std::string cn = labelForApiId(kv.second.ids.front());
+            if (!cn.empty()) name = cn;
+        }
+        // 回滚原因要分清：一种是"根本没发出去"（没有受控/就绪设备），
+        // 另一种是"发了但机器人没确认"。混成一句话会把排查方向带偏。
+        const std::string why = kv.second.sent > 0
+                                    ? "机器人没确认（未收到成功回执）"
+                                    : "没发给任何就绪设备";
+        addLog("[开关] " + name + " " + why + "，已回滚为" + (kv.second.prev ? "开" : "关"));
+    }
+    return static_cast<int>(expired.size());
 }
 
 std::map<std::string, bool> UiState::togglesSnapshot() const {
@@ -279,13 +364,145 @@ std::string UiState::controlTargetText() {
     return "群控 · " + std::to_string(ips.size()) + " 台";
 }
 
+// ---------------------------------------------------------------- 机型
+
+std::string UiState::modelOf(const std::string& ip) const {
+    std::lock_guard<std::mutex> lock(robotsMutex);
+    for (const auto& r : robots)
+        if (r.ip == ip) return r.model;
+    return {};
+}
+
+void UiState::setKeySnTable(std::vector<std::pair<std::string, std::string>> pairs) {
+    std::lock_guard<std::mutex> lock(keySnMutex);
+    keySn.clear();
+    for (auto& kv : pairs)
+        if (!kv.first.empty() && !kv.second.empty()) keySn[kv.first] = kv.second;
+}
+
+std::string UiState::noteHandshakeKey(const std::string& ip, const std::string& keyHex) {
+    if (ip.empty() || keyHex.empty()) return {};
+    std::string sn;
+    {
+        std::lock_guard<std::mutex> lock(keySnMutex);
+        auto it = keySn.find(keyHex);
+        if (it == keySn.end()) {
+            // 大小写不敏感地再找一次（用过的 key 由握手回传，大小写不保证）
+            std::string low = keyHex;
+            for (char& c : low)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            it = keySn.find(low);
+        }
+        if (it != keySn.end()) sn = it->second;
+    }
+    if (sn.empty()) return {};
+    const std::string model = modelName(modelFromSn(sn));
+    if (model.empty()) return {};  // SN 认不出机型（不是 Go2 三款）→ 不写、不猜
+    {
+        std::lock_guard<std::mutex> lock(robotsMutex);
+        for (auto& r : robots) {
+            if (r.ip != ip) continue;
+            if (r.sn == sn && r.model == model) return model;
+            r.sn = sn;
+            r.model = model;
+            saveDevicesLocked();
+            break;
+        }
+    }
+    return model;
+}
+
+std::string UiState::controlModel() const {
+    std::lock_guard<std::mutex> lock(robotsMutex);
+    std::string model;
+    bool any = false;
+    for (const auto& r : robots) {
+        if (!r.selected) continue;
+        any = true;
+        if (r.model.empty()) return {};        // 有一台机型未知 → 不做机型过滤
+        if (model.empty()) model = r.model;
+        else if (model != r.model) return {};  // 群控混机型 → 同样不过滤
+    }
+    return any ? model : std::string();
+}
+
+std::vector<std::string> UiState::controlModels() const {
+    std::lock_guard<std::mutex> lock(robotsMutex);
+    std::vector<std::string> out;
+    for (const auto& r : robots) {
+        if (!r.selected || r.model.empty()) continue;
+        if (std::find(out.begin(), out.end(), r.model) == out.end()) out.push_back(r.model);
+    }
+    return out;
+}
+
+UiState::ModelSupport UiState::modelSupport(int apiId) const {
+    UiState::ModelSupport s;
+    if (apiId == 0) return s;
+    std::vector<std::string> models;
+    {
+        std::lock_guard<std::mutex> lock(robotsMutex);
+        for (const auto& r : robots) {
+            if (!r.selected) continue;
+            // ★ 有任意一台**机型未知**的受控设备 → 整条判断作废（total 保持 0）：
+            //   宁可什么都不标，也不能按一半设备的信息去隐藏动作。
+            if (r.model.empty()) return s;
+            if (std::find(models.begin(), models.end(), r.model) == models.end())
+                models.push_back(r.model);
+        }
+    }
+    s.total = static_cast<int>(models.size());
+    if (s.total == 0) return s;
+    // 收完机型名再加 apiMutex（两把锁不嵌套，避免与 noteApiResult 形成反序）
+    std::lock_guard<std::mutex> lock(apiMutex);
+    for (const auto& m : models) {
+        auto mit = modelApiCode.find(m);
+        if (mit == modelApiCode.end()) continue;
+        auto it = mit->second.find(apiId);
+        if (it == mit->second.end()) continue;
+        ++s.recorded;
+        if (it->second != 0) {
+            ++s.failed;
+            s.rejectModels.push_back(m);
+        }
+    }
+    return s;
+}
+
 // ---------------------------------------------------------------- 动作回执
 
-void UiState::noteApiResult(int apiId, int code, const std::string& note) {
+void UiState::noteApiResult(const std::string& ip, int apiId, int code, const std::string& note) {
     if (apiId == 0) return;
-    std::lock_guard<std::mutex> lock(apiMutex);
-    apiCode[apiId] = code;
-    apiNote[apiId] = note;
+    // 先查机型（内部只持 robotsMutex，与下面的 apiMutex 无嵌套，不会死锁）
+    const std::string model = ip.empty() ? std::string() : modelOf(ip);
+    {
+        std::lock_guard<std::mutex> lock(apiMutex);
+        apiCode[apiId] = code;
+        apiNote[apiId] = note;
+        if (!model.empty()) {
+            auto& codes = modelApiCode[model];
+            auto it = codes.find(apiId);
+            const bool changed = (it == codes.end() || it->second != code);
+            codes[apiId] = code;
+            modelApiNote[model][apiId] = note;
+            // ★ 只在**结果变化**时落盘：摇杆的移动指令 (1008) 会以 10Hz 回执，
+            //   每次 ack 都写一次文件会把磁盘打满（而且内容根本没变）。
+            if (changed) saveModelCapsLocked();
+        }
+    }
+    // ★ 成功的回执 = 对应的「持续模式开关」真的生效了 → 撤掉它的"待确认"。
+    //   注意两条指令集都要认：被拒后客户端会自动换另一套 api_id 重试，
+    //   成功的那次用的是备用 id（pendingToggles 里两个 id 都记着）。
+    if (code == 0) {
+        std::lock_guard<std::mutex> lock(toggleMutex);
+        for (auto it = pendingToggles.begin(); it != pendingToggles.end();) {
+            const auto& ids = it->second.ids;
+            if (std::find(ids.begin(), ids.end(), apiId) != ids.end())
+                it = pendingToggles.erase(it);  // 确认：保持现状，不再回滚
+            else
+                ++it;
+        }
+    }
 }
 
 bool UiState::apiResult(int apiId, int* code, std::string* note) {
@@ -298,6 +515,85 @@ bool UiState::apiResult(int apiId, int* code, std::string* note) {
         *note = (nt == apiNote.end()) ? std::string() : nt->second;
     }
     return true;
+}
+
+bool UiState::apiResultForModel(const std::string& model, int apiId, int* code, std::string* note) {
+    if (!model.empty()) {
+        bool hit = false;
+        int c = -1;
+        std::string n;
+        {
+            std::lock_guard<std::mutex> lock(apiMutex);
+            auto mit = modelApiCode.find(model);
+            if (mit != modelApiCode.end()) {
+                auto it = mit->second.find(apiId);
+                if (it != mit->second.end()) {
+                    hit = true;
+                    c = it->second;
+                    auto nmit = modelApiNote.find(model);
+                    if (nmit != modelApiNote.end()) {
+                        auto nt = nmit->second.find(apiId);
+                        if (nt != nmit->second.end()) n = nt->second;
+                    }
+                }
+            }
+        }
+        if (hit) {
+            if (code) *code = c;
+            if (note) *note = n;
+            return true;  // ★ 机型有记录就用它，**不回退**全局 —— 否则 Air 的失败会污染 Pro
+        }
+    }
+    // 机型未知 / 该机型还没试过 → 退回全局记录（不能在上面持锁时调用 apiResult）
+    return apiResult(apiId, code, note);
+}
+
+void UiState::loadModelCaps() {
+    std::ifstream f("robot_model_caps.json");
+    if (!f) return;
+    try {
+        nlohmann::json j;
+        f >> j;
+        if (!j.is_object()) return;
+        std::lock_guard<std::mutex> lock(apiMutex);
+        for (auto mit = j.begin(); mit != j.end(); ++mit) {
+            if (!mit.value().is_object()) continue;
+            const std::string model = mit.key();
+            if (modelFromName(model) == RobotModel::Unknown) continue;  // 只认三款机型
+            for (auto ait = mit.value().begin(); ait != mit.value().end(); ++ait) {
+                const int apiId = std::atoi(ait.key().c_str());
+                if (apiId == 0) continue;
+                if (ait.value().is_object()) {
+                    modelApiCode[model][apiId] = ait.value().value("code", -1);
+                    modelApiNote[model][apiId] = ait.value().value("note", std::string());
+                } else if (ait.value().is_number_integer()) {
+                    modelApiCode[model][apiId] = ait.value().get<int>();
+                }
+            }
+        }
+    } catch (...) {
+        // 文件损坏就当没学过 —— 丢了只是重新标一次，不该让界面起不来
+    }
+}
+
+void UiState::saveModelCapsLocked() const {
+    nlohmann::json j = nlohmann::json::object();
+    for (const auto& mk : modelApiCode) {
+        if (modelFromName(mk.first) == RobotModel::Unknown) continue;
+        nlohmann::json m = nlohmann::json::object();
+        for (const auto& ak : mk.second) {
+            nlohmann::json o = {{"code", ak.second}};
+            auto nit = modelApiNote.find(mk.first);
+            if (nit != modelApiNote.end()) {
+                auto nt = nit->second.find(ak.first);
+                if (nt != nit->second.end() && !nt->second.empty()) o["note"] = nt->second;
+            }
+            m[std::to_string(ak.first)] = std::move(o);
+        }
+        j[mk.first] = std::move(m);
+    }
+    std::ofstream f("robot_model_caps.json", std::ios::trunc);
+    if (f) f << j.dump(2) << "\n";
 }
 
 // ---------------------------------------------------------------- 钥匙文件
@@ -353,17 +649,19 @@ void runScan(RobotManager& mgr, UiState& ui) {
         ui.addLog("[扫描] 本机网段 " + sn);
         for (const auto& r : Discovery::scanSubnet(
                  sn, 400, [&](const std::string& line) { ui.addLog("[扫描] " + line); })) {
-            if (ui.addOrUpdate(r.ip, false)) {
+            // scanSubnet 拿不到 SN（只有多播能拿到）→ 这里的 r.sn 通常为空，
+            // 机型要等多播那一轮补上（addOrUpdate 会对已有条目补机型）
+            if (ui.addOrUpdate(r.ip, false, r.sn)) {
                 ++added;
                 ui.addLog("[扫描] 发现 Go2: " + r.ip + " [" + r.note + "]");
                 toConnect.push_back(r.ip);
             }
         }
     }
-    // 多播 SN 发现：补上跨网段/多网卡时的漏网设备，并给出 SN
+    // 多播 SN 发现：补上跨网段/多网卡时的漏网设备，并给出 SN（**机型就靠它**）
     for (const auto& kv : Discovery::multicastSnScan(
              1500, [&](const std::string& line) { ui.addLog("[扫描] " + line); })) {
-        if (ui.addOrUpdate(kv.second, false)) {
+        if (ui.addOrUpdate(kv.second, false, kv.first)) {
             ++added;
             ui.addLog("[扫描] 多播发现 Go2: " + kv.second + " (SN=" + kv.first + ")");
             toConnect.push_back(kv.second);

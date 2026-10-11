@@ -257,6 +257,8 @@ button.icon-btn { padding: 9px 12px; position: relative; }
 
 /* ---------------- 动作库 ---------------- */
 .act-header { display: flex; gap: 18px; flex-wrap: wrap; padding: 10px 14px; }
+/* 页眉第一行：指令发给谁 + 机型（Air/Pro/Edu；机型未知时不显示）。独占一行。 */
+.act-header .act-who { flex-basis: 100%; }
 .act-opt { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-size: 13.5px; }
 .act-opt .ck { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
 .group { margin-bottom: 0; }
@@ -351,6 +353,11 @@ button.icon-btn { padding: 9px 12px; position: relative; }
 }
 .joy-label { position: absolute; bottom: -18px; font-size: 11.5px; color: var(--dim); }
 
+/* 摆姿势提示：摇杆此刻只调姿态、不走路（服务端把 Move 换成了 Euler） */
+.pose-hint {
+  flex-basis: 100%; text-align: center; font-size: 11.5px; line-height: 1.4;
+  color: var(--accent); opacity: .92; margin-top: 2px;
+}
 .band-panel { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 0 12px; }
 
 /* 受控机械狗一行：狗图标 + 名字 + 电量；设备多了横向滑动 */
@@ -454,6 +461,13 @@ button.icon-btn { padding: 9px 12px; position: relative; }
 .dev-main { flex: 1; min-width: 0; }
 .dev-main .nm { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dev-main .ip { font-size: 11.5px; color: var(--dim); }
+/* 机型小标签：只显示机型名（Air/Pro/Edu），机型未知时整个标签不出现 */
+.dev-main .nm .dev-model {
+  margin-left: 6px; padding: 1px 5px; border-radius: 6px; vertical-align: middle;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .3px;
+  color: var(--accent); background: rgba(77, 147, 255, .14);
+  border: 1px solid rgba(77, 147, 255, .28);
+}
 .dev-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 
 .opt { display: flex; align-items: center; gap: 12px; padding: 12px 2px; border-bottom: 1px solid rgba(255, 255, 255, .05); cursor: pointer; }

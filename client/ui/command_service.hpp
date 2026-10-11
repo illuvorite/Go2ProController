@@ -93,7 +93,26 @@ int forEachSelected(CommandSink& sink,
 ///   这条约束故意放在服务层：改造前"锁定期间不许动"靠界面与网页各检查一遍，
 ///   只要有一处漏了就变成"点了急停狗还在走"。现在只有一处，且有单元测试。
 ///   （停车 `stopSelected` 不受此限 —— 它本身就是安全方向。）
+///
+/// ★ **「摆姿势」开着时改发 `Euler`(1007) 而不是 `Move`(1008)** —— 见 `poseAdjustSelected`。
+///   这条也放在服务层：桌面、网页、安卓三个入口共用同一个判断，
+///   不会出现"某个界面还在让狗走路、另一个界面在摆姿势"的互抢。
 int moveSelected(CommandSink& sink, const UiState& ui, float x, float y, float z);
+
+/// 「摆姿势」模式下的摇杆语义：**不走路，只调姿态**。
+///
+/// 来源：参考实现「天树探界遥控」（`go2-robot-control.html`）——它在摆姿势开启后
+/// 把摇杆指令由 `move` 换成 `euler`，参数按 `(roll, pitch, yaw)` 给：
+///   左摇杆左右 → 左右倾斜 roll（左倾为负）
+///   左摇杆前后 → 前后俯仰 pitch（抬头为负）
+///   右摇杆左右 → 左右扭转 yaw（左扭为正）
+/// 用户实测的观感就是"推摇杆狗不走了，只是上下左右摆姿势"。
+///
+/// 本函数沿用 move 的入参语义（x 前后 m/s、y 左右 m/s、z 转向 rad/s），
+/// 先按各自的**满量程**归一化成摇杆行程（-1..1），再乘摆姿势的最大角度
+/// （`kPoseMaxRoll/Pitch/Yaw`），所以"推到底"= 最大摆动，与推力成比例。
+/// @return 成功台数；当前指令集里没有 Euler 这条时返回 0
+int poseAdjustSelected(CommandSink& sink, const UiState& ui, float x, float y, float z);
 
 /// 一次摇杆输入经**服务层限幅**后、实际该下发的速度。
 struct Motion {

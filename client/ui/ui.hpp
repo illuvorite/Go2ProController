@@ -4,6 +4,7 @@
 #include "motion.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <mutex>
 #include <set>
@@ -27,7 +28,16 @@ struct RobotEntry {
     bool manual = false;    // 手动添加（false=扫描发现）
     float battery = -1.0f;
     std::string modeName = "-";
+    // ---- 机型（core/robot_model.hpp）----
+    // sn 只有**多播发现**能拿到（手动填 IP 添加的没有）→ 机型保持空 = 未知。
+    // 未知时刻意不做任何机型过滤：宁可不过滤，也不要按错的机型把能用的动作藏掉。
+    std::string sn;     // 16 位序列号（拿不到 = 空）
+    std::string model;  // "Air" / "Pro" / "Edu"（空 = 未知）
 };
+
+/// 开关"待确认"的等待窗口（秒）：超过它还没收到成功回执就回滚。
+/// 2.5s 的依据：刚就绪预热的延时重试 + 换指令集的即时重试都在这个窗口内回得来。
+constexpr double kToggleConfirmSeconds = 2.5;
 
 /// 主界面页面（顶栏页签切换）。
 /// 动作库是**常驻整屏页面**（按 pageW 铺满），不再是弹窗；
@@ -57,7 +67,7 @@ enum class UiPage { Remote, Actions };
 struct UiState {
     // ---- 设备列表 ----
     std::vector<RobotEntry> robots;
-    std::mutex robotsMutex;
+    mutable std::mutex robotsMutex;
     std::atomic<bool> scanning{false};
     std::atomic<bool> privacyMode{false};  // 隐私模式：界面把 IP 等敏感信息打码
 
@@ -203,6 +213,39 @@ struct UiState {
     void clearToggles();
     /// 开关状态的快照（给 `/api/state` 用；不要在锁外直接遍历 toggles）
     std::map<std::string, bool> togglesSnapshot() const;
+
+    // ---- 持续模式开关的「待确认」：**回执成功才算真的开了** ----
+    //
+    // 为什么必须有：`cmd::dispatchToggle` 原本是"先发指令、再置状态"，**从不看回执**。
+    // 于是机器狗**拒绝**这条指令时（机型不支持 / 状态不接受），界面照样显示"已开启"：
+    // 摆姿势是最典型的受害者 —— 状态一置，摇杆就从 `Move` 变成 `Euler`，
+    // 狗既不摆姿势、也不肯走，用户完全看不出为什么（2026-10-11 讨论）。
+    //
+    // 现在的规矩：发送时**乐观置位**（界面即时响应），同时挂一条"待确认"：
+    //   · 收到 code==0 的回执 → 确认，撤掉待确认（状态保持）；
+    //   · 超过 `kToggleConfirmSeconds` 仍没有成功回执 → **回滚到发送前的状态**并写一条日志。
+    //
+    // ★ 为什么是"超时回滚"而不是"一被拒就回滚"：刚就绪时的预热拒绝（error_code=1013）
+    //   是常态，客户端随后会**自动换另一套 api_id 重试一次**；一拒就翻脸会把那次
+    //   真正成功的重试也误判成失败。所以给一个窗口，等所有重试的机会都用完。
+    struct PendingToggle {
+        bool want = false;  ///< 想要的状态
+        bool prev = false;  ///< 发送前的状态（回滚目标）
+        int sent = 0;       ///< 实际发出去的台数（0 = 没有就绪设备，回滚原因不一样）
+        std::vector<int> ids;  ///< 本条用到的 api_id（含另一套指令集的备用 id）
+        std::chrono::steady_clock::time_point sentAt{};
+    };
+    std::map<std::string, PendingToggle> pendingToggles;  // 同样由 toggleMutex 保护
+
+    /// 记一条"刚发出的开关指令"（乐观置位 + 挂待确认）。回执成功时自动撤掉。
+    /// @param sentCount 实际发出去的台数（写进日志：区分"没发出去"和"发了但没被确认"）
+    void noteToggleSent(const std::string& key, const std::vector<int>& ids, bool want, bool prev,
+                        int sentCount = 0);
+    /// 回滚超时未被机器人确认的开关。**必须周期性调用**：
+    /// 界面路径在 `drawUi` 顶部、无界面服务在 `apps/serve` 的主循环里。
+    /// @param timeoutSeconds 等待窗口；默认 `kToggleConfirmSeconds`，测试里传 0 / 很大来免等
+    /// @return 本次回滚的条数
+    int reapUnconfirmedToggles(double timeoutSeconds = kToggleConfirmSeconds);
     /// 记下"真正打开过"的开关 api_id（含另一套指令集的 id），急停时只关这些，避免灌爆通道
     void setToggleActive(int apiId, bool active);
     /// 已打开过的开关 id 快照
@@ -210,12 +253,70 @@ struct UiState {
     void clearActiveToggles();
 
     // ---- 动作可用性（由回执驱动，界面上标注"这条动作能不能用"）----
-    std::mutex apiMutex;
-    std::map<int, int> apiCode;          // api_id -> 上次回执 code
+    //
+    // ★ 两套记录，**按机型分开**：
+    //   · apiCode/apiNote           —— 全局（不分机型）：机型还不知道时兜底；
+    //   · modelApiCode/modelApiNote —— 按机型记录：Air 上被拒的指令不该让 Pro 那边也标成 ✗。
+    //   写入走 noteApiResult(ip, ...)：它按 IP 查出机型再落到对应机型名下。
+    //   这套记录会落盘（robot_model_caps.json），下次连同一台 Air 可直接按机型过滤。
+    //   ★ mutable：`modelSupport()` 是 const 方法（界面每帧按机型查支持情况），也要加锁。
+    mutable std::mutex apiMutex;
+    std::map<int, int> apiCode;          // api_id -> 上次回执 code（不分机型）
     std::map<int, std::string> apiNote;  // api_id -> 上次失败说明
-    void noteApiResult(int apiId, int code, const std::string& note);
-    /// @return false = 还没试过；true 时写回上次结果
+    std::map<std::string, std::map<int, int>> modelApiCode;  // 机型名 -> (api_id -> code)
+    std::map<std::string, std::map<int, std::string>> modelApiNote;
+    /// 记一条回执。ip 用来查机型：查得到就同时写进"按机型"那张表。
+    void noteApiResult(const std::string& ip, int apiId, int code, const std::string& note);
+    /// @return false = 还没试过；true 时写回上次结果（**不分机型**的全局记录）
     bool apiResult(int apiId, int* code, std::string* note);
+    /// **指定机型**的上次回执：该机型有记录就用它，没记录则退回全局记录。
+    /// model 为空（机型未知 / 群控混机型）时等价于 apiResult。
+    bool apiResultForModel(const std::string& model, int apiId, int* code, std::string* note);
+    /// 机型能力记录的落盘 / 载入（与 robot_devices.json 同一套规矩：只读写本应用目录）
+    void loadModelCaps();
+    void saveModelCapsLocked() const;
+
+    // ---- 机型（core/robot_model.hpp）----
+    /// 某台狗的机型名（空 = 未知）
+    std::string modelOf(const std::string& ip) const;
+    /// 登记「key → SN」反查表（来自本地 keys.json 的 devices 格式，见 local_keys.hpp）。
+    /// 启动时由各入口调一次；表本身与 IP 无关，所以换网段/换 IP 都不用重填。
+    void setKeySnTable(std::vector<std::pair<std::string, std::string>> pairs);
+    /// 握手成功时调用：用"命中 GCM 的那把钥匙"反查 SN → 得出机型并落盘。
+    /// 这是**不需要多播**的机型来源（多播在部分网络收不到回包）。
+    /// @return 认出来的机型名；查不到钥匙 / 认不出 SN 时返回空串（不做任何推断）
+    std::string noteHandshakeKey(const std::string& ip, const std::string& keyHex);
+    /// 当前**受控集合**的机型名：全部同机型才返回它，否则空串。
+    /// 群控混机型（Air + Pro 一起控）时返回空 → 动作库不做机型过滤，
+    /// 免得按一半设备的机型把另一半能用的动作藏掉。
+    std::string controlModel() const;
+
+    /// 受控集合对某条 api 的**按机型聚合**支持情况。
+    ///
+    /// ★ 群控混机型（Air + Pro 一起控）时的规矩：**只标注、不隐藏** ——
+    ///   只要还有一台受控机型没被证明不支持，就绝不能把动作藏掉，
+    ///   否则用户会以为"这个动作不存在"，而 Pro 其实是能做的。
+    ///   隐藏只在 `allReject()`（每台受控机型都有记录、且都失败）时才允许。
+    struct ModelSupport {
+        int total = 0;     ///< 受控集合里的已知机型数；**任一台机型未知则为 0**（一律不隐藏）
+        int recorded = 0;  ///< 其中已经有回执记录的机型数
+        int failed = 0;    ///< 记录里失败（code≠0）的机型数
+        std::vector<std::string> rejectModels;  ///< 失败的机型名（界面上标注"X 不支持"）
+        /// 每台受控机型都被证明不支持 → 可以放心隐藏
+        bool allReject() const { return total > 0 && recorded == total && failed == total; }
+        /// 至少有一台失败 → 必须给用户一个提醒（否则群控时会莫名其妙半数不动）
+        bool anyReject() const { return failed > 0; }
+        /// 有记录的机型全都成功
+        bool allOk() const { return recorded > 0 && failed == 0; }
+    };
+    ModelSupport modelSupport(int apiId) const;
+
+    /// 受控集合里的**已知机型名**（去重）。空 = 没选设备 / 都没机型信息。
+    /// 机型未知的设备会被算作"不可判"：调用方据此不做任何隐藏。
+    std::vector<std::string> controlModels() const;
+    /// key(小写 hex) → SN。由 setKeySnTable 填，握手时按"命中 GCM 的钥匙"反查。
+    mutable std::mutex keySnMutex;
+    std::map<std::string, std::string> keySn;
 
     // （云账号字段已删：云登录表单从未实现；要拉云钥匙用 tools/unitree_cloud.py 走离线路线，
     //   C++ 侧完整实现在 core/unitree_cloud.{hpp,cpp}，见 tests/cloud_test.cpp）
@@ -244,7 +345,8 @@ struct UiState {
     void addLog(const std::string& line);
 
     // ---- 设备列表辅助（内部已加锁）----
-    bool addOrUpdate(const std::string& ip, bool manual);  // 新增返回 true
+    bool addOrUpdate(const std::string& ip, bool manual,
+                     const std::string& sn = {});  // 新增返回 true；sn 非空则顺带定机型
     bool remove(const std::string& ip);
     /// 设备列表的一致快照（内部持 robotsMutex 拷贝一份）。
     ///

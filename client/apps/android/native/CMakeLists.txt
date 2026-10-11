@@ -122,6 +122,7 @@ add_library(go2_core STATIC
     "${CLIENT_DIR}/core/local_keys.cpp"
     "${CLIENT_DIR}/core/webrtc_transport.cpp"  # ITransport 的 WebRTC 实现（M5 接缝）
     "${CLIENT_DIR}/core/sport_library.cpp"
+    "${CLIENT_DIR}/core/robot_model.cpp"       # 机型识别：SN 第 5 位 → Air/Pro/Edu
     "${CLIENT_DIR}/core/unitree_cloud.cpp"
 )
 target_include_directories(go2_core PUBLIC

@@ -58,7 +58,7 @@ export default {
                      @keyup.esc="renaming = ''" />
             </div>
             <div v-else>
-              <div class="nm">{{ maskIp(r.label) }}</div>
+              <div class="nm">{{ maskIp(r.label) }}<span v-if="r.model" class="dev-model">Go2 {{ r.model }}</span></div>
               <div class="ip">{{ r.state }}<span v-if="r.battery >= 0"> · {{ batteryText(r.battery) }} · 模式 {{ r.mode }}</span></div>
             </div>
           </div>

@@ -28,6 +28,13 @@ bool isHexKey(const std::string& s) {
     });
 }
 
+/// 小写化（key 的比较统一用小写：文件里大小写都可能出现）
+std::string lowerHex(const std::string& s) {
+    std::string o = s;
+    for (char& c : o) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return o;
+}
+
 /// 从任意 JSON 结构中收集钥匙。支持：
 ///   {"devices":[{"sn":..,"key":"32hex"}, ...]}   <- 标准格式（含 SN/备注）
 ///   {"keys":["32hex", ...]}
@@ -62,6 +69,35 @@ void collectFromJson(const nlohmann::json& j, std::vector<std::string>& out) {
                 collectFromJson(e, out);
             }
         }
+    }
+}
+
+/// 收集「key → SN」反查对（只认带 `sn` 的标准 devices 格式）。
+///
+/// 单独一个函数、而不是给 collectFromJson 加参数：那个函数被三种钥匙格式共用，
+/// 加参数会把所有调用点都改一遍；而"带 SN 的格式"只有 devices 这一种。
+void collectSnKeyPairs(const nlohmann::json& j,
+                       std::vector<std::pair<std::string, std::string>>& out) {
+    if (j.is_object()) {
+        for (const char* arrKey : {"devices", "keys"}) {
+            if (j.contains(arrKey) && j[arrKey].is_array()) {
+                collectSnKeyPairs(j[arrKey], out);
+                return;
+            }
+        }
+        // 对象自己就是一条设备记录？
+        if (j.contains("sn") && j["sn"].is_string()) {
+            const std::string sn = j["sn"].get<std::string>();
+            if (!sn.empty()) {
+                for (const char* field : {"key", "aesKey", "aes_key", "gcm_key", "aes_128_key"}) {
+                    if (!j.contains(field) || !j[field].is_string()) continue;
+                    const std::string k = lowerHex(j[field].get<std::string>());
+                    if (isHexKey(k)) out.emplace_back(k, sn);
+                }
+            }
+        }
+    } else if (j.is_array()) {
+        for (const auto& e : j) collectSnKeyPairs(e, out);
     }
 }
 
@@ -183,7 +219,9 @@ LocalKeys loadLocalAesKeys() {
                                std::istreambuf_iterator<char>());
         std::vector<std::string> found;
         try {
-            collectFromJson(nlohmann::json::parse(text), found);
+            const nlohmann::json j = nlohmann::json::parse(text);
+            collectFromJson(j, found);
+            collectSnKeyPairs(j, out.snByKey);  // 顺带把 key→SN 反查表收出来
         } catch (...) {
             // 不是 JSON（官方 App 的日志就是纯文本日志）→ 退回裸文本扫 32 位 hex
             collectFromText(text, found);

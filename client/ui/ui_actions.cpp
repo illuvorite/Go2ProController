@@ -150,7 +150,19 @@ void drawActionPageHeader(UiState& ui) {
     ImGui::SameLine();
     {
         FontScope fs = fontSmall();
-        ImGui::TextDisabled("指令发给 %s", ui.controlTargetText().c_str());
+        // 带上机型：Air 上被拒的指令与 Pro 的记录分开记，标题上写清楚在给谁发。
+        // 混机型（Air + Pro 一起控）时明说"只标注、不隐藏"，免得用户以为动作被吞了。
+        const std::string model = ui.controlModel();
+        const std::vector<std::string> models = ui.controlModels();
+        std::string who = ui.controlTargetText();
+        if (!model.empty()) {
+            who += " · Go2 " + model;
+        } else if (models.size() > 1) {
+            std::string list;
+            for (const auto& m : models) list += (list.empty() ? "" : " + ") + m;
+            who += " · Go2 " + list + "（混机型：只标注不支持，不隐藏）";
+        }
+        ImGui::TextDisabled("指令发给 %s", who.c_str());
     }
     ImGui::SameLine(0, 18);
     // atomic 不能取址交给 ImGui → 取出副本给控件，再写回（见 ui.hpp 的线程契约说明）
@@ -161,10 +173,13 @@ void drawActionPageHeader(UiState& ui) {
             "选错也没关系：被拒后会用另一套 id 自动重试一次");
     ImGui::SameLine();
     bool hideUnsup = ui.hideUnsupported.load();
-    if (ImGui::Checkbox("隐藏不支持的", &hideUnsup) && takeTipShown()) hideUnsup = !hideUnsup;
+    if (ImGui::Checkbox("隐藏机型不支持的", &hideUnsup) && takeTipShown()) hideUnsup = !hideUnsup;
     ui.hideUnsupported = hideUnsup;
-    helpTip("隐藏「试过且被该固件拒绝（code=3203）」的动作，\n"
-            "避免反复点到不存在的指令；取消勾选即可重新显示");
+    helpTip("隐藏「**每台受控机型都**被证明不支持」的动作，避免反复点到不存在的指令。\n"
+            "· 单台受控：该机型试过被拒（code≠0）就隐藏；\n"
+            "· 群控混机型（Air + Pro）：**只有全都做不到才隐藏** —— 只要还有一台能做，\n"
+            "  就保留它并标 ✗，免得把能用的动作一起藏掉。\n"
+            "记录按机型分开存（Air / Pro / Edu 各一份，robot_model_caps.json）。取消勾选即恢复显示");
 }
 
 void drawActionPageBody(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
@@ -202,29 +217,56 @@ auto resolveId = [&ui](const SportAction& a, bool* fellBack) {
     return id;
 };
 
+// ★ 受控设备的机型信息（core/robot_model.hpp）：
+//   ctrlModel      —— 只有一台机型时给出它（页眉显示用）；混机型 / 机型未知时为空；
+//   modelSupport() —— **按机型聚合**的支持情况，群控混机型时**只标注、不隐藏**。
+//   规则：只要还有一台受控机型没被证明不支持，就绝不隐藏动作 ——
+//   否则 Air + Pro 一起控时，会把 Pro 明明能做的动作一起藏掉，用户以为这个动作不存在。
+const std::string ctrlModel = ui.controlModel();
+const std::vector<std::string> ctrlModels = ui.controlModels();  // 去重后的已知机型
+const bool mixedModels = ctrlModels.size() > 1;
+
 // 动作按钮标题：* = MCF 下 id 不同，† = 用了另一套指令集，✓/✗ = 上次执行结果
 auto actionLabel = [&ui](const SportAction& a, int id, bool fellBack) {
     std::string t = a.label;
     if (differsInMcf(a)) t += "*";
     if (fellBack) t += "†";
-    int code = 0;
-    std::string note;
-    if (ui.apiResult(id, &code, &note)) t += (code == 0 ? "  ✓" : "  ✗");
+    const UiState::ModelSupport s = ui.modelSupport(id);
+    if (s.anyReject()) t += "  ✗";
+    else if (s.allOk()) t += "  ✓";
     return t;
 };
-// 悬停显示上次结果与失败原因
-auto actionTip = [&ui](int id) {
+// 悬停：说明"谁不支持"，以及为什么没有隐藏它
+auto actionTip = [&ui, ctrlModel](int id) {
+    char buf[640];
+    const UiState::ModelSupport s = ui.modelSupport(id);
+    if (s.anyReject()) {
+        std::string who;
+        for (const auto& m : s.rejectModels) who += (who.empty() ? "" : "、") + m;
+        int code = 0;
+        std::string note;
+        ui.apiResultForModel(s.rejectModels.front(), id, &code, &note);
+        std::snprintf(buf, sizeof(buf),
+                      "群控目标里的 %s 不支持这条（api %d，code=%d）\n%s\n\n%s",
+                      who.c_str(), id, code, note.empty() ? "（无更多信息）" : note.c_str(),
+                      s.allReject()
+                          ? "受控机型全都不支持 —— 勾上「隐藏机型不支持的」就不会再显示"
+                          : "其余机型仍会执行，所以**没有隐藏它**（免得把能用的动作一起藏掉）");
+        helpTip(buf);
+        return;
+    }
     int code = 0;
     std::string note;
-    if (!ui.apiResult(id, &code, &note)) return;
-    char buf[512];
+    if (!ui.apiResultForModel(ctrlModel, id, &code, &note)) return;
     if (code == 0) {
         std::snprintf(buf, sizeof(buf), "上次执行：成功（api %d）", id);
     } else {
         std::snprintf(buf, sizeof(buf),
-                      "上次执行失败（api %d，code=%d）\n%s\n\n"
+                      "上次执行失败（api %d，code=%d）%s\n%s\n\n"
                       "再点一次可重试；指令集不匹配会自动换另一套 api_id",
-                      id, code, note.empty() ? "（无更多信息）" : note.c_str());
+                      id, code,
+                      ctrlModel.empty() ? "" : ("，机型 " + ctrlModel).c_str(),
+                      note.empty() ? "（无更多信息）" : note.c_str());
     }
     helpTip(buf);
 };
@@ -235,31 +277,35 @@ const auto tileLabel = [](const SportAction& a, bool fellBack) {
     if (fellBack) t += "†";
     return t;
 };
-// 上次回执 → 小点状态：0 没试过 / 1 成功 / 2 失败
+// 上次回执 → 小点状态：0 没试过 / 1 成功 / 2 失败（群控混机型时"有一台失败"就标失败）
 const auto apiState = [&ui](int id) {
-    int c = 0;
-    std::string n;
-    if (!ui.apiResult(id, &c, &n)) return 0;
-    return c == 0 ? 1 : 2;
+    const UiState::ModelSupport s = ui.modelSupport(id);
+    if (s.anyReject()) return 2;
+    if (s.allOk()) return 1;
+    return 0;
 };
 
 // 可用性一览：点过的动作会累计成功/失败，方便"哪些动作能用"一眼看清
 {
-    int tried = 0, ok = 0, fail = 0;
+    int tried = 0, ok = 0, partial = 0, fail = 0;
     for (const auto& a : sportActions()) {
         bool fb = false;
         const int id = resolveId(a, &fb);
         if (id == 0) continue;
-        int code = 0;
-        std::string note;
-        if (!ui.apiResult(id, &code, &note)) continue;
+        const UiState::ModelSupport s = ui.modelSupport(id);
+        if (s.recorded == 0) continue;  // 这台机型还没试过这条
         ++tried;
-        (code == 0 ? ok : fail)++;
+        if (s.allReject()) ++fail;
+        else if (s.anyReject()) ++partial;  // 群控：部分机型不行
+        else ++ok;
     }
     if (tried > 0)
-        ImGui::Text("可用性: 已试 %d 条 / 成功 %d / 失败 %d", tried, ok, fail);
+        ImGui::Text("可用性: 已试 %d 条 / 成功 %d / 部分机型不支持 %d / 全不支持 %d", tried, ok,
+                    partial, fail);
     else
         ImGui::TextDisabled("可用性: 点过的动作会自动标注 ✓ / ✗（悬停看失败原因）");
+    if (mixedModels)
+        ImGui::TextDisabled("群控混机型：只标注不支持，**不隐藏**（免得把能用的那台能做的动作也藏掉）");
 }
 
 ImGui::BeginDisabled(ui.selectedCount() == 0);
@@ -533,9 +579,11 @@ for (const auto& gd : kGroups) {
         // 阻尼（Damp）只在中间「遥控」面板保留一个按钮 → 这里跳过，避免同一个功能两处按钮
         if (std::strcmp(a.key, "Damp") == 0) continue;
         if (ui.hideUnsupported) {
-            int code = 0;
-            std::string note;
-            if (ui.apiResult(id, &code, &note) && code != 0) continue;  // 隐藏已确认不支持的
+            // ★ 只隐藏"**每台受控机型都被证明不支持**"的动作（allReject）。
+            //   群控混机型时绝不隐藏 —— 否则 Air + Pro 一起控会把 Pro 能做的动作
+            //   一起藏掉，用户会以为这个动作根本不存在。混机型只靠 ✗ 小点 + 悬停说明
+            //   标注"哪台不支持"。
+            if (ui.modelSupport(id).allReject()) continue;
         }
         ImGui::PushID(a.key);
 
@@ -559,8 +607,16 @@ for (const auto& gd : kGroups) {
                           " → " + std::to_string(n) + " 台");
             }
             actionTip(id);
-            helpTip("持续模式开关（开启后会一直生效，StopMove 停不掉）\n"
-                    "点一下切换开/关；急停会自动把所有开关关掉");
+            if (std::strcmp(a.key, "Pose") == 0)
+                // 摆姿势是用户最容易"开了以后出不来"的一条（2026-10-11 实测）——
+                // 单独给一段说明，把"怎么关"写在最显眼的位置
+                helpTip("摆姿势是**持续模式**：开启后狗只摆姿势、不响应行走，\n"
+                        "摇杆推的移动会被它当成姿势上下左右的摆动。\n"
+                        "· 再点一次这条 = 关闭（恢复行走）\n"
+                        "· 按「急停」也会自动把它关掉");
+            else
+                helpTip("持续模式开关（开启后会一直生效，StopMove 停不掉）\n"
+                        "点一下切换开/关；急停会自动把所有开关关掉");
             ImGui::PopID();
             continue;
         }

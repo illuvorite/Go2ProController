@@ -345,5 +345,188 @@ int main() {
         }
     }
 
+    // ---------------------------------------------------------------- 摆姿势：摇杆改成调姿态
+    // 行为对齐参考实现「天树探界遥控」：摆姿势开着时，摇杆下发的是 **Euler(1007)**
+    // 而不是 Move(1008) —— 狗不走，只上下左右摆姿势。这条必须在服务层，
+    // 否则桌面 / 网页 / 安卓三个入口各判一次、迟早分叉。
+    {
+        const SportAction* pose = nullptr;
+        const SportAction* euler = nullptr;
+        for (const auto& a : sportActions()) {
+            if (std::string(a.key) == "Pose") pose = &a;
+            if (std::string(a.key) == "Euler") euler = &a;
+        }
+        CHECK_MSG(pose != nullptr && euler != nullptr, "指令表里必须有 Pose 与 Euler");
+        CHECK_MSG(pose != nullptr && pose->toggle, "Pose 必须是持续模式开关（否则关不掉）");
+        const int eulerId = apiIdFor(*euler, false);   // 1007
+        const int moveId = kApiMove;                   // 1008
+        CHECK_MSG(eulerId != moveId, "Euler 与 Move 不能是同一个 api_id");
+
+        UiState ui;
+        FakeSink sink;
+        sink.ready = {"10.0.0.1"};
+        sink.selected = {"10.0.0.1"};
+        ui.maxLinSpeed = 1.0f;  // 归一化成好算的数
+        ui.yawRate = 1.0f;
+
+        // 没开摆姿势 → 照旧发 Move
+        CHECK(cmd::moveSelected(sink, ui, 0.5f, 0.0f, 0.0f) == 1);
+        CHECK_MSG(sink.countApi(moveId) == 1, "未开摆姿势时摇杆仍应下发 Move");
+        CHECK(sink.countApi(eulerId) == 0);
+
+        // 开摆姿势 → 改发 Euler，且不再发 Move
+        sink.reset();
+        ui.setToggle("Pose", true);
+        // x=1.0(前进满推) y=0.5(左半推) z=1.0(左转满推)
+        CHECK(cmd::moveSelected(sink, ui, 1.0f, 0.5f, 1.0f) == 1);
+        CHECK_MSG(sink.countApi(moveId) == 0, "摆姿势时**不得**再下发 Move（否则狗会走）");
+        CHECK_MSG(sink.countApi(eulerId) == 1, "摆姿势时摇杆应下发 Euler");
+        {
+            const auto p = lastParam(sink);
+            CHECK_MSG(near(p["x"].get<double>(), -0.5), "左推 → 左右倾斜 roll 为负（左倾为负）");
+            CHECK_MSG(near(p["y"].get<double>(), -0.8), "前推满 → 抬头为负 pitch");
+            CHECK_MSG(near(p["z"].get<double>(), 0.8), "左推右杆 → 左扭为正 yaw");
+        }
+
+        // 超出满量程要夹住（不能把 3 倍推力原样当角度发出去）
+        sink.reset();
+        CHECK(cmd::moveSelected(sink, ui, 9.0f, -9.0f, 9.0f) == 1);
+        {
+            const auto p = lastParam(sink);
+            CHECK_MSG(near(p["x"].get<double>(), 1.0) && near(p["y"].get<double>(), -0.8) &&
+                          near(p["z"].get<double>(), 0.8),
+                      "摆姿势的归一化必须夹到 ±满推力");
+        }
+
+        // 急停锁定优先于摆姿势：锁着就什么都不发
+        sink.reset();
+        ui.estop = true;
+        CHECK(cmd::moveSelected(sink, ui, 1.0f, 1.0f, 1.0f) == 0);
+        CHECK_MSG(sink.sentCount() == 0, "急停锁定期间摆姿势也不得下发");
+        ui.estop = false;
+
+        // 关掉摆姿势时额外补一条 StopMove（参考实现 commandsNeedStopMove 的做法）
+        sink.reset();
+        CHECK(cmd::dispatchToggle(sink, ui, *pose, false) == 1);
+        CHECK_MSG(sink.stoppedCount() == 1, "关闭摆姿势要顺带停车，别留下摆动余速");
+        // 开启时**不**补 StopMove（否则会把刚起来的姿势打断）
+        sink.reset();
+        CHECK(cmd::dispatchToggle(sink, ui, *pose, true) == 1);
+        CHECK_MSG(sink.stoppedCount() == 0, "开启摆姿势不应额外发 StopMove");
+    }
+
+    // ---------------------------------------------------------------- 开关：回执成功才算真的开
+    // 乐观置位 + 待确认：机器人拒绝（且自动换 id 重试也没成功）时必须回滚，
+    // 否则会在不支持的机型上谎报"已开启" —— 摆姿势还会顺手把摇杆换成 Euler。
+    {
+        const SportAction* pose = nullptr;
+        const SportAction* freeWalk = nullptr;
+        for (const auto& a : sportActions()) {
+            if (std::string(a.key) == "Pose") pose = &a;
+            if (std::string(a.key) == "FreeWalk") freeWalk = &a;
+        }
+        CHECK_MSG(pose != nullptr && freeWalk != nullptr, "指令表里必须有 Pose 与 FreeWalk");
+        const int poseId = apiIdFor(*pose, false);
+        const int fwId = apiIdFor(*freeWalk, false);
+        CHECK_MSG(!alternateApiIds(fwId).empty(), "FreeWalk 应当有另一套指令集的备用 id");
+
+        UiState ui;
+        FakeSink sink;
+        sink.ready = {"10.0.0.1"};
+        sink.selected = {"10.0.0.1"};
+
+        // 1) 发送后**立刻**是"开"（界面要即时响应，不能等回执），且挂着待确认
+        CHECK(cmd::dispatchToggle(sink, ui, *pose, true) == 1);
+        CHECK_MSG(ui.toggleState("Pose"), "发送后应乐观置位");
+        CHECK_MSG(ui.reapUnconfirmedToggles(3600.0) == 0, "窗口内不得回滚");
+        CHECK(ui.toggleState("Pose"));
+        // 超时仍无成功回执 → 回滚成"关"，并把它从"真正开过的开关"里摘掉
+        CHECK_MSG(ui.reapUnconfirmedToggles(0.0) == 1, "超时未确认应回滚一条");
+        CHECK_MSG(!ui.toggleState("Pose"), "没被确认的开关必须回到发送前的状态");
+        CHECK_MSG(ui.activeToggleIdsSnapshot().empty(), "回滚后不该再留着'开过的开关 id'");
+
+        // 2) 收到成功回执 → 确认，之后即使超时也不回滚
+        sink.reset();
+        CHECK(cmd::dispatchToggle(sink, ui, *pose, true) == 1);
+        ui.noteApiResult("10.0.0.1", poseId, 0, "");
+        CHECK_MSG(ui.reapUnconfirmedToggles(0.0) == 0, "已被确认的开关不得回滚");
+        CHECK_MSG(ui.toggleState("Pose"), "确认后应保持开启");
+
+        // 3) **备用指令集** id 的成功回执同样算确认（被拒后自动换 id 重试成功的情形）
+        ui.clearToggles();
+        ui.clearActiveToggles();
+        CHECK(cmd::dispatchToggle(sink, ui, *freeWalk, true) == 1);
+        for (int alt : alternateApiIds(fwId)) ui.noteApiResult("10.0.0.1", alt, 0, "");
+        CHECK_MSG(ui.reapUnconfirmedToggles(0.0) == 0, "备用 api_id 的成功回执也要认");
+        CHECK(ui.toggleState("FreeWalk"));
+
+        // 4) 关闭方向同理：关闭没被确认 → 回滚成"开"
+        ui.clearToggles();
+        ui.clearActiveToggles();
+        ui.setToggle("Pose", true);
+        CHECK(cmd::dispatchToggle(sink, ui, *pose, false) == 1);
+        CHECK_MSG(!ui.toggleState("Pose"), "关闭也应乐观置位");
+        CHECK(ui.reapUnconfirmedToggles(0.0) == 1);
+        CHECK_MSG(ui.toggleState("Pose"), "关闭没被确认 → 回滚成'开'");
+
+        // 5) 急停清开关时待确认一并清掉，否则过期回滚会把开关"复活"
+        ui.clearToggles();
+        ui.clearActiveToggles();
+        CHECK(cmd::dispatchToggle(sink, ui, *pose, true) == 1);
+        ui.clearToggles();
+        CHECK_MSG(ui.reapUnconfirmedToggles(0.0) == 0, "急停清过之后不该再有回滚");
+        CHECK(!ui.toggleState("Pose"));
+    }
+
+    // ---------------------------------------------------------------- 群控混机型：只标注、不隐藏
+    // 最危险的场景：Air + Pro 一起控，Air 拒绝了某条而 Pro 还没试过 ——
+    // 此时**绝不能隐藏**，否则 Pro 明明能做的动作会从动作库里消失。
+    {
+        UiState ui;
+        ui.addOrUpdate("10.0.0.1", false, "B210123456789ABC");  // 下标 4 = '1' → Air
+        ui.addOrUpdate("10.0.0.2", false, "B210223456789ABC");  // 下标 4 = '2' → Pro
+        ui.setSelected("10.0.0.1", true);
+        ui.setSelected("10.0.0.2", true);
+        CHECK_MSG(ui.controlModel().empty(), "混机型时'单一机型'判据应为空");
+        CHECK(ui.controlModels().size() == 2);
+
+        const int api = 1030;  // 前空翻
+
+        // (1) 只有 Air 有记录且失败 → 只标注，**不得**隐藏（Pro 还没试过）
+        ui.noteApiResult("10.0.0.1", api, 3203, "不支持");
+        {
+            const auto s = ui.modelSupport(api);
+            CHECK(s.total == 2 && s.recorded == 1 && s.failed == 1);
+            CHECK_MSG(s.anyReject(), "应标注：有机型不支持");
+            CHECK_MSG(!s.allReject(), "只有一台试过 → 绝不能隐藏");
+            CHECK(s.rejectModels.size() == 1 && s.rejectModels[0] == "Air");
+        }
+
+        // (2) Pro 也失败 → 两台都确认不支持，这时才允许隐藏
+        ui.noteApiResult("10.0.0.2", api, 3203, "不支持");
+        CHECK_MSG(ui.modelSupport(api).allReject(), "两台都确认不支持 → 可以隐藏");
+
+        // (3) Pro 其实能做 → 退回"部分不支持"，仍然不隐藏
+        ui.noteApiResult("10.0.0.2", api, 0, "");
+        {
+            const auto s = ui.modelSupport(api);
+            CHECK_MSG(s.anyReject() && !s.allReject(), "部分机型不支持 → 只标注不隐藏");
+        }
+
+        // (4) 两边都成功 → ✓
+        ui.noteApiResult("10.0.0.1", 1003, 0, "");
+        ui.noteApiResult("10.0.0.2", 1003, 0, "");
+        CHECK(ui.modelSupport(1003).allOk());
+
+        // (5) 群里混进一台**机型未知**的设备（手动填 IP，没有 SN）→ 整条判断作废
+        ui.addOrUpdate("10.0.0.3", true);
+        ui.setSelected("10.0.0.3", true);
+        {
+            const auto s = ui.modelSupport(api);
+            CHECK_MSG(s.total == 0 && !s.allReject(), "有机型未知的设备在群里 → 一律不隐藏");
+            CHECK_MSG(!s.anyReject(), "机型未知时不标注（没有可靠依据）");
+        }
+    }
+
     return go2test::summary("command_service_test");
 }

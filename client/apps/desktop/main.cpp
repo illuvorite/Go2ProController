@@ -585,9 +585,14 @@ int runGui(const Options& opt) {
             }
         };
 
-        // 动作回执 → 界面标注"这条动作能不能用"（✓ / ✗ + 失败原因）
-        c.onSportAck = [&ui](int apiId, int code, const std::string& note) {
-            ui.noteApiResult(apiId, code, note);
+        // 动作回执 → 界面标注"这条动作能不能用"（✓ / ✗ + 失败原因）；带 ip 才能按机型记录
+        c.onSportAck = [&ui](const std::string& ackIp, int apiId, int code, const std::string& note) {
+            ui.noteApiResult(ackIp, apiId, code, note);
+        };
+        // 握手成功 → 用"命中 GCM 的那把钥匙"反查 SN 得到机型（不依赖多播 SN 发现）
+        c.onHandshake = [&ui](const std::string& hsIp, int, const std::string& usedKeyHex) {
+            const std::string model = ui.noteHandshakeKey(hsIp, usedKeyHex);
+            if (!model.empty()) ui.addLog("[机型] " + hsIp + " → Go2 " + model + "（由钥匙反查 SN）");
         };
 
         c.onTopicData = [&ui, pc](const std::string& topic, const nlohmann::json& msg) {
@@ -613,6 +618,7 @@ int runGui(const Options& opt) {
     // ---- 本地钥匙（data2=3 新固件用；纯本地，不联网）----
     {
         const auto lk = go2::loadLocalAesKeys();
+        ui.setKeySnTable(lk.snByKey);  // key→SN 反查表：握手成功后据此定机型
         ui.localKeyCount = static_cast<int>(lk.keys.size());
         if (lk.keys.empty()) {
             printLine("[钥匙] 未找到本地钥匙 —— 新固件机器狗需要：把 32 位 hex key 写进 keys.json");

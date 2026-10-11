@@ -156,6 +156,7 @@ int main(int argc, char** argv) {
     go2::UiState ui;
     ui.loadNames();    // 设备名映射（robot_names.json）—— 界面版是在绘制时惰性加载的
     ui.loadDevices();  // 设备列表（robot_devices.json）—— 同上，服务端没有绘制这一步
+    ui.loadModelCaps();  // 按机型学到的指令支持情况（robot_model_caps.json）—— 同上
 
     std::mutex printMutex;
     auto printLine = [&ui, &opt, &printMutex](const std::string& line) {
@@ -184,9 +185,14 @@ int main(int argc, char** argv) {
             pc->subscribe("rt/lf/lowstate");
         };
 
-        // 动作回执 → 网页端据此标注"这条动作能不能用"（✓ / ✗ + 失败原因）
-        c.onSportAck = [&ui](int apiId, int code, const std::string& note) {
-            ui.noteApiResult(apiId, code, note);
+        // 动作回执 → 网页端据此标注"这条动作能不能用"（✓ / ✗ + 失败原因）；带 ip 才能按机型记录
+        c.onSportAck = [&ui](const std::string& ackIp, int apiId, int code, const std::string& note) {
+            ui.noteApiResult(ackIp, apiId, code, note);
+        };
+        // 握手成功 → 用"命中 GCM 的那把钥匙"反查 SN 得到机型（不依赖多播 SN 发现）
+        c.onHandshake = [&ui, &printLine](const std::string& hsIp, int, const std::string& usedKeyHex) {
+            const std::string model = ui.noteHandshakeKey(hsIp, usedKeyHex);
+            if (!model.empty()) printLine("[机型] " + hsIp + " → Go2 " + model + "（由钥匙反查 SN）");
         };
 
         c.onTopicData = [&ui, pc](const std::string& topic, const nlohmann::json& msg) {
@@ -214,6 +220,7 @@ int main(int argc, char** argv) {
     if (!opt.keys.empty()) manager.addAesKeys(opt.keys);
     {
         const auto lk = go2::loadLocalAesKeys();
+        ui.setKeySnTable(lk.snByKey);  // key→SN 反查表：握手成功后据此定机型
         ui.localKeyCount = static_cast<int>(lk.keys.size());
         if (!lk.keys.empty()) manager.setAesKeys(lk.keys);
         printLine("[钥匙] 已装载 " + std::to_string(manager.aesKeys().size()) +
@@ -247,6 +254,9 @@ int main(int argc, char** argv) {
     int tick = 0;
     while (!g_stopRequested) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        // 持续模式开关是"乐观置位 + 回执确认"：没人做周期性回滚的话，
+        // 被机器人拒绝的开关会一直显示"已开启"。界面版在 drawUi 里做，这里补上。
+        ui.reapUnconfirmedToggles();
         if (++tick % 60 != 0) continue;  // 每 30 秒打一行存活摘要
         int devices = 0;
         {

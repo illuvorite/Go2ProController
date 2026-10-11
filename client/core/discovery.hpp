@@ -30,6 +30,16 @@ public:
     /// 本机所在网段（/24 列表），已排除回环与链路本地地址
     static std::vector<std::string> localSubnets();
 
+    /// 本机全部可用 IPv4 地址（同样排除回环 / 链路本地）。
+    ///
+    /// ★ 为什么必须有这个（多播发现的必修项）：多播**必须在具体网卡上**入组并发送。
+    ///   用 `INADDR_ANY` 时，Android / 多网卡 PC 会把 IGMP 入组和出口落到
+    ///   蜂窝(rmnet)或虚拟网卡(Hyper-V/WSL/VPN)上，机器狗根本收不到我们的查询 ——
+    ///   现象就是"绑定/入组/发送全部成功，但一个回包都没有"。
+    ///   实测（2026-10-11）：同一台平板，官方 App 能收到多播回包、我们收不到，
+    ///   差别就在这里（Java 的 MulticastSocket 默认走"当前活动网络"）。
+    static std::vector<std::string> localIPv4Addresses();
+
     /// TCP 端口探测（非阻塞 connect + poll，不依赖 ICMP）
     static bool tcpPortOpen(const std::string& ip, uint16_t port, int timeoutMs);
 

@@ -9,6 +9,14 @@ namespace go2 {
 struct LocalKeys {
     std::vector<std::string> keys;  // 32 位 hex 的 AES-128 key（可能多把，连接时逐个试）
     std::string source;             // 来源描述（文件路径 / 环境变量）
+    /// 「key → SN」反查表（小写 hex → 序列号）。来源是 keys.json 标准格式里的
+    /// `{"devices":[{"sn":..,"key":..}]}` —— 只有那种格式才带 SN。
+    ///
+    /// ★ 为什么需要它：机型（Air/Pro/Edu）只能由 SN 推出，而多播 SN 发现在部分
+    ///   网络/设备上收不到回包。但 **握手本来就会告诉我们"是哪把 key 通过了 GCM 校验"**
+    ///   （`RobotClient::onHandshake` 的 usedKeyHex）—— 拿它反查这张表就得到 SN，
+    ///   进而得到机型。**不需要任何额外权限、不碰官方 App 的数据。**
+    std::vector<std::pair<std::string, std::string>> snByKey;
 };
 
 /// 加载本地候选 AES key（供 data2=3 新固件机器狗使用）。

@@ -36,7 +36,11 @@ const std::vector<SportAction>& sportActions() {
         {"Wallow",         "撒娇打滚",     1021, 0,    SportParam::None, SportGroup::Show, false},
         {"Dance1",         "舞蹈 1",       1022, 1022, SportParam::None, SportGroup::Show, false},
         {"Dance2",         "舞蹈 2",       1023, 1023, SportParam::None, SportGroup::Show, false},
-        {"Pose",           "摆姿势",       1028, 1028, SportParam::Flag, SportGroup::Show, false},
+        // ★ 摆姿势是**持续模式开关**（不是一次性动作）：`{"data":true}` 开启后狗会一直摆姿势、
+        //   不接受行走；必须用同一条 api_id 带 `{"data":false}` 关闭 —— StopMove(1003) 停不掉它。
+        //   改造前它是 toggle=false 的普通 Flag → 界面只发得出 true、**没有任何关闭入口**，
+        //   而急停的 persistentModeIds() 也收不到它 → 一旦开启就只能重启狗（2026-10-11 用户实测）。
+        {"Pose",           "摆姿势",       1028, 1028, SportParam::Flag, SportGroup::Show, false, true},
         {"Scrape",         "拜年(作揖)",   1029, 1029, SportParam::None, SportGroup::Show, false},
         {"WiggleHips",     "扭屁股",       1033, 0,    SportParam::None, SportGroup::Show, false},
         {"FingerHeart",    "比心",         1036, 1036, SportParam::None, SportGroup::Show, false},

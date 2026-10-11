@@ -472,6 +472,7 @@ void ensureNamesLoaded(UiState& ui) {
     loaded = true;
     ui.loadNames();     // robot_names.json  —— 设备名
     ui.loadDevices();   // robot_devices.json —— 设备列表（否则重启/重建后列表清空）
+    ui.loadModelCaps(); // robot_model_caps.json —— 按机型学到的"哪些指令这台不支持"
 }
 
 /// 群控：全选（指令只发给已就绪的）
@@ -514,6 +515,11 @@ void drawUi(RobotManager& mgr, UiState& ui) {
     ui.safetyRectCount = 0;   // 安全区矩形每帧重登（急停/阻尼/摇杆带面板，见 addSafetyRect）
     rollDragFlags();          // 拖动型控件标记翻帧（touchDragScroll 要用上一帧的）
     ensureNamesLoaded(ui);    // 名字文件只读一次（桌面 / 安卓共用这条路径）
+
+    // ---- 持续模式开关的"待确认"到期回滚（安全项）----
+    // ★ 必须在**每帧都跑**的地方：开关是"乐观置位 + 回执确认"，机器人拒绝时
+    //   要有人把它翻回去。界面线程停了就没人做（无界面服务走 apps/serve 的主循环）。
+    ui.reapUnconfirmedToggles();
 
     // ---- 姿态角到点自动归零（安全项）----
     // ★ 为什么必须放在 drawUi 顶部、而不是动作库那一页里：

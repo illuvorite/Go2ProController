@@ -117,8 +117,9 @@ public:
     std::function<void(const std::string& topic, const nlohmann::json& data)> onTopicData;
     /// 握手成功：回传 data2 与本次实际命中的钥匙（用于把钥匙绑定到该 IP）
     std::function<void(const std::string& ip, int data2, const std::string& usedKeyHex)> onHandshake;
-    /// 动作回执（api_id / code / 失败说明）。界面用它标注"这条动作能不能用"。
-    std::function<void(int apiId, int code, const std::string& note)> onSportAck;
+    /// 动作回执（**哪台狗** / api_id / code / 失败说明）。
+    /// 带 ip 是为了**按机型**记录可用性：Air 上被拒的指令不该让 Pro 那边也标成 ✗。
+    std::function<void(const std::string& ip, int apiId, int code, const std::string& note)> onSportAck;
     /// 需要重连（连接超时 / 心跳静默 / 通道断开）。由上层决定是否重连与退避节奏。
     std::function<void(const std::string& ip, const std::string& reason)> onNeedsReconnect;
 

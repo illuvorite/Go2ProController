@@ -71,6 +71,8 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
     //   atomic 不是 nlohmann::json 的兼容类型，直接塞进去编译不过。
     j["estop"] = ui.estop.load();
     j["mcf"] = ui.mcfMode.load();
+    // 「摆姿势」开着时摇杆语义变成"调姿态"（不发 Move、发 Euler）→ 前端要能提示
+    j["poseMode"] = ui.toggleState("Pose");
 
     std::vector<RobotEntry> snap;
     {
@@ -86,6 +88,8 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
         r["selected"] = ui.isSelected(e.ip);
         r["battery"] = e.battery;
         r["mode"] = e.modeName;
+        r["sn"] = e.sn;        // 16 位序列号（多播发现才有；手动加 IP 的为空）
+        r["model"] = e.model;  // "Air" / "Pro" / "Edu"（空 = 未知）
         if (auto* c = mgr.find(e.ip); c) {
             r["state"] = stateTextOf(c->state());
             r["ready"] = c->isReady();
@@ -141,6 +145,15 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
     }
 
     nlohmann::json acts = nlohmann::json::array();
+    // 动作可用性**按机型聚合**（见 UiState::modelSupport）：
+    //   单台受控 → 就是那台的记录；群控混机型 → 只标注、不隐藏（前端据 support 判断）
+    const std::string ctrlModel = ui.controlModel();
+    j["controlModel"] = ctrlModel;
+    {
+        nlohmann::json models = nlohmann::json::array();
+        for (const auto& m : ui.controlModels()) models.push_back(m);
+        j["controlModels"] = models;  // 受控集合里的已知机型（去重），前端用来显示"混机型"
+    }
     for (const SportAction& a : sportActions()) {
         nlohmann::json o = nlohmann::json::object();
         o["key"] = a.key;
@@ -148,12 +161,20 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
         o["group"] = static_cast<int>(a.group);
         o["risky"] = a.risky;
         o["toggle"] = a.toggle;
-        // 可用性标注（与 ImGui 端一致）：上次回执 code（0=成功，3203=该固件没有此指令）
         int id = apiIdFor(a, ui.mcfMode.load());
         if (id == 0) id = apiIdFor(a, !ui.mcfMode.load());
-        int code = -1;
-        std::string note;
-        if (id != 0 && ui.apiResult(id, &code, &note)) o["ack"] = code;
+        if (id != 0) {
+            const UiState::ModelSupport s = ui.modelSupport(id);
+            if (s.recorded > 0) {
+                // ack 保持旧形状（0=都成功 / 非 0=有失败），另给 support 让前端区分
+                // "部分机型不支持"（partial，**不隐藏**）与"全都不支持"（none，可隐藏）
+                o["ack"] = s.anyReject() ? 1 : 0;
+                o["support"] = s.allReject() ? "none" : (s.anyReject() ? "partial" : "ok");
+                if (!s.rejectModels.empty()) o["rejectModels"] = s.rejectModels;
+            } else {
+                o["support"] = "unknown";
+            }
+        }
         acts.push_back(o);
     }
     j["actions"] = acts;

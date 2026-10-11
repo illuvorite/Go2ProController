@@ -83,6 +83,15 @@ void drawDeviceList(RobotManager& mgr, UiState& ui) {
             }
             ImGui::SameLine(0, 8);
             chip(stateText(st), stc);
+            // 机型（由 SN 第 5 位推出；拿不到 SN 就不显示，也不做任何机型过滤）
+            if (!e.model.empty()) {
+                ImGui::SameLine(0, 6);
+                chip(("Go2 " + e.model).c_str(), col::kAccent);
+                helpTip(("机型 " + e.model + " 由序列号判定：\n" +
+                         (e.sn.empty() ? std::string("（未拿到 SN）") : ("SN " + e.sn)) +
+                         "\n\n动作库的「隐藏机型不支持的」按这个机型过滤")
+                            .c_str());
+            }
             ImGui::SameLine();
             {
                 const float need = 108.0f;

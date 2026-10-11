@@ -139,9 +139,27 @@ void uiThread(UiState& ui, std::atomic<bool>& go) {
         (void)ui.privacyMode.load();
         (void)ui.hideUnsupported.load();
 
-        ui.noteApiResult(1001 + (i % 30), i % 3 == 0 ? 0 : 3203, "测试回执");
+        ui.noteApiResult(ipAt(i), 1001 + (i % 30), i % 3 == 0 ? 0 : 3203, "测试回执");
         ui.addLog("[测试] 并发日志 " + std::to_string(i));
         ui.addOrUpdate(ipAt(i), false);
+        // 机型：写入（按机型记回执）与读取（动作库按机型查）必须在同一把锁下
+        ui.addOrUpdate(ipAt(i), false, "B21A123456789AB" + std::string(1, char('0' + (i % 10))));
+        (void)ui.modelOf(ipAt(i));
+        (void)ui.controlModel();
+        (void)ui.modelSupport(1030);     // 按机型聚合：写回执时在填、界面每帧在读
+        (void)ui.controlModels();
+        // 开关的"待确认"：写入（发送）与读取（每帧回滚 / 界面渲染）也都在 toggleMutex 下
+        ui.setToggle("Pose", i % 2 == 0);
+        ui.noteToggleSent("Pose", {1028}, i % 2 == 0, i % 2 != 0);
+        (void)ui.toggleState("Pose");
+        (void)ui.togglesSnapshot();
+        (void)ui.reapUnconfirmedToggles(3600.0);  // 窗口内不回滚，只压并发安全
+        {
+            int code = 0;
+            std::string note;
+            (void)ui.apiResultForModel("Air", 1001 + (i % 30), &code, &note);
+            (void)ui.apiResultForModel("", 1001 + (i % 30), &code, &note);
+        }
         ui.updateStatus(ipAt(i), float(i % 100), "trot");
         (void)ui.selectedIps();
     }
