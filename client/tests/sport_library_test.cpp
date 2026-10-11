@@ -46,6 +46,11 @@ int main() {
         for (const auto& a : sportActions())
             CHECK_MSG(a.group != go2::SportGroup::Gait,
                       std::string("该组已整组删除，不该再有条目: ") + a.key);
+        // 「状态查询」同理（2026-10-11）：那 5 条只发不读，点了只会显示"成功"、
+        // 看不到任何数据；真要用就该把返回的 data 接到状态区，而不是留个骗人的按钮。
+        for (const auto& a : sportActions())
+            CHECK_MSG(a.group != go2::SportGroup::Query,
+                      std::string("查询组已整组删除，不该再有条目: ") + a.key);
     }
     {
         // 两套指令集不能同时为空（否则这条动作永远发不出去，界面上却是可点的）

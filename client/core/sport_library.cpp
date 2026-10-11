@@ -58,17 +58,23 @@ const std::vector<SportAction>& sportActions() {
         {"Bound",          "跳跃奔跑",     1304, 2046, SportParam::Flag, SportGroup::Stunt, true, true},
         {"FreeJump",       "自由跳跃",     0,    2047, SportParam::Flag, SportGroup::Stunt, true, true},
 
-        // ---------------- 状态查询 ----------------
-        {"GetBodyHeight",     "查机身高度", 1024, 0,    SportParam::None, SportGroup::Query, false},
-        {"GetFootRaiseHeight","查抬腿高度", 1025, 0,    SportParam::None, SportGroup::Query, false},
-        {"GetSpeedLevel",     "查速度档位", 1026, 1026, SportParam::None, SportGroup::Query, false},
-        {"GetState",          "查运动状态", 1034, 1034, SportParam::None, SportGroup::Query, false},
-        {"GetAutoRecovery",   "查自动恢复", 0,    2055, SportParam::None, SportGroup::Query, false},
+        // ★ 「状态查询」整组（5 条）2026-10-11 **删除**：查机身高度 / 查抬腿高度 /
+        //   查速度档位 / 查运动状态 / 查自动恢复（1024 / 1025 / 1026 / 1034 / 2055）。
+        //   删的理由不是"没用"，而是**它们在说谎**：我们只解析回执的 code，
+        //   查询返回的数据从头到尾没人读 —— 界面上点一下只会出现一条
+        //   「[回执] 查机身高度 (api 1024) —— 成功 ✔」，身高一个数字都不显示。
+        //   参考实现「天树探界遥控」的动作页里也**根本没有**这几条。
+        //   真要用，正确做法是把返回的 data 接到状态区（和刚加的电量/温度/姿态角一样），
+        //   而不是留一个"点了像查到了、其实什么也没查"的按钮。
+        //   → 届时连同 sport_library.hpp 的 kApiGet* 常量一起加回来。
 
         // ---------------- 其他 / 进阶 ----------------
         {"TrajectoryFollow",  "轨迹跟随",   1018, 0,    SportParam::Json, SportGroup::Advanced, false},
-        {"Standup",           "起立(兼容)", 1050, 0,    SportParam::None, SportGroup::Advanced, false},
+        // ★ 「起立(兼容)」1050 2026-10-11 删除：与「站立」1004 语义完全重复。
         {"CrossWalk",         "横向行走",   1051, 0,    SportParam::None, SportGroup::Advanced, false},
+        // ⚠ 下面 5 条**只有 MCF 指令集有**（normalId = 0）：在 Air 上 resolveApiId 会
+        //   兜底把 MCF id 打过去、必然被拒（回执记 ✗、按机型存进 robot_model_caps）。
+        //   它们在 Pro 上是真功能，所以留着 —— 但要知道它们对 Air 是噪音。
         {"ClassicWalk",       "经典步态",   0,    2049, SportParam::Flag, SportGroup::Advanced, false, true},
         {"BackStand",         "后仰站立",   0,    2050, SportParam::Flag, SportGroup::Advanced, false, true},
         {"SetAutoRecovery",   "设自动恢复", 0,    2054, SportParam::Flag, SportGroup::Advanced, false, true},

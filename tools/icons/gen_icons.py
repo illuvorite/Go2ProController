@@ -405,16 +405,10 @@ ACTION_ICON = [
     ("Handstand",        "ts_hand_stand",  "倒立：手倒立"),
     ("Bound",            "ts_boundRun",    "跳跃奔跑：并腿跑"),
     ("FreeJump",         "ts_squatUp",     "自由跳跃：蹲身起跳"),
-    # ---- 状态查询（非肢体，用 Phosphor 设备类图标）----
-    ("GetBodyHeight",    "ts_ruler",       "查机身高度：量尺寸"),
-    ("GetFootRaiseHeight", "ts_arrowFatUp", "查抬腿高度：向上抬"),
-    ("GetSpeedLevel",    "ts_speedometer", "查速度档位：速度表"),
-    ("GetState",         "ts_pulse",       "查运动状态：脉搏"),
-    ("GetAutoRecovery",  "ts_firstAid",    "查自动恢复：急救"),
+    # ---- 状态查询：整组已于 2026-10-11 从动作表删除（只发不读）----
     # ---- 其他 / 进阶（混合）----
     ("TrajectoryFollow", "ts_path",        "轨迹跟随：路径"),
     ("CrossWalk",        "ts_climbStairs", "横向行走：阶梯式横移"),
-    ("Standup",          "ts_zeroTorque",  "起立(兼容)：从瘫软起身"),
     ("ClassicWalk",      "ts_walk",        "经典步态：行走"),
     ("BackStand",        "ts_preparation", "后仰站立：准备姿势"),
     ("SetAutoRecovery",  "ts_wrench",      "设自动恢复：扳手"),

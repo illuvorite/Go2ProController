@@ -155,14 +155,8 @@ export const ACTION_ICON = {
   Handstand: '\uE129',  // 倒立：手倒立
   Bound: '\uE132',  // 跳跃奔跑：并腿跑
   FreeJump: '\uE136',  // 自由跳跃：蹲身起跳
-  GetBodyHeight: '\uE6B8',  // 查机身高度：量尺寸（Phosphor 兜底：ruler）
-  GetFootRaiseHeight: '\uE52E',  // 查抬腿高度：向上抬（Phosphor 兜底：arrow-fat-up）
-  GetSpeedLevel: '\uEE74',  // 查速度档位：速度表（Phosphor 兜底：speedometer）
-  GetState: '\uE000',  // 查运动状态：脉搏（Phosphor 兜底：pulse）
-  GetAutoRecovery: '\uE56E',  // 查自动恢复：急救（Phosphor 兜底：first-aid）
   TrajectoryFollow: '\uE39C',  // 轨迹跟随：路径（Phosphor 兜底：path）
   CrossWalk: '\uE121',  // 横向行走：阶梯式横移
-  Standup: '\uE13C',  // 起立(兼容)：从瘫软起身
   ClassicWalk: '\uE13B',  // 经典步态：行走
   BackStand: '\uE130',  // 后仰站立：准备姿势
   SetAutoRecovery: '\uE5D4',  // 设自动恢复：扳手（Phosphor 兜底：wrench）

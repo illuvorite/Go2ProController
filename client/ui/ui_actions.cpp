@@ -91,14 +91,8 @@ const char* iconGlyph(const char* key, const std::string& label) {
         {"Handstand", ts::m_hand_stand}, // 倒立：手倒立
         {"Bound", ts::m_runSideBySide},  // 跳跃奔跑：并腿跑
         {"FreeJump", ts::m_squatUp},     // 自由跳跃：蹲身起跳
-        {"GetBodyHeight", Ruler},    // 查机身高度：量尺寸
-        {"GetFootRaiseHeight", ArrowFatUp}, // 查抬腿高度：向上抬
-        {"GetSpeedLevel", Speedometer}, // 查速度档位：速度表
-        {"GetState", Pulse},         // 查运动状态：脉搏
-        {"GetAutoRecovery", FirstAid}, // 查自动恢复：急救
         {"TrajectoryFollow", Path},  // 轨迹跟随：路径
         {"CrossWalk", ts::m_climbingStairs}, // 横向行走：阶梯式横移
-        {"Standup", ts::m_zeroTorque},   // 起立(兼容)：从瘫软起身
         {"ClassicWalk", ts::m_walk},     // 经典步态：行走
         {"BackStand", ts::m_preparation}, // 后仰站立：准备姿势
         {"SetAutoRecovery", Wrench}, // 设自动恢复：扳手
@@ -579,7 +573,7 @@ static const GroupDef kGroups[] = {
     {SportGroup::Basic, "基础姿态"},
     {SportGroup::Show, "表演动作 / 姿势"},
     {SportGroup::Stunt, "跳跃特技（危险）"},
-    {SportGroup::Query, "状态查询"},
+    // ★ 「状态查询」整组 2026-10-11 删除（只发不读，点它只会显示"成功"、看不到数据）
     {SportGroup::Advanced, "其他 / 进阶"},
     // ★ 2026-09-28 用户要求：「步态 / 速度 / 身高（参数）」这一组**整组撤下**
     //   （那批滑条：姿态角 / 切换步态 / 机身高度 / 抬腿高度 / 速度档位，
