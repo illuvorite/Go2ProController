@@ -72,9 +72,14 @@ const std::vector<SportAction>& sportActions() {
         {"TrajectoryFollow",  "轨迹跟随",   1018, 0,    SportParam::Json, SportGroup::Advanced, false},
         // ★ 「起立(兼容)」1050 2026-10-11 删除：与「站立」1004 语义完全重复。
         {"CrossWalk",         "横向行走",   1051, 0,    SportParam::None, SportGroup::Advanced, false},
-        // ⚠ 下面 5 条**只有 MCF 指令集有**（normalId = 0）：在 Air 上 resolveApiId 会
-        //   兜底把 MCF id 打过去、必然被拒（回执记 ✗、按机型存进 robot_model_caps）。
-        //   它们在 Pro 上是真功能，所以留着 —— 但要知道它们对 Air 是噪音。
+        // ⚠ 下面 5 条在本表里标成 MCF 专属（normalId = 0）。★ 但这只是**未经验证的分类**：
+        //   · 参考实现「天树探界遥控」的指令表是**一张平表**（1001~1062 和 2041~2058 混在
+        //     一起），它根本没有 normal / MCF 之分；"MCF 专属"是我们自己加的推断。
+        //   · 反例就在今天：BodyHeight **1013 在 normal 集里**，实测这台 Air 照样拒
+        //     （code=3203）。可见"属于哪套指令集"并不能预测某台狗收不收。
+        //   → 某台狗到底支不支持，**以回执为准**：被拒会按机型记进 robot_model_caps.json，
+        //     勾上「隐藏机型不支持的」就会自动隐藏。
+        //   这里保留它们，是因为 Pro 上确实是真功能（避障 / 自动恢复 / 经典步态）。
         {"ClassicWalk",       "经典步态",   0,    2049, SportParam::Flag, SportGroup::Advanced, false, true},
         {"BackStand",         "后仰站立",   0,    2050, SportParam::Flag, SportGroup::Advanced, false, true},
         {"SetAutoRecovery",   "设自动恢复", 0,    2054, SportParam::Flag, SportGroup::Advanced, false, true},
