@@ -190,6 +190,11 @@ int main(int argc, char** argv) {
         c.onSportAck = [&ui](const std::string& ackIp, int apiId, int code, const std::string& note) {
             ui.noteApiResult(ackIp, apiId, code, note);
         };
+        // 运动模式切换的回执（motion_switcher 不走 sport 服务，onSportAck 收不到它）
+        c.onMotionModeAck = [&ui](int apiId, int code, const nlohmann::json& data,
+                                  const std::string& note) {
+            ui.noteModeResult(apiId, code, data, note);
+        };
         // 握手成功 → 用"命中 GCM 的那把钥匙"反查 SN 得到机型（不依赖多播 SN 发现）
         c.onHandshake = [&ui, &printLine](const std::string& hsIp, int, const std::string& usedKeyHex) {
             const std::string model = ui.noteHandshakeKey(hsIp, usedKeyHex);
@@ -243,6 +248,7 @@ int main(int argc, char** argv) {
         // 持续模式开关是"乐观置位 + 回执确认"：没人做周期性回滚的话，
         // 被机器人拒绝的开关会一直显示"已开启"。界面版在 drawUi 里做，这里补上。
         ui.reapUnconfirmedToggles();
+        ui.reapUnconfirmedMode();  // 运动模式：没等到 motion_switcher 回执就回滚
         if (++tick % 60 != 0) continue;  // 每 30 秒打一行存活摘要
         int devices = 0;
         {

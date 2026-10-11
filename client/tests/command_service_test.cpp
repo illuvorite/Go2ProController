@@ -589,6 +589,32 @@ int main() {
                   "模式切换只发给受控设备");
         CHECK(ui.motionMode() == "ai");  // 乐观置位，供 /api/state 立即回显
 
+        // ★ 回执成功 → 确认，保持 ai
+        ui.noteModeResult(1002, 0, nlohmann::json(), "");
+        CHECK(ui.motionMode() == "ai");
+
+        // ★ 回执失败 → 回滚到发送前的模式。2026-10-11 实机实测这台 Air
+        //   切 ai → 7004、切回 normal → 7002，两次都被拒；旧实现界面照样显示已切换。
+        ui.setMotionMode("normal");
+        CHECK(cmd::setMotionMode(borrow(sink), ui, "mcf") == 1);
+        CHECK(ui.motionMode() == "mcf");
+        ui.noteModeResult(1002, 7004, nlohmann::json(), "该固件不接受这个模式（code=7004）");
+        CHECK_MSG(ui.motionMode() == "normal", "被拒后必须回滚，不能停在假模式上");
+
+        // ★ 超时没等到回执 → 也要回滚（否则界面会永远停在一个从没生效的模式）
+        CHECK(cmd::setMotionMode(borrow(sink), ui, "ai") == 1);
+        CHECK(ui.motionMode() == "ai");
+        CHECK_MSG(ui.reapUnconfirmedMode(0.0) == 1, "超时应回滚一次");
+        CHECK_MSG(ui.motionMode() == "normal", "超时后回到原模式");
+        CHECK(ui.reapUnconfirmedMode(0.0) == 0);  // 没有待确认的不该重复回滚
+
+        // 查询（api 1001）回上来的模式是**权威值**：直接采用，并作废待确认
+        CHECK(cmd::setMotionMode(borrow(sink), ui, "ai") == 1);
+        CHECK(ui.motionMode() == "ai");
+        ui.noteModeResult(1001, 0, nlohmann::json{{"name", "mcf"}}, "");
+        CHECK_MSG(ui.motionMode() == "mcf", "查询回来的模式应覆盖乐观置位的值");
+        CHECK(ui.reapUnconfirmedMode(0.0) == 0);  // 待确认已被查询作废，不该再回滚
+
         CHECK(cmd::setMotionMode(borrow(sink), ui, "") == 0);  // 空模式名不发
     }
 

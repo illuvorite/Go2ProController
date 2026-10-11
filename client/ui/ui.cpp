@@ -521,6 +521,7 @@ void drawUi(RobotManager& mgr, UiState& ui) {
     // ★ 必须在**每帧都跑**的地方：开关是"乐观置位 + 回执确认"，机器人拒绝时
     //   要有人把它翻回去。界面线程停了就没人做（无界面服务走 apps/serve 的主循环）。
     ui.reapUnconfirmedToggles();
+    ui.reapUnconfirmedMode();   // 运动模式：没等到 motion_switcher 回执就回滚
 
     // ---- 姿态角到点自动归零（安全项）----
     // ★ 为什么必须放在 drawUi 顶部、而不是动作库那一页里：

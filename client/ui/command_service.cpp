@@ -599,8 +599,11 @@ int setMotionMode(const std::shared_ptr<CommandSink>& sink, UiState& ui, const s
     int n = 0;
     for (const auto& ip : sink->selectedReadyIps())
         if (sink->setMotionMode(ip, mode)) ++n;
-    // 乐观置位：以机器人回执为准的部分交给 onTopicData 里的 mode_name 回显覆盖
-    if (n > 0) ui.setMotionMode(mode);
+    // 乐观置位 + 挂待确认：狗的回执（rt/api/motion_switcher/response）确认后才算数，
+    // 失败或超时（kModeConfirmSeconds）都会回滚并写明原因。
+    // ★ 不能只乐观置位了事：实测这台 Air 切 ai → 7004、切回 normal → 7002，两次都被拒，
+    //   而界面照样显示已切换（见 ui.hpp 里 noteModeSent 的说明）。
+    if (n > 0) ui.noteModeSent(mode, ui.motionMode(), n);
     return n;
 }
 

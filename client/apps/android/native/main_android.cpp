@@ -496,6 +496,11 @@ void managerWireUp(go2::RobotManager& mgr, go2::UiState& ui) {
         c.onSportAck = [&ui](const std::string& ackIp, int apiId, int code, const std::string& note) {
             ui.noteApiResult(ackIp, apiId, code, note);
         };
+        // 运动模式切换的回执（motion_switcher 不走 sport 服务，onSportAck 收不到它）
+        c.onMotionModeAck = [&ui](int apiId, int code, const nlohmann::json& data,
+                                  const std::string& note) {
+            ui.noteModeResult(apiId, code, data, note);
+        };
         // 握手成功 → 用"命中 GCM 的那把钥匙"反查 SN 得到机型（不依赖多播 SN 发现）
         c.onHandshake = [&ui](const std::string& hsIp, int, const std::string& usedKeyHex) {
             const std::string model = ui.noteHandshakeKey(hsIp, usedKeyHex);

@@ -246,7 +246,17 @@ GCM 校验通过的那个即为这台机器的钥匙，并按 IP 记入 `go2_key
   被拒会按机型记进 `robot_model_caps.json`，勾上「隐藏机型不支持的」就会自动隐藏该条。
 - **模式设置页**：普通 / AI / MCF 三选一 → `cmd::setMotionMode`，走
   `rt/api/motion_switcher/request`（api_id 1002）。★ 这与运动指令是**两套服务**，
-  不能拿 `sendSport` 凑。机器人上报的 `sportmodestate.mode_name` 会覆盖显示
+  不能拿 `sendSport` 凑。**回执与确认机制**（2026-10-11 实机补齐）：
+  - 该服务的回执 topic 是 `rt/api/motion_switcher/response`，**不含 `/sport/`**，
+    所以 `onSportAck` 收不到它 —— 为此单独加了 `onMotionModeAck`；
+  - 切换是**乐观置位 + 回执确认**：回执 `code==0` 才确认；失败（如实测 Air 的
+    `7004`）或超过 `kModeConfirmSeconds`(4s) 没回执 → **自动回滚**并写明原因。
+    ★ 以前只乐观置位、不看回执，实测「切 ai」「切 normal」都被拒，
+    界面却长期显示"已切换" —— 与"状态查询按钮假装能用"是同一类毛病；
+  - **连上就绪时自动查一次当前模式**（`queryMotionMode()`，api_id 1001），
+    模式页不再永远显示"未知"。实测报文里模式名藏在 `data.data` 这个
+    **"装着 JSON 的字符串"** 里（`{"form":"0","name":"mcf"}`）——
+    `name` 才是权威值，`form` 与它对不上，别按 form 猜。
 - **舞蹈编排页**：把一串 `{动作, 延时}` 按顺序播放（可急停中止）。
   参考实现把编排存在**云端**，这边改成存本地 `robot_dances.json` —— 数据模型与播放语义一致，
   只是离线可用、不依赖企业账号。

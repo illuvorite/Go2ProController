@@ -715,6 +715,21 @@ void RobotClient::handleMessageImpl(const std::string& text) {
                 (note.empty() ? std::string() : "：" + note));
         }
 
+        // 运动模式切换（motion_switcher）：不走 sport 服务，所以单独一个回调。
+        // ★ 实测它的失败码自成一套（7002 / 7004），与运动指令的 3203 不是一个意思，
+        //   所以这里不给它套 rejectReason 的文案。
+        if (r.parsed && r.topic.find("motion_switcher") != std::string::npos) {
+            nlohmann::json payload = nlohmann::json::object();
+            if (msg.contains("data") && msg["data"].is_object()) payload = msg["data"];
+            if (r.apiId == 1001) log("[模式原始] " + text.substr(0, 400));
+            if (onMotionModeAck) {
+                onMotionModeAck(r.apiId, r.code, payload,
+                                r.code == 0 ? std::string()
+                                            : ("该固件不接受这个模式（code=" +
+                                               std::to_string(r.code) + "）"));
+            }
+        }
+
         if (r.parsed && r.isSport) {
             if (onSportAck) onSportAck(targetIp_, r.apiId, r.code, note);
             // 被拒：先看是不是"刚就绪预热"（可自动重发），否则换另一套指令集再试
@@ -795,6 +810,10 @@ void RobotClient::handleValidation(const nlohmann::json& msg) {
             connectedSince_ = nowTimeStr();
         }
         setState(ConnState::Ready);
+        // ★ 主动问一次"你现在是什么模式"。
+        //   以前只有桌面命令行的 --set-mode 路径会查，所以界面端的模式页
+        //   永远显示"未知" —— 用户点进去看不出当前到底在哪一档。
+        queryMotionMode();
         return;
     }
 

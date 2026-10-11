@@ -23,6 +23,10 @@ namespace go2 {
 
 class RobotManager;
 
+/// 运动模式名 → 中文显示（"normal"→普通模式 / "ai"→AI 模式 / "mcf"→MCF 模式；
+/// 空串或未知值原样返回）。界面与日志共用一份，别各写一个 switch。
+std::string modeLabel(const std::string& mode);
+
 /// 设备列表里的一台机器狗
 struct RobotEntry {
     std::string ip;
@@ -46,6 +50,10 @@ struct RobotEntry {
 /// 开关"待确认"的等待窗口（秒）：超过它还没收到成功回执就回滚。
 /// 2.5s 的依据：刚就绪预热的延时重试 + 换指令集的即时重试都在这个窗口内回得来。
 constexpr double kToggleConfirmSeconds = 2.5;
+
+/// 运动模式切换的确认窗口（秒）。比开关略长：motion_switcher 走的是另一套服务，
+/// 实测回执偶尔比运动指令慢一拍。
+constexpr double kModeConfirmSeconds = 4.0;
 
 /// 主界面页面（顶栏页签切换）。
 /// 动作库是**常驻整屏页面**（按 pageW 铺满），不再是弹窗；
@@ -264,6 +272,32 @@ struct UiState {
     std::vector<int> activeToggleIdsSnapshot() const;
     void clearActiveToggles();
 
+    // ---- 运动模式的"待确认"（与开关同一套思路）----
+    //
+    // ★ 为什么模式切换也要"乐观置位 + 回执确认"（2026-10-11 实机发现）：
+    //   实测这台 Go2 Air 切到 ai → 狗回 `rt/api/motion_switcher/response code=7004`，
+    //   切回 normal → `code=7002`，**两条都被拒**。而当时的实现只是乐观把界面改成
+    //   "ai"，从不看回执 —— 界面显示的模式和狗的实际模式长期对不上，
+    //   用户完全无从察觉。这跟"状态查询按钮假装能用"是同一类毛病。
+    //   现在：下发时乐观置位 + 挂待确认 → 回执成功才确认，失败/超时都回滚并写明原因。
+    struct PendingMode {
+        bool active = false;
+        std::string want;  ///< 想切到的模式（normal / ai / mcf）
+        std::string prev;  ///< 发送前的模式（回滚目标）
+        int sent = 0;      ///< 实际发出去的台数（0 = 没有就绪设备）
+        std::chrono::steady_clock::time_point sentAt{};
+    };
+
+    /// 记一条"刚发出的模式切换"（乐观置位 + 挂待确认）
+    void noteModeSent(const std::string& want, const std::string& prev, int sentCount);
+    /// 收到运动模式服务的回执：
+    ///   · apiId 1001（查询）—— 狗报上来的当前模式是**权威值**，直接采用；
+    ///   · apiId 1002（切换）—— code=0 确认，否则回滚到发送前的模式。
+    void noteModeResult(int apiId, int code, const nlohmann::json& data,
+                        const std::string& note);
+    /// 回滚超时未被确认的模式切换。**必须周期性调用**（同 reapUnconfirmedToggles）。
+    int reapUnconfirmedMode(double timeoutSeconds = kModeConfirmSeconds);
+
     // ---- 动作可用性（由回执驱动，界面上标注"这条动作能不能用"）----
     //
     // ★ 两套记录，**按机型分开**：
@@ -438,6 +472,7 @@ private:
     // ---- 运动模式 / 当前脚本名（HTTP 线程写、界面线程读 → 各一把锁）----
     mutable std::mutex modeMutex;
     std::string motionMode_;   // "normal" / "ai" / "mcf"（空 = 未知）
+    PendingMode pendingMode_;  ///< 待确认的模式切换（同样由 modeMutex 保护）
     mutable std::mutex scriptMutex;
     std::string scriptName_;
     std::string scriptNameSnap() const;

@@ -117,6 +117,15 @@ public:
     std::function<void(const std::string& topic, const nlohmann::json& data)> onTopicData;
     /// 握手成功：回传 data2 与本次实际命中的钥匙（用于把钥匙绑定到该 IP）
     std::function<void(const std::string& ip, int data2, const std::string& usedKeyHex)> onHandshake;
+    /// **运动模式切换**的回执（`rt/api/motion_switcher/response`）。
+    ///
+    /// 它不走运动指令那条路（topic 里没有 "/sport/"），所以 `onSportAck` 收不到它。
+    /// 但界面上"当前模式"必须以狗的确认结果为准 —— 实测 Air 切 ai / 切回 normal
+    /// 都被拒（7004 / 7002），乐观置位而不看回执会让界面长期显示一个假模式。
+    /// @param apiId 1001 = 查询当前模式；1002 = 切换模式
+    /// @param data   回执里的 data（查询时里面带当前模式名）
+    std::function<void(int apiId, int code, const nlohmann::json& data, const std::string& note)>
+        onMotionModeAck;
     /// 动作回执（**哪台狗** / api_id / code / 失败说明）。
     /// 带 ip 是为了**按机型**记录可用性：Air 上被拒的指令不该让 Pro 那边也标成 ✗。
     std::function<void(const std::string& ip, int apiId, int code, const std::string& note)> onSportAck;

@@ -23,6 +23,15 @@
 
 namespace go2 {
 
+/// 模式名的中文显示（界面与日志共用）
+std::string modeLabel(const std::string& m) {
+    if (m == "normal") return "普通模式";
+    if (m == "ai") return "AI 模式";
+    if (m == "mcf") return "MCF 模式";
+    return m.empty() ? std::string("未知") : m;
+}
+
+
 // ---------------------------------------------------------------- 日志
 
 bool isProblemLine(const std::string& s) {
@@ -209,6 +218,100 @@ void UiState::setMotionMode(const std::string& mode) {
     if (mode.empty()) return;
     std::lock_guard<std::mutex> lock(modeMutex);
     motionMode_ = mode;
+    // 机器人**自己上报**的 mode_name 是权威值：它到了就说明待确认的那次已经有定论
+    //（要么切成功了、要么根本没切上去），不该再等超时回滚把它翻回去。
+    if (pendingMode_.active) pendingMode_ = PendingMode{};
+}
+
+void UiState::noteModeSent(const std::string& want, const std::string& prev, int sentCount) {
+    if (want.empty()) return;
+    std::lock_guard<std::mutex> lock(modeMutex);
+    pendingMode_.active = true;
+    pendingMode_.want = want;
+    pendingMode_.prev = prev;
+    pendingMode_.sent = sentCount;
+    pendingMode_.sentAt = std::chrono::steady_clock::now();
+    motionMode_ = want;  // 乐观置位
+}
+
+void UiState::noteModeResult(int apiId, int code, const nlohmann::json& data,
+                              const std::string& note) {
+    // ---- 查询（1001）：狗报上来什么就是什么 ----
+    if (apiId == 1001) {
+        // ★ 实测报文（2026-10-11，Go2 Air）：
+        //   {"type":"res","topic":"rt/api/motion_switcher/response",
+        //    "data":{"header":{...},"data":"{\"form\":\"0\",\"name\":\"mcf\"}"}}
+        // 模式名藏在 **`data.data` 这个"装着 JSON 的字符串"** 里，不是顶层字段。
+        //   form 只是数字档位（参考实现按 form 猜 0=ai/1=normal/2=mcf），
+        //   而 name 才是权威值（实测 form="0" 时 name="mcf"，两者对不上）。
+        nlohmann::json inner = data;
+        auto d = data.find("data");
+        if (d != data.end() && d->is_string()) {
+            try {
+                inner = nlohmann::json::parse(d->get<std::string>());
+            } catch (...) {
+                inner = data;  // 不是 JSON 就当没有，别把异常带出去
+            }
+        }
+        std::string reported;
+        for (const char* k : {"name", "mode", "mode_name"}) {
+            auto it = inner.find(k);
+            if (it != inner.end() && it->is_string()) {
+                reported = it->get<std::string>();
+                break;
+            }
+        }
+        if (reported.empty()) return;
+        std::string prev;
+        {
+            std::lock_guard<std::mutex> lock(modeMutex);
+            prev = motionMode_;
+            if (prev == reported) return;  // 没变就别刷屏
+            motionMode_ = reported;
+            pendingMode_ = PendingMode{};  // 查询是权威值 → 待确认作废
+        }
+        addLog("[模式] 机器人当前：" + modeLabel(reported) +
+               (prev.empty() ? std::string() : ("（原以为是" + modeLabel(prev) + "）")));
+        return;
+    }
+
+    std::string rollbackTo, tried;
+    {
+        std::lock_guard<std::mutex> lock(modeMutex);
+        if (!pendingMode_.active) return;  // 没有待确认（例如是被动收到的回执）
+        if (code == 0) {
+            pendingMode_ = PendingMode{};  // 确认，保持乐观置位的值
+            return;
+        }
+        rollbackTo = pendingMode_.prev;
+        tried = pendingMode_.want;
+        motionMode_ = pendingMode_.prev;  // 回滚
+        pendingMode_ = PendingMode{};
+    }
+    const std::string label = modeLabel(tried);
+    addLog("[模式] 切到「" + label + "」被拒（code=" + std::to_string(code) + "）：" +
+           (note.empty() ? std::string("该固件不支持这个模式") : note) + " → 已回滚为" +
+           (rollbackTo.empty() ? std::string("未知") : modeLabel(rollbackTo)));
+}
+
+int UiState::reapUnconfirmedMode(double timeoutSeconds) {
+    std::string rollbackTo, tried;
+    {
+        std::lock_guard<std::mutex> lock(modeMutex);
+        if (!pendingMode_.active) return 0;
+        const auto age = std::chrono::duration<double>(
+                             std::chrono::steady_clock::now() - pendingMode_.sentAt)
+                             .count();
+        if (age < timeoutSeconds) return 0;
+        rollbackTo = pendingMode_.prev;
+        tried = pendingMode_.want;
+        motionMode_ = pendingMode_.prev;
+        pendingMode_ = PendingMode{};
+    }
+    addLog("[模式] 切到「" + modeLabel(tried) + "」没等到回执（" +
+           std::to_string(static_cast<int>(timeoutSeconds)) + "s），已回滚为" +
+           (rollbackTo.empty() ? std::string("未知") : modeLabel(rollbackTo)));
+    return 1;
 }
 
 std::string UiState::motionMode() const {
