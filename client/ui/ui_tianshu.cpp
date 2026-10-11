@@ -40,7 +40,7 @@ struct DanceEditor {
     char name[64] = "";
     char desc[96] = "";
     std::vector<DanceStep> steps;
-    int addKey = 0;             ///< 「添加动作」下拉当前选中项（索引进可编排动作表）
+    bool paletteOpen = false;    ///< 「动作面板」是否展开（内嵌可滚动；用弹层会被父窗口裁掉）
 };
 DanceEditor g_danceEdit;
 
@@ -50,6 +50,19 @@ std::vector<const SportAction*> danceChoices() {
     for (const SportAction& a : sportActions())
         if (a.group != SportGroup::Gait) out.push_back(&a);
     return out;
+}
+
+/// 动作库分组的中文标题（编排的动作面板按组分区显示）
+const char* sportGroupTitle(SportGroup g) {
+    switch (g) {
+        case SportGroup::Basic: return "基础姿态";
+        case SportGroup::Show: return "表演动作";
+        case SportGroup::Stunt: return "跳跃特技";
+        case SportGroup::Query: return "状态查询";
+        case SportGroup::Advanced: return "其他 / 进阶";
+        case SportGroup::Gait: break;
+    }
+    return "动作";
 }
 
 /// 编排里某一步的中文显示名
@@ -226,28 +239,59 @@ void drawDancePage(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
             std::swap(g_danceEdit.steps[static_cast<size_t>(moveFrom)],
                       g_danceEdit.steps[static_cast<size_t>(moveTo)]);
 
-        // 添加动作：下拉选 + 「添加」/「添加等待」
-        const std::vector<const SportAction*> choices = danceChoices();
-        if (!choices.empty()) {
-            if (g_danceEdit.addKey >= static_cast<int>(choices.size())) g_danceEdit.addKey = 0;
-            ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::BeginCombo("##addaction",
-                                  choices[static_cast<size_t>(g_danceEdit.addKey)]->label)) {
-                for (int c = 0; c < static_cast<int>(choices.size()); ++c) {
-                    const bool sel = (c == g_danceEdit.addKey);
-                    if (ImGui::Selectable(choices[static_cast<size_t>(c)]->label, sel))
-                        g_danceEdit.addKey = c;
-                }
-                ImGui::EndCombo();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("＋ 添加动作")) {
-                const SportAction* a = choices[static_cast<size_t>(g_danceEdit.addKey)];
-                g_danceEdit.steps.push_back({a->key, defaultDanceDelayMs(a->key)});
-            }
+        // ---- 添加动作 ----
+        // ★ 为什么是**内嵌可滚动面板**而不是 BeginCombo 弹层：
+        //   ImGui 的弹层会被**打开它的那个滚动子窗口**的裁剪矩形切掉。
+        //   这里的选择器就开在 dancelist（可滚动子窗口）里，动作有三十多个、
+        //   平板屏幕又小 → 弹层超出子窗口下沿的部分直接消失，看着就是"被遮挡"。
+        //   内嵌面板 + 自带滚动条则完全落在自己的区域内，任何屏幕尺寸都不会被切。
+        if (ImGui::Button(g_danceEdit.paletteOpen ? "▼ 收起动作面板" : "＋ 添加动作",
+                          ImVec2(170.0f, bh))) {
+            g_danceEdit.paletteOpen = !g_danceEdit.paletteOpen;
         }
         ImGui::SameLine();
-        if (ImGui::Button("＋ 添加等待")) g_danceEdit.steps.push_back({"wait", 1000});
+        if (ImGui::Button("＋ 添加等待", ImVec2(140.0f, bh)))
+            g_danceEdit.steps.push_back({"wait", 1000});
+        ImGui::SameLine();
+        {
+            FontScope fs = fontSmall();
+            ImGui::TextDisabled("共 %d 步", static_cast<int>(g_danceEdit.steps.size()));
+        }
+
+        if (g_danceEdit.paletteOpen) {
+            const float palH = g_touchUi ? 190.0f : 170.0f;
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0.22f));
+            ImGui::BeginChild("dancepalette", ImVec2(0, palH), ImGuiChildFlags_Borders);
+            touchDragScroll(L);
+            {
+                FontScope fs = fontSmall();
+                ImGui::TextDisabled("点一个动作就追加到最后一步；再加「等待」可插入停顿");
+            }
+            int col = 0;
+            const float w = std::max(88.0f, (ImGui::GetContentRegionAvail().x - 24.0f) / 4.0f);
+            SportGroup cur = SportGroup::Basic;
+            bool first = true;
+            for (const SportAction* a : danceChoices()) {
+                if (first || a->group != cur) {
+                    cur = a->group;
+                    first = false;
+                    if (col > 0) ImGui::NewLine();
+                    col = 0;
+                    FontScope fs = fontSmall();
+                    ImGui::TextColored(col::kAccent, "%s", sportGroupTitle(a->group));
+                }
+                if (col > 0 && col % 4 != 0) ImGui::SameLine();
+                ++col;
+                const std::string label = iconFontLoaded()
+                                              ? std::string(iconGlyph(a->key, a->label)) + " " + a->label
+                                              : std::string(a->label);
+                if (ImGui::Button(label.c_str(), ImVec2(w, g_touchUi ? 40.0f : 30.0f))) {
+                    g_danceEdit.steps.push_back({a->key, defaultDanceDelayMs(a->key)});
+                }
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        }
 
         ImGui::NewLine();
         if (accentButton("保存", ImVec2(120.0f, bh))) {

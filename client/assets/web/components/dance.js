@@ -128,23 +128,48 @@ export default {
         </div>
       </div>
 
-      <!-- 选动作 -->
-      <div v-if="pickerFor >= 0" class="picker">
-        <p class="sub">给第 {{ pickerFor + 1 }} 步选动作：</p>
-        <button class="btn-mini" @click="addStep('wait')">等待</button>
-        <div v-for="g in groupedChoices" :key="g.name" class="picker-group">
-          <span class="sub">{{ g.name }}</span>
-          <div class="picker-tiles">
-            <button v-for="a in g.items" :key="a.key" class="picker-tile" @click="addStep(a.key)">
-              <span class="ic">{{ iconOf(a.key) }}</span>{{ a.label }}
-            </button>
-          </div>
-        </div>
-      </div>
-      <div v-else class="row-btns">
+      <div class="row-btns">
         <button class="btn-mini" @click="pickerFor = form.steps.length">＋ 添加动作</button>
         <button class="btn-mini" @click="addStep('wait')">＋ 添加等待</button>
       </div>
+
+      <!-- 选动作：**底部抽屉**，不是页面内联展开。
+           内联展开时它夹在编辑卡片中间，平板这种小屏上会被顶栏和上方卡片压住，
+           三十多个动作只能露出尾部几块 —— 看着就像"被遮挡"。
+
+           ★ 必须 Teleport 到 body：.card 上有 backdrop-filter: blur(8px)，
+             而 backdrop-filter 会给 position:fixed 的后代**建立包含块** ——
+             不 Teleport 的话抽屉会相对「卡片」定位、而不是相对视口
+             （2026-10-11 实机截图：抽屉卡在卡片中间）。
+             ⚠ 这段注释写在 Vue 的模板字符串里，里面**不能用反引号**，
+               否则会把模板提前截断（js_syntax_check 会报 Unexpected identifier）。 -->
+      <Teleport to="body">
+      <div v-if="pickerFor >= 0" class="sheet-mask" @click="pickerFor = -1"></div>
+      <div v-if="pickerFor >= 0" class="sheet">
+        <div class="sheet-head">
+          <span>给第 {{ pickerFor + 1 }} 步选动作</span>
+          <button class="btn-mini" @click="pickerFor = -1">关闭</button>
+        </div>
+        <div class="sheet-body">
+          <div class="picker-group">
+            <span class="sub">其它</span>
+            <div class="picker-tiles">
+              <button class="picker-tile" @click="addStep('wait')">
+                <span class="ic">{{ iconOf('wait') }}</span>等待
+              </button>
+            </div>
+          </div>
+          <div v-for="g in groupedChoices" :key="g.name" class="picker-group">
+            <span class="sub">{{ g.name }}</span>
+            <div class="picker-tiles">
+              <button v-for="a in g.items" :key="a.key" class="picker-tile" @click="addStep(a.key)">
+                <span class="ic">{{ iconOf(a.key) }}</span>{{ a.label }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      </Teleport>
 
       <div class="row-btns right">
         <button class="btn-mini" @click="editing = false">取消</button>

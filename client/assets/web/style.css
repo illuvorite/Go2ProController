@@ -587,10 +587,28 @@ input:focus { outline: none; border-color: rgba(77, 147, 255, .6); background: r
 .step .mini { background: transparent; border: 1px solid var(--line); color: var(--dim); border-radius: 6px; width: 26px; height: 26px; cursor: pointer; }
 .row-btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .row-btns.right { justify-content: flex-end; }
-.picker { border: 1px dashed var(--line); border-radius: 12px; padding: 10px; margin: 8px 0; max-height: 46vh; overflow: auto; }
-.picker-group { margin-top: 8px; }
-.picker-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin-top: 6px; }
-.picker-tile { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; font-size: 11.5px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; color: var(--text); cursor: pointer; }
+/* 选动作抽屉：fixed 贴底 + 自带滚动。
+   为什么不用页面内联展开：它夹在编辑卡片中间，平板小屏上会被顶栏和上方卡片压住，
+   三十多个动作只能露出尾部几块（2026-10-11 实机截图确认）。 */
+.sheet-mask { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, .55); }
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 61;
+  display: flex; flex-direction: column; max-height: 74vh;
+  background: #151920; border-top: 1px solid var(--line);
+  border-radius: 16px 16px 0 0; box-shadow: 0 -10px 30px rgba(0, 0, 0, .5);
+  padding: 10px 14px calc(12px + var(--safe-b));
+}
+.sheet-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 8px; font-size: 14px; flex: 0 0 auto;
+}
+.sheet-body {
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain; padding-bottom: 4px;
+}
+.picker-group { margin-top: 10px; }
+.picker-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; margin-top: 6px; }
+.picker-tile { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 4px; font-size: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; color: var(--text); cursor: pointer; }
 .picker-tile .ic { font-size: 19px; }
 
 .dance-item { display: flex; align-items: center; gap: 12px; justify-content: space-between; }

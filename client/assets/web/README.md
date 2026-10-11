@@ -99,6 +99,16 @@ assets/web/
 
 ## 4. 关键设计约定（改前端必读）
 
+> ★ **任何 `position: fixed` 的浮层（弹窗 / 抽屉 / 悬浮按钮）都必须 `<Teleport to="body">`
+> 移出 `.card`**，否则会被"卡住"定位到卡片里而不是视口 ——
+> 因为 `.card` 上有 `backdrop-filter: blur(8px)`，而 `backdrop-filter`（同 `filter` /
+> `transform` 一样）会给 `position: fixed` 的后代**建立包含块**。
+> 2026-10-11 舞蹈编排的动作选择器就踩了这个（实机截图：抽屉卡在卡片中间）。
+>
+> ⚠ 写在 Vue **模板字符串**里的注释**不能用反引号**，否则会把模板提前截断、整页 JS 报错。
+> `tools/js_syntax_check.cjs` 能抓到这类问题，提交前跑一下。
+
+
 - **摇杆语义与 C++ 完全一致**：`motion.js` 是 `core/motion.hpp` 的镜像 —— 左杆平移、
   右杆横向转向、急停锁定时一律不发、松手补一次 stop。改一边必须改另一边。
 - **10Hz 下发走 `post()` 不走 `cmd()`**：`cmd()` 每次回拉 state，摇杆 10Hz 会把轮询打爆。
