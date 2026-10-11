@@ -5,13 +5,15 @@ import { store, refresh, cmd } from './store.js'
 import TopBar from './components/topbar.js'
 import RemotePage from './components/remote.js'
 import ActionsPage from './components/actions.js'
+import ModePage from './components/mode.js'
+import DancePage from './components/dance.js'
 import JoystickBand from './components/band.js'
 import DevicesModal from './components/devices.js'
 import SettingsModal from './components/settings.js'
 import LogModal from './components/log.js'
 
 createApp({
-  components: { TopBar, RemotePage, ActionsPage, JoystickBand, DevicesModal, SettingsModal, LogModal },
+  components: { TopBar, RemotePage, ActionsPage, ModePage, DancePage, JoystickBand, DevicesModal, SettingsModal, LogModal },
   setup() {
     let timer = null
     onMounted(() => {
@@ -40,9 +42,12 @@ createApp({
   <div class="app">
     <TopBar />
 
+    <!-- 内容区：遥控 / 动作执行 / 模式设置 / 舞蹈编排 -->
     <main class="content" :class="{'with-band': showBand}">
       <RemotePage v-if="store.page === 'remote'" />
-      <ActionsPage v-else />
+      <ActionsPage v-else-if="store.page === 'actions'" />
+      <ModePage v-else-if="store.page === 'mode'" />
+      <DancePage v-else />
     </main>
 
     <!-- 摇杆带：只在遥控页（弹窗打开时整条撤掉） -->

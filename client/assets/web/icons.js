@@ -168,6 +168,20 @@ export const ACTION_ICON = {
   SetAutoRecovery: '\uE5D4',  // 设自动恢复：扳手（Phosphor 兜底：wrench）
   FreeAvoid: '\uE40C',  // 自由避障：盾牌（Phosphor 兜底：shield-check）
   SwitchAvoidMode: '\uE4E2',  // 避障模式：注意（Phosphor 兜底：warning-circle）
+  TwistLeft: '\uE036',  // 左扭：逆时针转（Phosphor 兜底：arrow-clockwise）
+  TwistRight: '\uE038',  // 右扭：顺时针转（Phosphor 兜底：arrow-counter-clockwise）
+  LeanLeft: '\uE03A',  // 左倾：向左弯（Phosphor 兜底：arrow-bend-double-up-left）
+  LeanRight: '\uE03C',  // 右倾：向右弯（Phosphor 兜底：arrow-bend-double-up-right）
+  TiltDown: '\uE03E',  // 低头：向下（Phosphor 兜底：arrow-down）
+  TiltUp: '\uE08E',  // 抬头：向上（Phosphor 兜底：arrow-up）
+  ShiftLeft: '\uE058',  // 左移：向左平移（Phosphor 兜底：arrow-left）
+  ShiftRight: '\uE06C',  // 右移：向右平移（Phosphor 兜底：arrow-right）
+  BodyLowest: '\uE532',  // 机身最低：向内收（Phosphor 兜底：arrows-in-line-vertical）
+  BodyNormal: '\uE6B8',  // 机身正常：标准高度（Phosphor 兜底：ruler）
+  BodyHighest: '\uE536',  // 机身最高：向外撑（Phosphor 兜底：arrows-out-line-vertical）
+  AdjustYaw: '\uE1C8',  // 方向回正：罗盘（对准朝向）（Phosphor 兜底：compass）
+  StepInPlace: '\uE139',  // 原地踏步：踏步剪影
+  ResumeMove: '\uE73A',  // 恢复移动：继续行走（Phosphor 兜底：person-simple-walk）
 }
 
 // 兜底：新指令还没进表时按中文关键词猜（与 C++ 端兜底顺序一致）

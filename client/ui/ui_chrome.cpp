@@ -66,8 +66,7 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     // ★ "动作库"全站统一 icon::List（squares-four，动作卡片网格）：
     //   顶栏切换按钮、更多菜单、动作库页标题三处必须是**同一个**图标。
     //   原来顶栏/页标题用 TaiChi(太极人形)、菜单用 List —— 同一个功能两个图标。
-    const std::string labRemote = ic ? std::string(icon::Joystick) + " 遥控" : std::string("遥控");
-    const std::string labActions = ic ? std::string(icon::List) + " 动作库" : std::string("动作库");
+    //   （页签文案现在由 pageBtn 按"下一个页面"动态拼，这里不再预置字符串。）
 
     // 把接下来的 n 个按钮推到右端（两边留白，别贴着边）
     const auto alignRight = [&](int n) {
@@ -93,7 +92,11 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     const auto goPage = [&](UiPage p) {
         if (ui.page == p) return;
         ui.page = p;
-        ui.addLog(std::string("[UI] 切到") + (p == UiPage::Actions ? "动作库" : "遥控") + "页");
+        const char* n = (p == UiPage::Actions)   ? "动作库"
+                        : (p == UiPage::Mode)    ? "模式设置"
+                        : (p == UiPage::Dance)   ? "舞蹈编排"
+                                                 : "遥控";
+        ui.addLog(std::string("[UI] 切到") + n + "页");
     };
 
     // ---------------------------------------------------------------- 顶栏
@@ -122,6 +125,20 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
         else
             std::snprintf(t, sizeof(t), "%d%%", static_cast<int>(low));
         chip(t, low > 30.0f ? col::kOk : col::kWarn);
+        return true;
+    };
+    // 温度胶囊：与电量同一口径 —— 取**受控设备里最低**的那台。
+    // 数据来自 lowstate（core/telemetry.hpp 解析，参考实现取 mcu_ntc → bq_ntc → ntc1）。
+    // 一台都没上报过温度时**不显示**这个胶囊（而不是画一个 "0°C" 骗人）。
+    const auto temperatureChip = [&]() -> bool {
+        const float t = ui.temperatureMin();
+        if (t <= -999.0f) return false;
+        char s[40];
+        if (ic)
+            std::snprintf(s, sizeof(s), "%s %d°C", icon::Thermometer, static_cast<int>(t));
+        else
+            std::snprintf(s, sizeof(s), "%d°C", static_cast<int>(t));
+        chip(s, t < 65.0f ? col::kIdle : col::kWarn);
         return true;
     };
     // 「⋯ 更多」：设置 / 日志 + 页面切换（「设备」已提到顶栏，不再重复放这里）
@@ -154,17 +171,34 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
             if (item(icon::Gear, "设置")) ui.popupRequest = 2;
             if (item(icon::Log, "日志")) ui.popupRequest = 3;
             ImGui::Separator();
-            if (item(icon::List, "动作库")) goPage(UiPage::Actions);
+            // 页面：与参考实现「天树探界遥控」的侧栏五项对应
+            // （设备列表走顶栏「设备」按钮，运动控制就是遥控页）
             if (item(icon::Joystick, "遥控")) goPage(UiPage::Remote);
+            if (item(icon::List, "动作库")) goPage(UiPage::Actions);
+            if (item(icon::Gear, "模式设置")) goPage(UiPage::Mode);
+            if (item(icon::MusicNote, "舞蹈编排")) goPage(UiPage::Dance);
             ImGui::EndPopup();
         }
         return hit;
     };
-    // 页面切换按钮：遥控页上显示「动作库」，动作库页上显示「遥控」
+    // 页面切换按钮：**依次循环** 遥控 → 动作库 → 模式设置 → 舞蹈编排 → 遥控，
+    // 按钮上写的是"下一个页面"。与参考实现「天树探界遥控」的侧栏五项对应
+    // （设备列表走顶栏「设备」按钮，运动控制就是遥控页）。
     const auto pageBtn = [&] {
-        const bool onRemote = (ui.page == UiPage::Remote);
-        if (hiBtn(onRemote ? labActions.c_str() : labRemote.c_str(), false))
-            goPage(onRemote ? UiPage::Actions : UiPage::Remote);
+        const UiPage next = (ui.page == UiPage::Remote)    ? UiPage::Actions
+                            : (ui.page == UiPage::Actions) ? UiPage::Mode
+                            : (ui.page == UiPage::Mode)    ? UiPage::Dance
+                                                           : UiPage::Remote;
+        const char* glyph = (next == UiPage::Actions)   ? icon::List
+                            : (next == UiPage::Mode)    ? icon::Gear
+                            : (next == UiPage::Dance)   ? icon::MusicNote
+                                                        : icon::Joystick;
+        const char* name = (next == UiPage::Actions)   ? "动作库"
+                           : (next == UiPage::Mode)    ? "模式设置"
+                           : (next == UiPage::Dance)   ? "舞蹈编排"
+                                                       : "遥控";
+        const std::string lab = ic ? std::string(glyph) + " " + name : std::string(name);
+        if (hiBtn(lab.c_str(), false)) goPage(next);
     };
 
     // 急停：红色、顶栏最右（用户要求放回顶栏；断线时也能按，不依赖任何连接状态）
@@ -179,10 +213,11 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     };
 
     if (L.topTwoRows) {
-        // ---- 第一行：状态 + 电量 ----
+        // ---- 第一行：状态 + 电量 + 温度 ----
         statusChip();
         ImGui::SameLine();
         batteryChip();
+        if (temperatureChip()) ImGui::SameLine();
         // ---- 第二行：设备 · 页面切换 · 更多 · 急停 ----
         if (plainBtn(labEquipment.c_str())) ui.popupRequest = 1;
         ImGui::SameLine();
@@ -211,6 +246,7 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
         statusChip();
         ImGui::SameLine();
         if (batteryChip()) ImGui::SameLine();
+        if (temperatureChip()) ImGui::SameLine();
         alignRight(4);
         if (plainBtn(labEquipment.c_str())) ui.popupRequest = 1;
         ImGui::SameLine();

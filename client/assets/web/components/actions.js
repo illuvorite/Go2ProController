@@ -2,12 +2,14 @@
 // 组顺序与 C++ 端一致，且同样跳过 SportGroup::Gait（=1，步态/速度/身高那组，用户已要求撤下）
 // 页眉：MCF 指令集开关 + 隐藏不支持的（与 ImGui 端 drawActionPageHeader 同一功能集）
 // 瓷砖带可用性标注：上次回执 ✓ / ✗（后端按当前指令集解析 api_id 后回传 ack code）
+// 页首另有「快捷动作」组：参考实现（天树探界）里那批"一次点击发一串指令"的按钮
 import { computed } from 'vue'
 import { store, cmd, post, param, setParam } from '../store.js'
 import { iconForAction } from '../icons.js'
 
 const GROUPS = ['基础姿态', '步态 / 参数', '表演动作', '跳跃特技', '状态查询', '其他 / 进阶']
 const SKIP = 1  // Gait
+const QUICK_GROUPS = ['姿态微调', '机身高度', '高级技能']
 
 export default {
   name: 'ActionsPage',
@@ -35,6 +37,19 @@ export default {
       }
       return out
     })
+
+    // 快捷动作（复合指令）：后端按 kind 给了 group 序号，前端只负责分组显示
+    const quickGroups = computed(() => {
+      const out = []
+      for (const q of store.st.quickActions || []) {
+        const name = QUICK_GROUPS[q.group] || q.groupName || '快捷动作'
+        let g = out.find((x) => x.name === name)
+        if (!g) out.push((g = { name, items: [] }))
+        g.items.push(q)
+      }
+      return out
+    })
+
     // 机型标签：机型未知时不显示、也不做任何过滤；混机型时明说"只标注、不隐藏"
     const ctrlModel = computed(() => store.st.controlModel || '')
     const ctrlModels = computed(() => store.st.controlModels || [])
@@ -46,9 +61,10 @@ export default {
     // 「哪台不支持」—— 混机型时贴在瓷砖上，比一个孤零零的 ✗ 有用得多
     const badModels = (a) => (a && a.rejectModels ? a.rejectModels.join('、') : '')
 
-    return { store, groups, iconForAction, isOn, mcf, hideUnsupported, toggleParam, ackText, ackClass,
-             ctrlModel, ctrlModels, mixedModels, badModels,
-             run: (a) => cmd({ cmd: 'action', key: a.key }) }
+    return { store, groups, quickGroups, iconForAction, isOn, mcf, hideUnsupported, toggleParam,
+             ackText, ackClass, ctrlModel, ctrlModels, mixedModels, badModels,
+             run: (a) => cmd({ cmd: 'action', key: a.key }),
+             runQuick: (q) => cmd({ cmd: 'quick', key: q.key }) }
   },
   template: `
   <section class="page">
@@ -68,6 +84,19 @@ export default {
       </label>
     </div>
 
+    <!-- 快捷动作（复合指令）：姿态预设 / 平移 / 机身高度 / 方向回正 / 原地踏步 / 恢复移动 -->
+    <div v-for="g in quickGroups" :key="'q-' + g.name" class="card pad group">
+      <p class="title">{{ g.name }} <span class="sub">({{ g.items.length }})</span></p>
+      <div class="tiles">
+        <button v-for="q in g.items" :key="q.key" class="tile quick" :title="q.hint"
+                :class="{script: q.script}" @click="runQuick(q)">
+          <span class="ico">{{ iconForAction({ key: q.key, label: q.label }) }}</span>
+          <span class="nm">{{ q.label }}</span>
+          <span v-if="q.script" class="tag">脚本</span>
+        </button>
+      </div>
+    </div>
+
     <div v-for="g in groups" :key="g.name" class="card pad group">
       <p class="title">{{ g.name }} <span class="sub">({{ g.items.length }})</span></p>
       <div class="tiles">
@@ -81,7 +110,7 @@ export default {
         </button>
       </div>
     </div>
-    <div v-if="!groups.length" class="card pad empty">动作表还没拿到 —— 本机服务连上了吗？</div>
+    <div v-if="!groups.length && !quickGroups.length" class="card pad empty">动作表还没拿到 —— 本机服务连上了吗？</div>
   </section>
   `,
 }

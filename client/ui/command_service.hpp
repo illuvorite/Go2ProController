@@ -54,6 +54,12 @@ public:
 
     /// 逐个用同一 api_id 带 `{"data": false}` 关掉持续模式。实现内部每条留间隔 → **可能阻塞**。
     virtual int disablePersistent(const std::string& ip, const std::vector<int>& ids) = 0;
+
+    /// 切换运动模式（普通 / AI / MCF）。
+    ///
+    /// 注意它**不是运动指令**：走的是 `rt/api/motion_switcher/request`（api_id 1002），
+    /// 与 sport 服务是两套东西，所以不能拿 sendSport 凑。
+    virtual bool setMotionMode(const std::string& ip, const std::string& mode) = 0;
 };
 
 /// 生产实现：RobotManager（连接/就绪状态） + UiState（受控集合）
@@ -66,6 +72,7 @@ public:
     bool sendSport(const std::string& ip, int apiId, const nlohmann::json& param) override;
     bool stopMove(const std::string& ip) override;
     int disablePersistent(const std::string& ip, const std::vector<int>& ids) override;
+    bool setMotionMode(const std::string& ip, const std::string& mode) override;
 
 private:
     RobotManager& mgr_;
@@ -200,6 +207,35 @@ int resetEuler(CommandSink& sink, UiState& ui);
 
 /// 强制阻尼：对**全部就绪**设备（不限于勾选）发 Damp
 int dampAll(CommandSink& sink);
+
+// ---------------------------------------------------------------- 快捷动作
+// 「快捷动作」= 一次点击要发一串指令的按钮（见 core/quick_actions.hpp）。
+// 与运动指令表分开，因为这里有前置动作 / 节奏 / 闭环。
+
+/// 运行一条快捷动作。
+///
+/// 执行方式：
+///   · StopMove / BodyHeight —— 立即下发，返回成功台数；
+///   · EulerPreset / MoveBurst / AdjustOrientation / InPlaceStepping ——
+///     起一个**后台脚本线程**按节奏下发，本函数立即返回 1（不代表动作已完成）。
+///     脚本每一步都会检查"代际号是否还是自己的" —— 急停、或启动新脚本都会让旧脚本
+///     自行退出（见 UiState::scriptGen），所以不会出现两个脚本抢同一个通道。
+/// @return -1 = 没有这个 key；0 = 急停锁定或没有受控就绪设备；其余见上
+int runQuickAction(const std::shared_ptr<CommandSink>& sink, UiState& ui, const std::string& key);
+
+/// 中止正在跑的脚本（快捷动作 / 舞蹈）。不附带停车 —— 停车由调用方显式做。
+void abortScript(UiState& ui);
+
+/// 切换运动模式：normal / ai / mcf（走 `rt/api/motion_switcher/request`，api_id 1002）。
+/// 成功与否以**机器人回执**为准，这里只保证指令发出去了；ui.motionMode 先乐观置位。
+/// @return 成功下发台数
+int setMotionMode(const std::shared_ptr<CommandSink>& sink, UiState& ui, const std::string& mode);
+
+/// 播放一套舞蹈编排（core/dance.hpp）：按顺序下发每一步、按步的延时等待。
+/// 同样是后台脚本：急停 / 再点一次播放 / 调用 abortScript 都会中止它。
+/// 每一步动作走 dispatchAction（开关型会正确维护 toggles）。
+/// @return false = 找不到该编排或没设备可用
+bool playDance(const std::shared_ptr<CommandSink>& sink, UiState& ui, int danceId);
 
 /// 急停（锁定式）的执行结果
 struct EstopResult {

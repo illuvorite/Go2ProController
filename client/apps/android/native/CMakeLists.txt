@@ -123,6 +123,9 @@ add_library(go2_core STATIC
     "${CLIENT_DIR}/core/webrtc_transport.cpp"  # ITransport 的 WebRTC 实现（M5 接缝）
     "${CLIENT_DIR}/core/sport_library.cpp"
     "${CLIENT_DIR}/core/robot_model.cpp"       # 机型识别：SN 第 5 位 → Air/Pro/Edu
+    "${CLIENT_DIR}/core/telemetry.cpp"         # 状态帧解析（电量/温度/姿态角/模式）
+    "${CLIENT_DIR}/core/quick_actions.cpp"     # 快捷动作表（参考实现的复合按钮）
+    "${CLIENT_DIR}/core/dance.cpp"             # 舞蹈编排数据模型
     "${CLIENT_DIR}/core/unitree_cloud.cpp"
 )
 target_include_directories(go2_core PUBLIC
@@ -152,6 +155,7 @@ add_library(go2_ui STATIC
     "${CLIENT_DIR}/ui/ui_remote.cpp"    # 遥控页
     "${CLIENT_DIR}/ui/ui_popups.cpp"    # 设备 / 设置 / 日志 三个弹窗
     "${CLIENT_DIR}/ui/ui_joystick.cpp"  # 悬浮双摇杆（绘制 + 命中区）
+    "${CLIENT_DIR}/ui/ui_tianshu.cpp"   # 快捷动作 / 模式设置 / 舞蹈编排（对齐参考实现）
     "${CLIENT_DIR}/ui/ui_state.cpp"     # UiState 的纯数据实现（从 ui.cpp 抽出，见该文件头注释）
     "${CLIENT_DIR}/ui/command_service.cpp"  # 群控语义唯一实现（桌面/网页/安卓三端共用）
     "${CLIENT_DIR}/ui/layout.cpp"

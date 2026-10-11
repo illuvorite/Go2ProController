@@ -1,7 +1,9 @@
 #pragma once
 
+#include "dance.hpp"      // core/dance.hpp：舞蹈编排数据模型
 #include "layout.hpp"
 #include "motion.hpp"
+#include "telemetry.hpp"  // core/telemetry.hpp：状态帧解析结果（更新设备电量/温度/姿态）
 
 #include <atomic>
 #include <chrono>
@@ -33,6 +35,12 @@ struct RobotEntry {
     // 未知时刻意不做任何机型过滤：宁可不过滤，也不要按错的机型把能用的动作藏掉。
     std::string sn;     // 16 位序列号（拿不到 = 空）
     std::string model;  // "Air" / "Pro" / "Edu"（空 = 未知）
+    // ---- 遥测（core/telemetry.hpp 解析，随状态帧刷新）----
+    // 温度来自 lowstate（天树探界取 mcu_ntc → bq_ntc → ntc1）；-1000 = 还没收到。
+    float temperature = -1000.0f;
+    // 偏航角（rad）来自 lowstate 的 imu.rpy[2] ——「方向回正」靠它判断有没有摆正。
+    float yaw = 0.0f;
+    bool  hasYaw = false;  // 该帧带没带姿态角（没有就别拿 yaw=0 当真值用）
 };
 
 /// 开关"待确认"的等待窗口（秒）：超过它还没收到成功回执就回滚。
@@ -42,7 +50,11 @@ constexpr double kToggleConfirmSeconds = 2.5;
 /// 主界面页面（顶栏页签切换）。
 /// 动作库是**常驻整屏页面**（按 pageW 铺满），不再是弹窗；
 /// 设备 / 设置 / 日志 仍是弹窗，打开时盖住摇杆带。
-enum class UiPage { Remote, Actions };
+///
+/// Mode / Dance 是 2026-10-11 对齐参考实现「天树探界遥控」Go2 页时加的：
+///   它的侧边栏有 5 项（设备列表 / 运动控制 / 动作执行 / 模式设置 / 舞蹈编排），
+///   我们这边设备是弹窗、运动控制就是遥控页，所以补上后两项。
+enum class UiPage { Remote, Actions, Mode, Dance };
 
 /// 主界面状态。**线程契约**（改这个结构体前请先读这一段）：
 ///
@@ -357,8 +369,48 @@ struct UiState {
     bool isSelected(const std::string& ip);
     void setSelected(const std::string& ip, bool sel);
     void updateStatus(const std::string& ip, float battery, const std::string& mode);
+    /// 状态帧（lowstate / sportmodestate）解析后的完整遥测：电量 / 温度 / 姿态角 / 模式。
+    /// 解析在 core/telemetry.hpp（纯函数），三个入口共用，避免各写一份解析再漏字段。
+    void updateTelemetry(const std::string& ip, const Telemetry& t);
     std::vector<std::string> selectedIps();
     int selectedCount();
+
+    /// 某台狗的偏航角（rad）。`ok` 出参告诉调用方这台的姿态角到底有没有拿到
+    /// ——「方向回正」必须区分"已经回正（yaw≈0）"和"从来没收到过姿态角（yaw 默认 0）"，
+    /// 否则后者会被当成"已摆正"直接跳过。
+    float yawOf(const std::string& ip, bool* ok = nullptr) const;
+    /// 受控设备里最低的温度（摄氏度）；没有任何一台报温度时返回 -1000。
+    /// 顶栏那个温度胶囊用的就是它（与电量取"受控里最低"同理）。
+    float temperatureMin() const;
+
+    // ---- 运动模式（rt/api/motion_switcher，普通 / AI / MCF）----
+    /// 记录机器人上报/我们下发的模式名（"normal" / "ai" / "mcf"）
+    void setMotionMode(const std::string& mode);
+    std::string motionMode() const;
+
+    // ---- 脚本（快捷动作 / 舞蹈播放）----
+    //   这类操作要发一串指令、还要按节奏计时，跑在后台线程上。
+    //   用**代际号**做中止：每次启动/中止都自增，脚本每步检查自己的代际号是否还相等，
+    //   不等就退出。比"设一个 bool 再复位"安全 —— 后者在"急停 → 立刻又启动新脚本"
+    //   时会把新脚本一起杀掉（旧脚本复位 bool 时新脚本已经开始跑了）。
+    std::atomic<unsigned> scriptGen{0};
+    std::atomic<bool> scriptRunning{false};
+    std::string scriptName() const { return scriptNameSnap(); }
+    void setScriptName(const std::string& n);
+    /// 中止当前脚本（自增代际号）+ 清运行标志。**不发指令**，停车由调用方决定。
+    void abortScript();
+
+    // ---- 舞蹈编排（本地 robot_dances.json，见 core/dance.hpp）----
+    /// 从 robot_dances.json 读取（进程启动时调一次）
+    void loadDances();
+    /// 一致快照（HTTP 线程与界面线程都会读 → 走快照，别直接遍历 dances）
+    std::vector<Dance> dancesSnapshot() const;
+    /// 新增/更新一套编排，返回它的 id（id<=0 时自动分配）
+    int upsertDance(const Dance& d);
+    /// 删除一套编排
+    void removeDance(int id);
+    /// 按 id 取（找不到返回 false）
+    bool danceById(int id, Dance* out) const;
 
     /// 从 robot_devices.json 恢复设备列表（IP + 手动标记）。
     ///
@@ -382,6 +434,20 @@ private:
     mutable std::mutex toggleMutex;
     std::map<std::string, bool> toggles;  // 动作 key -> 开/关
     std::set<int> activeToggleIds;        // 真正打开过的开关 id
+
+    // ---- 运动模式 / 当前脚本名（HTTP 线程写、界面线程读 → 各一把锁）----
+    mutable std::mutex modeMutex;
+    std::string motionMode_;   // "normal" / "ai" / "mcf"（空 = 未知）
+    mutable std::mutex scriptMutex;
+    std::string scriptName_;
+    std::string scriptNameSnap() const;
+
+    // ---- 受 dancesMutex 保护的舞蹈编排 ----
+    mutable std::mutex dancesMutex;
+    std::vector<Dance> dances;
+    int nextDanceId_ = 1;
+    void saveDancesLocked() const;  // 调用方必须已持有 dancesMutex
+    void loadDancesLocked();
 };
 
 /// 绘制整个界面

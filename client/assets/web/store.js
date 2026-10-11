@@ -17,16 +17,23 @@ const DEFAULT_PARAMS = {
 
 export const store = reactive({
   st: {
-    robots: [], actions: [], log: [],
+    robots: [], actions: [], quickActions: [], dances: [], log: [],
     estop: false, selectedCount: 0, target: '未选择受控',
     params: { ...DEFAULT_PARAMS },
     cmd: { vx: 0, vy: 0, vz: 0 },
     batteryMin: -1,
+    temperatureMin: -1000,   // -1000 = 受控设备都没上报温度
+    motionMode: '',          // normal / ai / mcf（空 = 未知）
+    scriptRunning: false,    // 正在跑脚本（快捷动作 / 舞蹈播放）
+    scriptName: '',
     problemCount: 0,
     keyCount: 0,
   },
-  // 默认遥控页；?page=actions 可直接落到动作库（截图 / 预览时省一次点击）
-  page: new URLSearchParams(location.search).get('page') === 'actions' ? 'actions' : 'remote',
+  // 起始页可用 ?page=actions|mode|dance 指定（截图 / 预览时省一次点击）
+  page: (() => {
+    const p = new URLSearchParams(location.search).get('page')
+    return ['remote', 'actions', 'mode', 'dance'].includes(p) ? p : 'remote'
+  })(),
   modal: '',        // '' | devices | settings | log
   menu: false,      // 顶栏「⋯更多」菜单
   picker: false,    // 摇杆带中间的「单控」选择器（向上弹）

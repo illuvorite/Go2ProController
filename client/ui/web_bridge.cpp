@@ -1,6 +1,8 @@
 #include "web_bridge.hpp"
 
 #include "command_service.hpp"
+#include "dance.hpp"
+#include "quick_actions.hpp"
 #include "robot_client.hpp"
 #include "robot_manager.hpp"
 #include "sport_library.hpp"
@@ -90,6 +92,9 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
         r["mode"] = e.modeName;
         r["sn"] = e.sn;        // 16 位序列号（多播发现才有；手动加 IP 的为空）
         r["model"] = e.model;  // "Air" / "Pro" / "Edu"（空 = 未知）
+        // 温度：-1000 = 这台还没上报过（网页端显示成 "—"）
+        r["temperature"] = e.temperature;
+        if (e.hasYaw) r["yaw"] = e.yaw;  // 姿态角（rad）—— 有的固件不上报就不给这个字段
         if (auto* c = mgr.find(e.ip); c) {
             r["state"] = stateTextOf(c->state());
             r["ready"] = c->isReady();
@@ -137,6 +142,12 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
     }
     j["keyCount"] = ui.localKeyCount.load();
     j["scanning"] = ui.scanning.load();
+    // 温度胶囊：取受控设备里最低的那台（与电量同一口径）
+    j["temperatureMin"] = ui.temperatureMin();
+    // 运动模式（普通 / AI / MCF）与当前脚本（快捷动作 / 舞蹈播放）
+    j["motionMode"] = ui.motionMode();
+    j["scriptRunning"] = ui.scriptRunning.load();
+    j["scriptName"] = ui.scriptName();
     {
         std::lock_guard<std::mutex> lock(ui.keyScanMutex);
         j["keyScan"] = {{"running", ui.keyScanning.load()},
@@ -178,6 +189,29 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
         acts.push_back(o);
     }
     j["actions"] = acts;
+
+    // 快捷动作（天树探界的复合按钮：姿态预设 / 平移 / 机身高度 / 方向回正 / 原地踏步 / 恢复移动）
+    nlohmann::json quicks = nlohmann::json::array();
+    for (const QuickAction& q : quickActions()) {
+        nlohmann::json o = nlohmann::json::object();
+        o["key"] = q.key;
+        o["label"] = q.label;
+        o["group"] = static_cast<int>(q.group);
+        o["groupName"] = quickGroupName(q.group);
+        o["hint"] = q.hint;
+        o["script"] = (q.kind != QuickKind::StopMove && q.kind != QuickKind::BodyHeight);
+        quicks.push_back(o);
+    }
+    j["quickActions"] = quicks;
+
+    // 舞蹈编排（本地 robot_dances.json）
+    nlohmann::json dances = nlohmann::json::array();
+    for (const Dance& d : ui.dancesSnapshot()) {
+        nlohmann::json o = danceToJson(d);
+        o["count"] = static_cast<int>(d.steps.size());
+        dances.push_back(o);
+    }
+    j["dances"] = dances;
 
     nlohmann::json log = nlohmann::json::array();
     {
@@ -249,6 +283,58 @@ bool startWebUi(RobotManager& mgr, UiState& ui, int port) {
             const std::string cmd = in.value("cmd", "");
             if (cmd == "action") {
                 out["ok"] = sendActionByKey(mgr, ui, in.value("key", ""));
+            } else if (cmd == "quick") {
+                // 快捷动作（天树探界的复合按钮）：脚本型会立刻返回、在后台按节奏下发
+                const std::string key = in.value("key", "");
+                const auto sink = std::make_shared<ManagerSink>(mgr, ui);
+                const int n = cmd::runQuickAction(sink, ui, key);
+                if (n < 0) {
+                    out["ok"] = false;
+                    out["error"] = "未知快捷动作: " + key;
+                } else {
+                    out["ok"] = n > 0;
+                    ui.addLog("[WebUI] 快捷动作 " + key + " → " + std::to_string(n) + " 台");
+                    if (n == 0) ui.addLog("[WebUI] 快捷动作未执行：急停锁定中或没有受控就绪设备");
+                }
+            } else if (cmd == "mode") {
+                // 运动模式：普通 / AI / MCF（rt/api/motion_switcher/request）
+                const std::string mode = in.value("mode", "");
+                const auto sink = std::make_shared<ManagerSink>(mgr, ui);
+                const int n = cmd::setMotionMode(sink, ui, mode);
+                out["ok"] = n > 0;
+                ui.addLog("[WebUI] 切换运动模式 → " + mode + "（" + std::to_string(n) + " 台）");
+            } else if (cmd == "dance_save") {
+                // 新增/更新一套舞蹈编排（网页端把整份 steps 发上来，落盘 robot_dances.json）
+                Dance d = danceFromJson(in.value("dance", nlohmann::json::object()));
+                if (d.name.empty()) d.name = "未命名编排";
+                if (d.steps.empty()) {
+                    out["ok"] = false;
+                    out["error"] = "编排里至少要有一步";
+                } else {
+                    const int id = ui.upsertDance(d);
+                    out["ok"] = true;
+                    out["id"] = id;
+                    ui.addLog("[WebUI] 保存编排「" + d.name + "」(" + std::to_string(d.steps.size()) +
+                              " 步)");
+                }
+            } else if (cmd == "dance_del") {
+                const int id = in.value("id", 0);
+                ui.removeDance(id);
+                out["ok"] = true;
+                ui.addLog("[WebUI] 删除编排 #" + std::to_string(id));
+            } else if (cmd == "dance_play") {
+                const int id = in.value("id", 0);
+                const auto sink = std::make_shared<ManagerSink>(mgr, ui);
+                out["ok"] = cmd::playDance(sink, ui, id);
+                if (!out["ok"].get<bool>())
+                    ui.addLog("[WebUI] 编排播放失败：找不到该编排 / 急停锁定 / 没有可用设备");
+            } else if (cmd == "dance_stop") {
+                // 停止播放 = 中止脚本 + 停车（编排可能停在任意一步上，必须把速度清掉）
+                ManagerSink sink(mgr, ui);
+                cmd::abortScript(ui);
+                const int n = cmd::stopSelected(sink);
+                out["ok"] = true;
+                ui.addLog("[WebUI] 停止编排播放，停车 " + std::to_string(n) + " 台");
             } else if (cmd == "select") {
                 const std::string mode = in.value("mode", "");
                 // ★ 改受控集合之前先抓一份"现在受控的是谁"：Go2 的速度是保持型的，

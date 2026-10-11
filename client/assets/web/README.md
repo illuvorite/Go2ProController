@@ -32,7 +32,9 @@ assets/web/
 └── components/
     ├── topbar.js           # 顶栏：品牌 + 受控/电量胶囊 + 设备/页面切换/更多/急停（4 键）
     ├── remote.js           # 遥控页：急停+阻尼同行 → 参数滑条 / 快捷 D-pad + 读数
-    ├── actions.js          # 动作库页：分组瓷砖网格（跳过 Gait 组，与 ImGui 端一致）
+    ├── actions.js          # 动作执行页：快捷动作一条 + 分组瓷砖网格（跳过 Gait 组，与 ImGui 端一致）
+    ├── mode.js             # 模式设置页：普通 / AI / MCF 三选一（motion_switcher）
+    ├── dance.js            # 舞蹈编排页：新建/编辑/播放/删除/急停（本地 robot_dances.json）
     ├── band.js             # 摇杆带：受控狗卡片行（多选/横滑）+ 单控/群控 + 双摇杆
     ├── joystick.js         # 单个摇杆（pointer 事件，360° 全向，双杆可同时拖）
     ├── slider.js           # 苹果风滑条（细轨道+填充段+悬浮旋钮；松手才下发）
@@ -54,8 +56,8 @@ assets/web/
 
 | 字段 | 说明 |
 |---|---|
-| `robots[]` | `{ip, name, label, selected, battery, mode, sn, model, state, ready}`（`model` = `Air`/`Pro`/`Edu`，空 = 拿不到 SN，由多播发现给出） |
-| `selectedCount` / `target` / `batteryMin` | 受控台数 / 一句话（`单控 · 名字`）/ 受控里最低电量 |
+| `robots[]` | `{ip, name, label, selected, battery, mode, sn, model, temperature, yaw?, state, ready}`（`model` = `Air`/`Pro`/`Edu`，空 = 拿不到 SN，由多播发现给出；`temperature` = 摄氏度，`-1000` = 这台还没上报；`yaw` 只在固件上报 `imu.rpy` 时才有） |
+| `selectedCount` / `target` / `batteryMin` / `temperatureMin` | 受控台数 / 一句话（`单控 · 名字`）/ 受控里最低电量 / 受控里最低温度（`-1000` = 都没上报） |
 | `controlModel` | **受控集合的机型**（`Air`/`Pro`/`Edu`）。空 = 机型未知或群控混机型 —— 此时动作库不做机型过滤 |
 | `actions[]` | `{key, label, group(0-5), risky, toggle, ack?}`（group=1 是 Gait 组，前端跳过；`ack` 为**该机型**上次回执 code——0 成功 / 非 0 本机型不支持，未试过不下发该字段） |
 | `toggles` | 开关型动作当前状态（`{key: bool}`）。★ 开关是"乐观置位 + 回执确认"：点击后立刻为 `true`，若机器人拒绝（且自动换 id 重试也没成功）会在约 2.5s 后**回滚**成 `false` —— 前端不需要自己处理，跟着轮询结果刷新即可 |
@@ -65,12 +67,21 @@ assets/web/
 | `estop` / `problemUnread` / `keyCount` / `scanning` | 急停锁 / 未读异常数 / 钥匙数 / 局域网扫描中 |
 | `poseMode` | 「摆姿势」是否开启。**开时摇杆语义变成"调姿态"**（服务端下发 `Euler` 而非 `Move`），前端据此改摇杆标签与提示 |
 | `keyScan` | `{running, note, candidates[]}` —— 「从机器狗找钥匙」的结果 |
+| `motionMode` / `scriptRunning` / `scriptName` | 运动模式（`normal`/`ai`/`mcf`，空 = 未知）/ 是否有脚本在跑 / 脚本名（快捷动作或编排名） |
+| `quickActions[]` | `{key, label, group(0-2), groupName, hint, script}` —— **快捷动作**（复合指令：姿态预设 / 平移 / 机身高度 / 方向回正 / 原地踏步 / 恢复移动）。`script=true` 表示它在后台按节奏下发一整串指令 |
+| `dances[]` | `{id, name, desc, steps:[{key, delay}], count}` —— **舞蹈编排**（存本机 `robot_dances.json`） |
 
 ### `POST /api/command`（body 为 JSON，返回 `{ok[, error]}`）
 
 | cmd | 参数 | 说明 |
 |---|---|---|
 | `action` | `key` | 触发动作；开关型按 `toggles` 状态翻转 `{"data":bool}` |
+| `quick` | `key` | **触发快捷动作**（复合指令）。脚本型立刻返回、在后台按节奏下发；急停锁定或没有受控就绪设备时返回 `ok:false` |
+| `mode` | `mode: normal/ai/mcf` | 切换**运动模式**（走 `rt/api/motion_switcher`，与运动指令是两套） |
+| `dance_save` | `dance:{id?, name, desc, steps[]}` | 新增/更新一套编排（`id` 省略即新建），返回 `id` |
+| `dance_del` | `id` | 删除编排 |
+| `dance_play` | `id` | 播放编排（后台脚本；再点一次会中止上一套） |
+| `dance_stop` | — | 停止播放（中止脚本 + 停车） |
 | `select` | `mode: all/none/one/multi` (+`ip` / `ips[]`) | 群控全选 / 全取消 / 只控一台 / **精确勾选集合** |
 | `move` | `x,y,z` 或 `stop:true` | 摇杆速度（前端 10Hz 节拍）；急停锁定中直接拒绝 |
 | `quick` | `dir: fwd/back/left/right` | 快捷方向（用 `speedScale` 档位） |
@@ -123,7 +134,7 @@ assets/web/
   像"Λ"的怪形状、像时钟的圆圈箭头、像"≈"的数学符号，**全都比原来的还难看，
   已全部回退**。所以：改完跑 `python tools/web_preview.py` 打开
   `?page=actions` 看一眼，再决定留不留。
-- **`?page=actions` 可直接落到动作库页**（预览 / 截图时省一次点击）。
+- **`?page=actions|mode|dance` 可直接落到对应页面**（预览 / 截图时省一次点击）。
 - **网页界面不要显示 Gait 组**（group===1）：与 ImGui 端动作库口径一致（用户已裁掉）。
 
 ## 5. 维护清单（每次改前端）

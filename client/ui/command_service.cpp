@@ -1,5 +1,7 @@
 #include "command_service.hpp"
 
+#include "dance.hpp"
+#include "quick_actions.hpp"
 #include "robot_client.hpp"
 #include "robot_manager.hpp"
 #include "ui.hpp"
@@ -44,6 +46,11 @@ int ManagerSink::disablePersistent(const std::string& ip, const std::vector<int>
     auto* c = mgr_.find(ip);
     if (!c || !c->isReady()) return 0;
     return c->disablePersistentModes(ids);
+}
+
+bool ManagerSink::setMotionMode(const std::string& ip, const std::string& mode) {
+    auto* c = mgr_.find(ip);
+    return c && c->isReady() && c->setMotionMode(mode);
 }
 
 // ---------------------------------------------------------------- 群控语义
@@ -322,6 +329,9 @@ EstopResult estop(const std::shared_ptr<CommandSink>& sink, UiState& ui, bool as
 
     // 1) 先锁定：此后摇杆/快捷/Web 的 move 一律不下发（各前端都要读这个标志）
     ui.estop = true;
+    // 顺带让正在跑的脚本（快捷动作 / 舞蹈播放）立刻退出循环 —— 它们每步都查代际号，
+    // 这里自增后它们下一步就会自行收尾，不会继续往通道里灌指令。
+    ui.abortScript();
 
     // 2) 立刻停车 —— 对**全部就绪**设备，不限于勾选（最安全）
     const std::vector<std::string> all = sink->readyIps();
@@ -358,6 +368,276 @@ EstopResult estop(const std::shared_ptr<CommandSink>& sink, UiState& ui, bool as
     ui.movingSent = false;
     ui.webMovingSent = false;  // 两个界面都不再"正在下发"
     return r;
+}
+
+// ---------------------------------------------------------------- 快捷动作 / 脚本
+
+namespace {
+
+/// 脚本的"我还该继续吗"守卫。
+///
+/// 用**代际号**而不是一个 bool：急停之后用户可能立刻又点了别的脚本，
+/// 若旧脚本用 bool 复位就必然把新脚本一起杀掉（旧脚本醒来时新脚本已在跑）。
+/// 代际号天然区分"我是哪一次启动的"。
+struct ScriptGuard {
+    const UiState* ui = nullptr;
+    unsigned gen = 0;
+
+    bool alive() const { return ui && ui->scriptGen.load() == gen && !ui->estop.load(); }
+
+    /// 可分片中断的睡眠。返回 false = 中途被中止（调用方应立即收尾退出）。
+    bool sleep(int ms) const {
+        constexpr int kChunk = 25;  // 25ms 一片：急停响应够快，又不至于空转
+        for (int t = 0; t < ms;) {
+            if (!alive()) return false;
+            const int d = std::min(kChunk, ms - t);
+            std::this_thread::sleep_for(std::chrono::milliseconds(d));
+            t += d;
+        }
+        return alive();
+    }
+};
+
+/// 起一个后台脚本。返回本次代际号（0 = 没启动）。
+unsigned startScript(const std::shared_ptr<CommandSink>& sink, UiState& ui, const std::string& name,
+                     const std::function<void(const ScriptGuard&)>& body) {
+    if (!sink) return 0;
+    const unsigned gen = ui.scriptGen.fetch_add(1) + 1;  // 新代际 → 旧脚本自动失效
+    ui.scriptRunning.store(true);
+    ui.setScriptName(name);
+    UiState* uip = &ui;  // ui 由入口持有，活到进程结束（与 estop 的异步收尾同一约定）
+    std::thread([sink, uip, gen, body] {
+        const ScriptGuard g{uip, gen};
+        body(g);
+        if (uip->scriptGen.load() == gen) {  // 只有"还是当前脚本"才复位标志
+            uip->scriptRunning.store(false);
+            uip->setScriptName("");
+        }
+    }).detach();
+    return gen;
+}
+
+/// 对"受控且就绪"的设备发同一条指令，返回成功台数
+int sendToSelected(CommandSink& sink, int apiId, const nlohmann::json& p) {
+    if (apiId == 0) return 0;
+    return forEachSelected(sink, [&](const std::string& ip) { return sink.sendSport(ip, apiId, p); });
+}
+
+/// 指令表里按 key 解析 api_id（尊重当前指令集；解析不到用 fallback）
+int apiKeyId(const UiState& ui, const char* key, int fallback = 0) {
+    const SportAction* a = actionByKey(key);
+    if (!a) return fallback;
+    const int id = resolveApiId(ui, *a);
+    return id != 0 ? id : fallback;
+}
+
+}  // namespace
+
+/// 姿态预设：先平衡站立，等 500ms，再发 Euler（与参考实现逐条对齐）
+unsigned startEulerPreset(const std::shared_ptr<CommandSink>& sink, UiState& ui,
+                          const QuickAction& q) {
+    const std::string name = std::string(q.label);
+    return startScript(sink, ui, name, [sink, &ui, q](const ScriptGuard& g) {
+        const int bal = apiKeyId(ui, "BalanceStand", 1002);
+        const int euler = apiKeyId(ui, "Euler", 1007);
+        sendToSelected(*sink, bal, nlohmann::json());
+        if (!g.sleep(kQuickBalanceDelayMs)) return;  // 被急停/新脚本打断 → 不发姿态角
+        nlohmann::json p = nlohmann::json::object();
+        p["x"] = q.x;
+        p["y"] = q.y;
+        p["z"] = q.z;
+        sendToSelected(*sink, euler, p);
+    });
+}
+
+/// 平移：按 150ms 节奏连发 1 秒 Move，然后补一条 StopMove
+unsigned startMoveBurst(const std::shared_ptr<CommandSink>& sink, UiState& ui, const QuickAction& q) {
+    const std::string name = std::string(q.label);
+    return startScript(sink, ui, name, [sink, &ui, q](const ScriptGuard& g) {
+        nlohmann::json p = nlohmann::json::object();
+        p["x"] = q.x;
+        p["y"] = q.y;
+        p["z"] = q.z;
+        for (int t = 0; t < kMoveBurstMs; t += kMoveBurstIntervalMs) {
+            if (!g.alive()) return;
+            sendToSelected(*sink, kApiMove, p);
+            if (!g.sleep(kMoveBurstIntervalMs)) return;
+        }
+        // 连发结束必须停车：Go2 的速度是保持型的，不发 StopMove 它会一直平移
+        for (const auto& ip : sink->selectedReadyIps()) sink->stopMove(ip);
+    });
+}
+
+/// 方向回正：开连续步态 → 平衡站立 → 按 yaw 闭环回转 → 停车 → 关连续步态
+unsigned startAdjustOrientation(const std::shared_ptr<CommandSink>& sink, UiState& ui) {
+    return startScript(sink, ui, "方向回正", [sink, &ui](const ScriptGuard& g) {
+        const int gait = apiKeyId(ui, "ContinuousGait", 1019);
+        const int bal = apiKeyId(ui, "BalanceStand", 1002);
+        nlohmann::json on = nlohmann::json::object();
+        on["data"] = true;
+
+        // 1) 开连续步态（实现"踏步回正"而不是原地旋转）+ 等生效
+        sendToSelected(*sink, gait, on);
+        if (!g.sleep(kGaitSettleMs)) return;
+
+        // 2) 平衡站立 + 稳身
+        sendToSelected(*sink, bal, nlohmann::json());
+        if (!g.sleep(kOrientStabilizeMs)) return;
+
+        // 前面任何一次被急停/新脚本打断，都在这里统一收尾（关掉连续步态）
+        const auto finish = [&] {
+            for (const auto& ip : sink->selectedReadyIps()) sink->stopMove(ip);
+            nlohmann::json off = nlohmann::json::object();
+            off["data"] = false;
+            sendToSelected(*sink, gait, off);
+        };
+
+        // 3) 闭环：只要还有一台 |yaw| 超阈值就继续转
+        const float threshold = static_cast<float>(kOrientThresholdMilli) / 1000.0f;
+        const auto t0 = std::chrono::steady_clock::now();
+        bool sawAnyYaw = false;
+        for (;;) {
+            if (!g.alive()) { finish(); return; }
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now() - t0)
+                                       .count();
+            if (elapsedMs > kOrientTimeoutMs) {
+                ui.addLog("[方向回正] 超时（30 秒），已停止调整");
+                break;
+            }
+            bool allAligned = true;
+            for (const auto& ip : sink->selectedReadyIps()) {
+                bool ok = false;
+                const float yaw = ui.yawOf(ip, &ok);
+                if (!ok) continue;  // 这台没上报姿态角：不拿它当判据（也不要误判成"已回正"）
+                sawAnyYaw = true;
+                if (std::fabs(yaw) < threshold) continue;
+                allAligned = false;
+                // z = -clamp(yaw, ±MAX)（与参考实现同一式子：yaw>0 → 逆时针）
+                const float z = -std::clamp(yaw, -kOrientMaxAngularVel, kOrientMaxAngularVel);
+                nlohmann::json mv = nlohmann::json::object();
+                mv["x"] = 0.0f;
+                mv["y"] = 0.0f;
+                mv["z"] = z;
+                sink->sendSport(ip, kApiMove, mv);
+            }
+            if (!sawAnyYaw) {
+                ui.addLog("[方向回正] 收不到姿态角（该固件的 lowstate 不含 imu.rpy），已取消");
+                break;
+            }
+            if (allAligned) {
+                ui.addLog("[方向回正] 已完成");
+                break;
+            }
+            if (!g.sleep(kOrientIntervalMs)) { finish(); return; }
+        }
+        finish();
+        g.sleep(kGaitSettleMs);  // 等连续步态关闭生效
+    });
+}
+
+/// 原地踏步：开连续步态 → 平衡站立 → 前后来回 Move 约 5 秒 → 停车 → 关连续步态
+unsigned startInPlaceStepping(const std::shared_ptr<CommandSink>& sink, UiState& ui) {
+    return startScript(sink, ui, "原地踏步", [sink, &ui](const ScriptGuard& g) {
+        const int gait = apiKeyId(ui, "ContinuousGait", 1019);
+        const int bal = apiKeyId(ui, "BalanceStand", 1002);
+        nlohmann::json on = nlohmann::json::object();
+        on["data"] = true;
+
+        sendToSelected(*sink, gait, on);
+        if (!g.sleep(kGaitSettleMs)) return;
+        sendToSelected(*sink, bal, nlohmann::json());
+        if (!g.sleep(kQuickBalanceDelayMs)) return;
+
+        for (int t = 0, i = 0; t < kStepDurationMs; t += kStepIntervalMs, ++i) {
+            if (!g.alive()) break;
+            nlohmann::json mv = nlohmann::json::object();
+            mv["x"] = (i % 2 == 0) ? kStepSpeed : -kStepSpeed;  // 前进/后退交替
+            mv["y"] = 0.0f;
+            mv["z"] = 0.0f;
+            sendToSelected(*sink, kApiMove, mv);
+            if (!g.sleep(kStepIntervalMs)) break;
+        }
+
+        // 收尾（无论正常结束还是被打断）：停车 + 关连续步态
+        for (const auto& ip : sink->selectedReadyIps()) sink->stopMove(ip);
+        nlohmann::json off = nlohmann::json::object();
+        off["data"] = false;
+        sendToSelected(*sink, gait, off);
+        g.sleep(kGaitSettleMs);
+    });
+}
+
+int runQuickAction(const std::shared_ptr<CommandSink>& sink, UiState& ui, const std::string& key) {
+    if (!sink) return 0;
+    const QuickAction* q = findQuickAction(key);
+    if (!q) return -1;
+    // 「恢复移动」本身就是安全方向，急停锁定时也允许（与 stopSelected 同理）
+    if (ui.estop.load() && q->kind != QuickKind::StopMove) return 0;
+    if (sink->selectedReadyIps().empty()) return 0;
+
+    switch (q->kind) {
+        case QuickKind::StopMove:
+            return stopSelected(*sink);
+        case QuickKind::BodyHeight: {
+            const int id = apiKeyId(ui, "BodyHeight", 1013);
+            nlohmann::json p = nlohmann::json::object();
+            p["data"] = q->data;
+            return sendToSelected(*sink, id, p);
+        }
+        case QuickKind::EulerPreset:
+            return startEulerPreset(sink, ui, *q) ? 1 : 0;
+        case QuickKind::MoveBurst:
+            return startMoveBurst(sink, ui, *q) ? 1 : 0;
+        case QuickKind::AdjustOrientation:
+            return startAdjustOrientation(sink, ui) ? 1 : 0;
+        case QuickKind::InPlaceStepping:
+            return startInPlaceStepping(sink, ui) ? 1 : 0;
+    }
+    return 0;
+}
+
+void abortScript(UiState& ui) {
+    ui.abortScript();
+}
+
+int setMotionMode(const std::shared_ptr<CommandSink>& sink, UiState& ui, const std::string& mode) {
+    if (!sink || mode.empty()) return 0;
+    int n = 0;
+    for (const auto& ip : sink->selectedReadyIps())
+        if (sink->setMotionMode(ip, mode)) ++n;
+    // 乐观置位：以机器人回执为准的部分交给 onTopicData 里的 mode_name 回显覆盖
+    if (n > 0) ui.setMotionMode(mode);
+    return n;
+}
+
+bool playDance(const std::shared_ptr<CommandSink>& sink, UiState& ui, int danceId) {
+    if (!sink) return false;
+    Dance d;
+    if (!ui.danceById(danceId, &d) || d.steps.empty()) return false;
+    if (ui.estop.load() || sink->selectedReadyIps().empty()) return false;
+    // 再点一次播放 = 先中止上一套（与参考实现 playDance 里"正在播就先 stop"一致）
+    ui.abortScript();
+    return startScript(sink, ui, "舞蹈：" + d.name, [sink, &ui, d](const ScriptGuard& g) {
+        int i = 0;
+        for (const auto& step : d.steps) {
+            if (!g.alive()) break;
+            ++i;
+            if (step.key == "wait") {
+                if (!g.sleep(step.delayMs)) break;
+                continue;
+            }
+            const int n = dispatchAction(*sink, ui, step.key);
+            if (n < 0) {
+                ui.addLog("[舞蹈] 第 " + std::to_string(i) + " 步未知动作：" + step.key);
+            } else if (n == 0) {
+                ui.addLog("[舞蹈] 第 " + std::to_string(i) + " 步没有可用的受控设备：" + step.key);
+                break;  // 没设备了，继续播下去只会白等
+            }
+            if (!g.sleep(step.delayMs)) break;
+        }
+        if (ui.scriptGen.load() == g.gen) ui.addLog("[舞蹈] 「" + d.name + "」播放结束");
+    }) != 0;
 }
 
 }  // namespace cmd

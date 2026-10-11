@@ -473,6 +473,7 @@ void ensureNamesLoaded(UiState& ui) {
     ui.loadNames();     // robot_names.json  —— 设备名
     ui.loadDevices();   // robot_devices.json —— 设备列表（否则重启/重建后列表清空）
     ui.loadModelCaps(); // robot_model_caps.json —— 按机型学到的"哪些指令这台不支持"
+    ui.loadDances();    // robot_dances.json —— 舞蹈编排（本地存，取代参考实现的云端存储）
 }
 
 /// 群控：全选（指令只发给已就绪的）
@@ -574,10 +575,21 @@ void drawUi(RobotManager& mgr, UiState& ui) {
         triggerEstop(mgr, ui);
 
     drawTopBar(mgr, ui, L);  // 顶栏：页签 + 单控/群控 + 设备/设置/日志 + ■ 急停
-    if (ui.page == UiPage::Actions)
-        drawActionPage(mgr, ui, L);  // 动作库：**常驻整屏页面**（与摇杆带分上下）
-    else
-        drawRemotePanel(mgr, ui, L);  // 遥控：居中 + 宽度上限
+    switch (ui.page) {
+        case UiPage::Actions:
+            drawActionPage(mgr, ui, L);  // 动作库：**常驻整屏页面**（与摇杆带分上下）
+            break;
+        case UiPage::Mode:
+            drawModePage(mgr, ui, L);  // 模式设置（普通 / AI / MCF）
+            break;
+        case UiPage::Dance:
+            drawDancePage(mgr, ui, L);  // 舞蹈编排（本地序列）
+            break;
+        case UiPage::Remote:
+        default:
+            drawRemotePanel(mgr, ui, L);  // 遥控：居中 + 宽度上限
+            break;
+    }
 
     // 弹窗要在**主窗口层级**打开：顶栏按钮画在子窗口里，而 ImGui 的弹窗 ID 会带上
     // 子窗口的 ID 栈前缀，直接在子窗口里 OpenPopup 会与这里的 BeginPopupModal 对不上

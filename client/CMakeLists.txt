@@ -114,6 +114,9 @@ add_library(go2_core STATIC
     core/webrtc_transport.cpp
     core/sport_library.cpp
     core/robot_model.cpp
+    core/telemetry.cpp
+    core/quick_actions.cpp
+    core/dance.cpp
     core/unitree_cloud.cpp
 )
 target_include_directories(go2_core PUBLIC core platform)
@@ -143,6 +146,7 @@ add_executable(go2_remote
     ui/ui_remote.cpp     # 遥控页              │ 共享声明见 ui/ui_internal.hpp
     ui/ui_popups.cpp     # 设备/设置/日志弹窗  │
     ui/ui_joystick.cpp   # 悬浮双摇杆          ┘
+    ui/ui_tianshu.cpp    # 快捷动作 / 模式设置 / 舞蹈编排（对齐参考实现）
     ui/ui_state.cpp
     ui/command_service.cpp
     ui/web_bridge.cpp
@@ -266,6 +270,20 @@ add_executable(robot_model_test tests/robot_model_test.cpp core/robot_model.cpp)
 target_include_directories(robot_model_test PRIVATE core)
 go2_add_warnings(robot_model_test)
 add_test(NAME robot_model_test COMMAND robot_model_test)
+
+# ---- 天树探界对齐部分（纯逻辑）：状态帧解析 / 快捷动作表 / 舞蹈编排数据模型 ----
+# 这三块错了都是"界面静默失效"（温度永远显示 —、方向回正空转、编排丢步），
+# 所以必须有离线回归。
+add_executable(tianshu_parity_test
+    tests/tianshu_parity_test.cpp
+    core/telemetry.cpp
+    core/quick_actions.cpp
+    core/dance.cpp
+)
+target_include_directories(tianshu_parity_test PRIVATE core)
+target_link_libraries(tianshu_parity_test PRIVATE nlohmann_json::nlohmann_json)
+go2_add_warnings(tianshu_parity_test)
+add_test(NAME tianshu_parity_test COMMAND tianshu_parity_test)
 
 # ---- 协议回放测试（M2-6）----
 # 把固化报文喂给纯解析函数。fixture 目录用编译期常量传进去（绝对路径），

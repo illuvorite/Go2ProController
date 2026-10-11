@@ -596,22 +596,9 @@ int runGui(const Options& opt) {
         };
 
         c.onTopicData = [&ui, pc](const std::string& topic, const nlohmann::json& msg) {
-            float battery = -1.0f;
-            std::string mode;
-            try {
-                const auto& d = msg.contains("data") ? msg["data"] : nlohmann::json();
-                if (topic.find("sportmodestate") != std::string::npos) {
-                    if (d.contains("mode_name")) mode = d["mode_name"].get<std::string>();
-                    else if (d.contains("mode")) mode = d["mode"].dump();
-                    if (d.contains("battery_level")) battery = d["battery_level"].get<float>();
-                } else if (topic.find("lowstate") != std::string::npos) {
-                    if (d.contains("bms_state") && d["bms_state"].contains("soc"))
-                        battery = d["bms_state"]["soc"].get<float>();
-                }
-            } catch (...) {
-                return;  // 状态字段结构可能随固件变化，忽略解析失败
-            }
-            ui.updateStatus(pc->ip(), battery, mode);
+            // 状态帧解析收敛到 core/telemetry.hpp（电量 / 温度 / 姿态角 / 模式），
+            // 三个入口共用一份 —— 否则加一个字段就要改三处，漏一处就是"某个界面看不到"。
+            ui.updateTelemetry(pc->ip(), go2::parseTelemetry(topic, msg));
         };
     };
 

@@ -181,11 +181,22 @@ TS_PHOSPHOR_FALLBACK = {
 
 
 def resolve_action_icon(ref, tianshu_cp):
-    """把 ACTION_ICON 里的 `ts_xxx` 解析成 (来源, 值)。
+    """把 ACTION_ICON 里的引用解析成 (来源, 值)。
 
-    返回 ('ts', codepoint) 表示用天树剪影；('ph', phosphor_name) 表示退回 Phosphor。
+    返回 ('ts', codepoint) 表示用天树剪影；('ph', phosphor_图标名) 表示退回 Phosphor。
+
+    ★ `ref` 的两种写法：
+      · "ts_xxx"        —— 天树剪影的语义名（见 TS_PREFIX_MAP）；
+      · TABLE 里的常量名 —— 如 "ArrowClockwise"。
+    后者要在这里换成 Phosphor 的**图标名**（"arrow-clockwise"），
+    因为下游 gen_js / gen_hpp 是按图标名去查码点的。
+    （这条分支以前没被走到过 —— 动作表里一直只有 ts_ 引用，所以这个转换是缺的，
+      直到快捷动作表第一次用 Phosphor 常量才暴露出来。）
     """
     if not ref.startswith("ts_"):
+        for name, phos, _ in TABLE:
+            if name == ref:
+                return ("ph", phos)
         return ("ph", ref)
     svg_name = TS_PREFIX_MAP.get(ref)
     if svg_name and svg_name in tianshu_cp:
@@ -409,6 +420,24 @@ ACTION_ICON = [
     ("SetAutoRecovery",  "ts_wrench",      "设自动恢复：扳手"),
     ("FreeAvoid",        "ts_shield",      "自由避障：盾牌"),
     ("SwitchAvoidMode",  "ts_warning",     "避障模式：注意"),
+    # ---- 快捷动作（core/quick_actions.cpp 的复合按钮）----
+    # key 必须与 core/quick_actions.cpp 的 key 精确一致。
+    # 这批是"姿态微调 / 平移 / 机身高度 / 脚本"，天树那套剪影里没有对应姿态，
+    # 所以用**方向性明确的 Phosphor 箭头**——比硬套一个人形剪影更读得懂。
+    ("TwistLeft",        "ArrowClockwise",          "左扭：逆时针转"),
+    ("TwistRight",       "ArrowCounter",             "右扭：顺时针转"),
+    ("LeanLeft",         "BendDoubleUpLeft",         "左倾：向左弯"),
+    ("LeanRight",        "BendDoubleUpRight",        "右倾：向右弯"),
+    ("TiltDown",         "ArrowDown",                "低头：向下"),
+    ("TiltUp",           "ArrowUp",                  "抬头：向上"),
+    ("ShiftLeft",        "ArrowLeft",                "左移：向左平移"),
+    ("ShiftRight",       "ArrowRight",               "右移：向右平移"),
+    ("BodyLowest",       "ArrowsIn",                 "机身最低：向内收"),
+    ("BodyNormal",       "Ruler",                    "机身正常：标准高度"),
+    ("BodyHighest",      "ArrowsOutLineV",           "机身最高：向外撑"),
+    ("AdjustYaw",        "Compass",                  "方向回正：罗盘（对准朝向）"),
+    ("StepInPlace",      "ts_step",                  "原地踏步：踏步剪影"),
+    ("ResumeMove",       "Walk",                      "恢复移动：继续行走"),
 ]
 
 

@@ -32,7 +32,7 @@ namespace uix {
 ///
 /// ★ 放在**文件作用域**（不是某个页面的局部 lambda）：动作库瓷砖与底部快捷栏共用同一份表，
 ///   免得两处各写一份、早晚对不上。
-const char* iconGlyph(const SportAction& a) {
+const char* iconGlyph(const char* key, const std::string& label) {
     using namespace go2::icon;  // NOLINT
     struct KeyIcon {
         const char* key;
@@ -101,13 +101,30 @@ const char* iconGlyph(const SportAction& a) {
         {"SetAutoRecovery", Wrench}, // 设自动恢复：扳手
         {"FreeAvoid", Shield},  // 自由避障：盾牌
         {"SwitchAvoidMode", Warning}, // 避障模式：注意
+        // ---- 快捷动作（core/quick_actions.cpp 的复合按钮）----
+        // 与 tools/icons/gen_icons.py 的 ACTION_ICON 同源：姿态微调/平移/机身高度
+        // 在天树剪影里没有对应姿态，用方向明确的 Phosphor；脚本类用剪影。
+        {"TwistLeft", ArrowClockwise},        // 左扭
+        {"TwistRight", ArrowCounter},         // 右扭
+        {"LeanLeft", BendDoubleUpLeft},       // 左倾
+        {"LeanRight", BendDoubleUpRight},     // 右倾
+        {"TiltDown", ArrowDown},              // 低头
+        {"TiltUp", ArrowUp},                  // 抬头
+        {"ShiftLeft", ArrowLeft},             // 左移
+        {"ShiftRight", ArrowRight},           // 右移
+        {"BodyLowest", ArrowsIn},             // 机身最低
+        {"BodyNormal", Ruler},                // 机身正常
+        {"BodyHighest", ArrowsOutLineV},      // 机身最高
+        {"AdjustYaw", Compass},               // 方向回正
+        {"StepInPlace", ts::m_step},          // 原地踏步
+        {"ResumeMove", Walk},                 // 恢复移动
     };
-    const std::string k = a.key ? a.key : "";
+    const std::string k = key ? key : "";
     for (const KeyIcon& m : kMap)
         if (k == m.key) return m.glyph;
 
     // 兜底：中文关键词（新指令进库、还没来得及加表时用）
-    const std::string& l = a.label;
+    const std::string& l = label;
     auto has = [&](const char* s) { return l.find(s) != std::string::npos; };
     if (has("空翻") || has("翻")) return ts::a_turnOver;
     if (has("跳")) return ts::a_jumpForward;
@@ -187,6 +204,12 @@ void drawActionPageBody(RobotManager& mgr, UiState& ui, const LayoutSpec& L) {
     const float actW2 = L.actW2;
     const float actW3 = L.actW3;
     const float actH = L.actH;
+
+    // ★ 最上面先摆「快捷动作」一条（实现在 ui_tianshu.cpp）：
+    //   参考实现「天树探界遥控」里这批按钮就在"动作执行"页里，位置也在动作网格之前。
+    //   它们点下去是**一段脚本**（先平衡站立再发姿态角 / 连发 1 秒再停车 / 闭环回正），
+    //   跟下面那些"一条指令一个瓷砖"的动作不是一回事，所以单独一条、不混进分组网格。
+    drawQuickActionSection(mgr, ui, L);
 
 // 参数类动作（带滑条的那些）：一行放 2 个、滑条自动撑满格子。
 // 用户反馈"整体太空了" —— 整屏页面上如果每行只有左边一小截滑条，右边全是空白，非常难看。
@@ -451,7 +474,7 @@ const auto drawTileIcon = [](ImDrawList* dl, TileIcon ic, ImVec2 c, float s, ImU
 const auto drawTileIconAuto = [&iconFor, &drawTileIcon](
                                   ImDrawList* dl, const SportAction& a, ImVec2 c, float s,
                                   ImU32 col) {
-    const char* g = iconGlyph(a);
+    const char* g = iconGlyph(a.key, a.label);
     const bool isTianshu = glyphIsTianshu(g);
     ImFont* f = nullptr;
     float gs = s;

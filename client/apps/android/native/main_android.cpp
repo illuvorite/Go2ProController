@@ -502,21 +502,8 @@ void managerWireUp(go2::RobotManager& mgr, go2::UiState& ui) {
             if (!model.empty()) ui.addLog("[机型] " + hsIp + " → Go2 " + model + "（由钥匙反查 SN）");
         };
         c.onTopicData = [&ui, pc](const std::string& topic, const nlohmann::json& msg) {
-            float battery = -1.0f;
-            std::string mode;
-            try {
-                const auto& d = msg.contains("data") ? msg["data"] : nlohmann::json();
-                if (topic.find("sportmodestate") != std::string::npos) {
-                    if (d.contains("mode_name")) mode = d["mode_name"].get<std::string>();
-                    if (d.contains("battery_level")) battery = d["battery_level"].get<float>();
-                } else if (topic.find("lowstate") != std::string::npos) {
-                    if (d.contains("bms_state") && d["bms_state"].contains("soc"))
-                        battery = d["bms_state"]["soc"].get<float>();
-                }
-            } catch (...) {
-                return;  // 字段随固件变化，解析失败忽略
-            }
-            ui.updateStatus(pc->ip(), battery, mode);
+            // 与桌面 / 服务端共用 core/telemetry.hpp 的解析（电量 / 温度 / 姿态角 / 模式）
+            ui.updateTelemetry(pc->ip(), go2::parseTelemetry(topic, msg));
         };
     };
 

@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace go2test {
@@ -73,6 +74,21 @@ public:
         std::lock_guard<std::mutex> lock(mtx);
         closed.push_back({ip, ids});
         return static_cast<int>(ids.size());
+    }
+
+    /// 运动模式切换（普通 / AI / MCF）—— 走 motion_switcher，与运动指令分开记
+    std::vector<std::pair<std::string, std::string>> modes;
+
+    bool setMotionMode(const std::string& ip, const std::string& mode) override {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (std::find(ready.begin(), ready.end(), ip) == ready.end()) return false;
+        modes.emplace_back(ip, mode);
+        return true;
+    }
+
+    std::string lastMode() const {
+        std::lock_guard<std::mutex> lock(mtx);
+        return modes.empty() ? std::string() : modes.back().second;
     }
 
     // ---- 供断言使用的读取（都加锁，能在并发场景下安全调用）----

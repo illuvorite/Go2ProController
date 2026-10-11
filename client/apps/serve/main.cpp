@@ -157,6 +157,7 @@ int main(int argc, char** argv) {
     ui.loadNames();    // 设备名映射（robot_names.json）—— 界面版是在绘制时惰性加载的
     ui.loadDevices();  // 设备列表（robot_devices.json）—— 同上，服务端没有绘制这一步
     ui.loadModelCaps();  // 按机型学到的指令支持情况（robot_model_caps.json）—— 同上
+    ui.loadDances();     // 舞蹈编排（robot_dances.json）—— 同上
 
     std::mutex printMutex;
     auto printLine = [&ui, &opt, &printMutex](const std::string& line) {
@@ -196,22 +197,7 @@ int main(int argc, char** argv) {
         };
 
         c.onTopicData = [&ui, pc](const std::string& topic, const nlohmann::json& msg) {
-            float battery = -1.0f;
-            std::string mode;
-            try {
-                const auto& d = msg.contains("data") ? msg["data"] : nlohmann::json();
-                if (topic.find("sportmodestate") != std::string::npos) {
-                    if (d.contains("mode_name")) mode = d["mode_name"].get<std::string>();
-                    else if (d.contains("mode")) mode = d["mode"].dump();
-                    if (d.contains("battery_level")) battery = d["battery_level"].get<float>();
-                } else if (topic.find("lowstate") != std::string::npos) {
-                    if (d.contains("bms_state") && d["bms_state"].contains("soc"))
-                        battery = d["bms_state"]["soc"].get<float>();
-                }
-            } catch (...) {
-                return;  // 状态字段结构可能随固件变化，解析失败就跳过这一帧
-            }
-            ui.updateStatus(pc->ip(), battery, mode);
+            ui.updateTelemetry(pc->ip(), go2::parseTelemetry(topic, msg));
         };
     };
 

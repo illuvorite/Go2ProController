@@ -15,6 +15,7 @@
 #include "robot_model.hpp"
 #include "sport_library.hpp"  // labelForApiId：回滚日志要写中文动作名
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
@@ -161,6 +162,149 @@ void UiState::updateStatus(const std::string& ip, float battery, const std::stri
             if (!mode.empty()) r.modeName = mode;
             return;
         }
+}
+
+void UiState::updateTelemetry(const std::string& ip, const Telemetry& t) {
+    {
+        std::lock_guard<std::mutex> lock(robotsMutex);
+        for (auto& r : robots)
+            if (r.ip == ip) {
+                if (t.hasSoc) r.battery = t.soc;
+                if (!t.mode.empty()) r.modeName = t.mode;
+                if (t.hasTemp) r.temperature = t.tempC;
+                if (t.hasYaw) {
+                    r.yaw = t.yaw;
+                    r.hasYaw = true;
+                }
+                break;
+            }
+    }
+    // 机器人自己上报的模式名（部分固件会给 "normal"/"ai"/"mcf"）也要回显到模式页
+    if (!t.mode.empty()) setMotionMode(t.mode);
+}
+
+float UiState::yawOf(const std::string& ip, bool* ok) const {
+    std::lock_guard<std::mutex> lock(robotsMutex);
+    for (const auto& r : robots)
+        if (r.ip == ip) {
+            if (ok) *ok = r.hasYaw;
+            return r.yaw;
+        }
+    if (ok) *ok = false;
+    return 0.0f;
+}
+
+float UiState::temperatureMin() const {
+    std::lock_guard<std::mutex> lock(robotsMutex);
+    float best = -1000.0f;
+    for (const auto& r : robots) {
+        if (!r.selected) continue;
+        if (r.temperature <= -999.0f) continue;  // 这台还没报过温度
+        best = (best <= -999.0f) ? r.temperature : std::min(best, r.temperature);
+    }
+    return best;
+}
+
+void UiState::setMotionMode(const std::string& mode) {
+    if (mode.empty()) return;
+    std::lock_guard<std::mutex> lock(modeMutex);
+    motionMode_ = mode;
+}
+
+std::string UiState::motionMode() const {
+    std::lock_guard<std::mutex> lock(modeMutex);
+    return motionMode_;
+}
+
+std::string UiState::scriptNameSnap() const {
+    std::lock_guard<std::mutex> lock(scriptMutex);
+    return scriptName_;
+}
+
+void UiState::setScriptName(const std::string& n) {
+    std::lock_guard<std::mutex> lock(scriptMutex);
+    scriptName_ = n;
+}
+
+void UiState::abortScript() {
+    scriptGen.fetch_add(1);   // 让正在跑的脚本发现代际号变了 → 自行退出
+    scriptRunning.store(false);
+}
+
+// ---------------------------------------------------------------- 舞蹈编排
+// 存本应用目录下的 robot_dances.json（与设备列表/名称同一套"只碰自己目录"的规矩）。
+void UiState::loadDancesLocked() {
+    std::ifstream f("robot_dances.json");
+    if (!f) return;
+    try {
+        nlohmann::json j;
+        f >> j;
+        if (!j.is_array()) return;
+        for (const auto& e : j) {
+            Dance d = danceFromJson(e);
+            if (d.name.empty() && d.steps.empty()) continue;
+            if (d.id <= 0) d.id = nextDanceId_++;
+            nextDanceId_ = std::max(nextDanceId_, d.id + 1);
+            dances.push_back(std::move(d));
+        }
+    } catch (...) {
+        // 文件坏了就当没存过 —— 绝不能因为一个编排文件让界面起不来
+    }
+}
+
+void UiState::saveDancesLocked() const {
+    nlohmann::json j = nlohmann::json::array();
+    for (const auto& d : dances) j.push_back(danceToJson(d));
+    std::ofstream f("robot_dances.json", std::ios::trunc);
+    if (f) f << j.dump(2) << "\n";
+}
+
+void UiState::loadDances() {
+    std::lock_guard<std::mutex> lock(dancesMutex);
+    if (!dances.empty()) return;  // 已经加载过
+    loadDancesLocked();
+}
+
+std::vector<Dance> UiState::dancesSnapshot() const {
+    std::lock_guard<std::mutex> lock(dancesMutex);
+    return dances;
+}
+
+int UiState::upsertDance(const Dance& d) {
+    std::lock_guard<std::mutex> lock(dancesMutex);
+    if (d.id > 0) {
+        for (auto& e : dances)
+            if (e.id == d.id) {
+                e = d;
+                saveDancesLocked();
+                return e.id;
+            }
+    }
+    Dance n = d;
+    n.id = nextDanceId_++;
+    dances.push_back(std::move(n));
+    saveDancesLocked();
+    return dances.back().id;
+}
+
+void UiState::removeDance(int id) {
+    std::lock_guard<std::mutex> lock(dancesMutex);
+    for (auto it = dances.begin(); it != dances.end(); ++it)
+        if (it->id == id) {
+            dances.erase(it);
+            saveDancesLocked();
+            return;
+        }
+}
+
+bool UiState::danceById(int id, Dance* out) const {
+    std::lock_guard<std::mutex> lock(dancesMutex);
+    for (const auto& e : dances)
+        if (e.id == id) {
+            if (out) *out = e;
+            return true;
+        }
+    return false;
 }
 
 std::vector<std::string> UiState::selectedIps() {

@@ -1,5 +1,5 @@
-// 顶栏：左侧品牌 + 受控胶囊 + 电量胶囊（取受控设备里最低的）；右侧 **4 个按钮**：
-// 设备 / 页面切换（遥控⇄动作库）/ ⋯更多（设置·日志）/ ■急停
+// 顶栏：左侧品牌 + 受控胶囊 + 电量胶囊 + 温度胶囊（取受控设备里最低的）；
+// 右侧 **4 个按钮**：设备 / 页面切换（遥控⇄动作库）/ ⋯更多（模式设置·舞蹈编排·设置·日志）/ ■急停
 // ⚠ 与 ImGui 端保持一致：不要返回键，「设备」必须在顶栏（不埋进菜单）
 import { computed } from 'vue'
 import { store, cmd, maskIp } from '../store.js'
@@ -11,15 +11,18 @@ export default {
     const isRemote = computed(() => store.page === 'remote')
     const unread = computed(() => store.st.problemUnread || 0)
     const battery = computed(() => store.st.batteryMin)
+    const temperature = computed(() => store.st.temperatureMin)
 
     function togglePage() { store.page = isRemote.value ? 'actions' : 'remote'; store.menu = false }
     function toPage(p) { store.page = p; store.menu = false }
     function open(m) { store.modal = m; store.menu = false }
 
     return {
-      ICON, store, isRemote, unread, battery, togglePage, toPage, open, maskIp,
+      ICON, store, isRemote, unread, battery, temperature, togglePage, toPage, open, maskIp,
       estop: () => cmd({ cmd: 'estop' }),
       batteryText: (v) => (v >= 0 ? Math.round(v) + '%' : '—'),
+      // -1000 = 受控设备都还没上报温度（不是 0 度）
+      tempText: (v) => (v > -999 ? Math.round(v) + '°C' : '—'),
     }
   },
   template: `
@@ -32,6 +35,12 @@ export default {
       </span>
       <span class="chip">
         <span class="ic">{{ ICON.battery }}</span>{{ batteryText(battery) }}
+      </span>
+      <span v-if="temperature > -999" class="chip" :title="'受控设备里的最高温度'">
+        <span class="ic">{{ ICON.thermometer }}</span>{{ tempText(temperature) }}
+      </span>
+      <span v-if="store.st.scriptRunning" class="chip on" :title="'正在按节奏下发指令'">
+        <span class="ic">{{ ICON.pulse }}</span>{{ store.st.scriptName || '执行中' }}
       </span>
       <span v-if="store.err" class="chip err">{{ store.err }}</span>
     </div>
@@ -54,14 +63,18 @@ export default {
 
     <div v-if="store.menu" class="menu-mask" @click="store.menu = false"></div>
     <div v-if="store.menu" class="menu">
+      <button @click="toPage('remote')" :class="{sel: store.page === 'remote'}"><span class="ic">{{ ICON.joystick }}</span>遥控</button>
+      <button @click="toPage('actions')" :class="{sel: store.page === 'actions'}"><span class="ic">{{ ICON.list }}</span>动作执行</button>
+      <button @click="toPage('mode')" :class="{sel: store.page === 'mode'}"><span class="ic">{{ ICON.gear }}</span>模式设置</button>
+      <button @click="toPage('dance')" :class="{sel: store.page === 'dance'}"><span class="ic">{{ ICON.musicNote }}</span>舞蹈编排</button>
+      <div class="menu-sep"></div>
       <button @click="open('settings')"><span class="ic">{{ ICON.gear }}</span>设置</button>
       <button @click="open('log')">
         <span class="ic">{{ ICON.log }}</span>日志
         <i v-if="unread > 0" class="badge">{{ unread > 99 ? '99+' : unread }}</i>
       </button>
       <div class="menu-sep"></div>
-      <button @click="toPage('actions')"><span class="ic">{{ ICON.list }}</span>动作库</button>
-      <button @click="toPage('remote')"><span class="ic">{{ ICON.joystick }}</span>遥控</button>
+      <button @click="open('devices')"><span class="ic">{{ ICON.robot }}</span>设备列表</button>
     </div>
   </header>
   `,

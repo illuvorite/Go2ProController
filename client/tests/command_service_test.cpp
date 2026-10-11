@@ -11,15 +11,20 @@
 
 #include "command_service.hpp"
 
+#include "dance.hpp"
 #include "fake_sink.hpp"
+#include "quick_actions.hpp"
+#include "robot_client.hpp"
 #include "sport_library.hpp"
 #include "test_util.hpp"
 #include "ui.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace go2;
@@ -526,6 +531,97 @@ int main() {
             CHECK_MSG(s.total == 0 && !s.allReject(), "有机型未知的设备在群里 → 一律不隐藏");
             CHECK_MSG(!s.anyReject(), "机型未知时不标注（没有可靠依据）");
         }
+    }
+
+    // ---------------------------------------------------------------- 快捷动作
+    // 来源：参考实现「天树探界遥控」Go2 页的复合按钮（姿态预设 / 平移 / 机身高度 / 恢复移动）
+    {
+        UiState ui;
+        FakeSink sink;
+        sink.ready = {"10.0.0.1", "10.0.0.2"};
+        sink.selected = {"10.0.0.1", "10.0.0.2"};
+
+        // 未知 key → -1（界面据此报"没有这条快捷动作"，而不是静默什么都不做）
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "Nope") == -1);
+
+        // 「恢复移动」= 一条 StopMove，打到两台
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "ResumeMove") == 2);
+        CHECK(sink.stoppedCount() == 2);
+
+        // 「机身最低」= BodyHeight(1013) 带 data=-0.18（对齐参考实现的取值）
+        sink.reset();
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "BodyLowest") == 2);
+        CHECK(sink.countApi(1013) == 2);
+        CHECK(near(lastParam(sink)["data"].get<double>(), -0.18));
+
+        // 没有受控设备 → 0，且什么都不发
+        sink.reset();
+        sink.selected.clear();
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "BodyHighest") == 0);
+        CHECK(sink.sentCount() == 0);
+
+        // 急停锁定：除「恢复移动」外一律不下发（恢复移动是安全方向，仍允许）
+        ui.estop = true;
+        sink.selected = {"10.0.0.1", "10.0.0.2"};
+        sink.reset();
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "BodyLowest") == 0);
+        CHECK(sink.sentCount() == 0);
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "ResumeMove") == 2);
+        CHECK(sink.stoppedCount() == 2);
+        ui.estop = false;
+    }
+
+    // ---------------------------------------------------------------- 运动模式
+    // 走 rt/api/motion_switcher（与运动指令是两套），只发给受控且就绪的设备
+    {
+        UiState ui;
+        FakeSink sink;
+        sink.ready = {"10.0.0.1", "10.0.0.2", "10.0.0.3"};
+        sink.selected = {"10.0.0.2"};  // 只有一台受控
+
+        CHECK(cmd::setMotionMode(borrow(sink), ui, "ai") == 1);
+        CHECK(sink.lastMode() == "ai");
+        CHECK_MSG(sink.modes.size() == 1 && sink.modes[0].first == "10.0.0.2",
+                  "模式切换只发给受控设备");
+        CHECK(ui.motionMode() == "ai");  // 乐观置位，供 /api/state 立即回显
+
+        CHECK(cmd::setMotionMode(borrow(sink), ui, "") == 0);  // 空模式名不发
+    }
+
+    // ---------------------------------------------------------------- 舞蹈编排播放
+    // 顺序下发 + 每步延时；急停 / 再点播放 / dance_stop 都能中止（代际号机制）
+    {
+        UiState ui;
+        FakeSink sink;
+        sink.ready = {"10.0.0.1"};
+        sink.selected = {"10.0.0.1"};
+
+        Dance d;
+        d.name = "测试编排";
+        d.steps.push_back({"Sit", 0});      // 立即下发
+        d.steps.push_back({"wait", 0});     // 空等待步
+        d.steps.push_back({"Dance1", 0});
+        const int id = ui.upsertDance(d);
+        CHECK(id > 0);
+
+        CHECK(cmd::playDance(borrow(sink), ui, id));
+        // 脚本在后台线程跑；等到它收尾（或超时）
+        for (int i = 0; i < 200 && ui.scriptRunning.load(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        CHECK_MSG(!ui.scriptRunning.load(), "编排播放应已结束");
+        CHECK_MSG(sink.countApi(1009) == 1, "第 1 步 Sit(1009) 应下发");
+        CHECK_MSG(sink.countApi(1022) == 1, "第 3 步 Dance1(1022) 应下发");
+
+        // 找不到的编排 → false
+        CHECK(!cmd::playDance(borrow(sink), ui, 99999));
+        // 急停锁定 → false（不乱发）
+        ui.estop = true;
+        CHECK(!cmd::playDance(borrow(sink), ui, id));
+        ui.estop = false;
+        // 删掉就查不到了
+        ui.removeDance(id);
+        Dance tmp;
+        CHECK(!ui.danceById(id, &tmp));
     }
 
     return go2test::summary("command_service_test");

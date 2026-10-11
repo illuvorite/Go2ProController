@@ -100,8 +100,10 @@ void selectOne(RobotManager& mgr, UiState& ui, const std::string& ip);
 void clearSelection(RobotManager& mgr, UiState& ui);
 
 // ---------------------------------------------------------------- 动作 → 图标
-/// 动作 → Phosphor 字形。动作库瓷砖与底部快捷栏**共用同一份表**（见 ui_actions.cpp）。
-const char* iconGlyph(const SportAction& a);
+/// 动作 → Phosphor/天树字形。动作库瓷砖、快捷动作与底部快捷栏**共用同一份表**（见 ui_actions.cpp）。
+/// 收 key+label 而不是 SportAction：快捷动作（core/quick_actions.hpp）不是 SportAction，
+/// 但同样要查这张表。
+const char* iconGlyph(const char* key, const std::string& label);
 
 // ---------------------------------------------------------------- 安全动作
 /// 急停：停全部就绪设备 + 关掉已开启的持续模式（语义在 cmd::estop）。
@@ -112,6 +114,13 @@ void drawTopBar(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
 void drawDeviceList(RobotManager& mgr, UiState& ui);
 void drawDevicePanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
 void drawActionPage(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
+/// 动作执行页顶部的「快捷动作」一条（复合指令：姿态预设 / 平移 / 机身高度 / 脚本）。
+/// 实现在 ui_tianshu.cpp。
+void drawQuickActionSection(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
+/// 模式设置页（普通 / AI / MCF）。实现在 ui_tianshu.cpp。
+void drawModePage(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
+/// 舞蹈编排页（本地序列：新建 / 编辑 / 播放 / 删除 / 急停）。实现在 ui_tianshu.cpp。
+void drawDancePage(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
 void drawSettingsPanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
 void drawRemotePanel(RobotManager& mgr, UiState& ui, const LayoutSpec& L);
 void drawLogPanel(UiState& ui, const LayoutSpec& L);
