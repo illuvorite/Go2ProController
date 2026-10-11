@@ -68,6 +68,15 @@ body {
   vertical-align: -0.12em;
   opacity: .92;
 }
+/* 动作图标：**天树人形剪影**（TianshuGo2 优先，没有对应剪影的动作退回 Phosphor）。
+   之前只有 .tile .ico 才挂这个字体栈，其它页（如舞蹈「选动作」面板）用 .ic 渲染
+   动作字形时，Phosphor 里没有那些码点 → 显示成空白框。提成通用类后，凡是动作字形
+   都用 .ico（与 actions.js 的瓷砖一致），框架图标才用 .ic。 */
+.ico {
+  font-family: 'Tianshu', 'Phosphor', sans-serif;
+  line-height: 1;
+  vertical-align: -0.12em;
+}
 /* 动作图标：加粗。小尺寸瓷砖上细线发虚没分量，加粗才立得住。
    与 C++ 端 drawTileIconAuto() 走加粗字体是同一个决定。 */
 .ic-b { font-weight: bold; }
@@ -609,7 +618,7 @@ input:focus { outline: none; border-color: rgba(77, 147, 255, .6); background: r
 .picker-group { margin-top: 10px; }
 .picker-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; margin-top: 6px; }
 .picker-tile { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 4px; font-size: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; color: var(--text); cursor: pointer; }
-.picker-tile .ic { font-size: 19px; }
+.picker-tile .ico { font-size: 19px; }
 
 .dance-item { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
 .dance-info .nm { font-size: 14.5px; font-weight: 600; }

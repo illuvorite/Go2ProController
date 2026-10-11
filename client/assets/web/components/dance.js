@@ -119,7 +119,7 @@ export default {
       <div class="steps">
         <div v-for="(s, i) in form.steps" :key="i" class="step">
           <span class="idx">{{ i + 1 }}</span>
-          <span class="ic step-ico">{{ iconOf(s.key) }}</span>
+          <span class="ico step-ico">{{ iconOf(s.key) }}</span>
           <button class="step-name" @click="pickerFor = pickerFor === i ? -1 : i">{{ labelOf(s.key) }}</button>
           <label class="delay">延时 <input type="number" min="0" step="100" v-model.number="s.delay" /> ms</label>
           <button class="mini" @click="moveStep(i, -1)">↑</button>
@@ -155,7 +155,7 @@ export default {
             <span class="sub">其它</span>
             <div class="picker-tiles">
               <button class="picker-tile" @click="addStep('wait')">
-                <span class="ic">{{ iconOf('wait') }}</span>等待
+                <span class="ico">{{ iconOf('wait') }}</span>等待
               </button>
             </div>
           </div>
@@ -163,7 +163,7 @@ export default {
             <span class="sub">{{ g.name }}</span>
             <div class="picker-tiles">
               <button v-for="a in g.items" :key="a.key" class="picker-tile" @click="addStep(a.key)">
-                <span class="ic">{{ iconOf(a.key) }}</span>{{ a.label }}
+                <span class="ico">{{ iconOf(a.key) }}</span>{{ a.label }}
               </button>
             </div>
           </div>
