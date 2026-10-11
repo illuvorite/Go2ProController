@@ -32,7 +32,7 @@ assets/web/
 └── components/
     ├── topbar.js           # 顶栏：品牌 + 受控/电量胶囊 + 设备/页面切换/更多/急停（4 键）
     ├── remote.js           # 遥控页：急停+阻尼同行 → 参数滑条 / 快捷 D-pad + 读数
-    ├── actions.js          # 动作执行页：快捷动作一条 + 分组瓷砖网格（跳过 Gait 组，与 ImGui 端一致）
+    ├── actions.js          # 动作执行页：分组瓷砖网格（快捷动作混排进同一网格，与 ImGui 端一致）
     ├── mode.js             # 模式设置页：普通 / AI / MCF 三选一（motion_switcher）
     ├── dance.js            # 舞蹈编排页：新建/编辑/播放/删除/急停（本地 robot_dances.json）
     ├── band.js             # 摇杆带：受控狗卡片行（多选/横滑）+ 单控/群控 + 双摇杆
@@ -59,7 +59,7 @@ assets/web/
 | `robots[]` | `{ip, name, label, selected, battery, mode, sn, model, temperature, yaw?, state, ready}`（`model` = `Air`/`Pro`/`Edu`，空 = 拿不到 SN，由多播发现给出；`temperature` = 摄氏度，`-1000` = 这台还没上报；`yaw` 只在固件上报 `imu.rpy` 时才有） |
 | `selectedCount` / `target` / `batteryMin` / `temperatureMin` | 受控台数 / 一句话（`单控 · 名字`）/ 受控里最低电量 / 受控里最低温度（`-1000` = 都没上报） |
 | `controlModel` | **受控集合的机型**（`Air`/`Pro`/`Edu`）。空 = 机型未知或群控混机型 —— 此时动作库不做机型过滤 |
-| `actions[]` | `{key, label, group(0-5), risky, toggle, ack?}`（group=1 是 Gait 组，前端跳过；`ack` 为**该机型**上次回执 code——0 成功 / 非 0 本机型不支持，未试过不下发该字段） |
+| `actions[]` | `{key, label, group(0-5), risky, toggle, ack?}`。★ group=1（原「步态/速度/身高」组）2026-10-11 起**整组从动作表删除**，服务端不会再下发 group===1 的条目（枚举值保留是为了不改动已发布的编号）；`ack` 为**该机型**上次回执 code——0 成功 / 非 0 本机型不支持，未试过不下发该字段 |
 | `toggles` | 开关型动作当前状态（`{key: bool}`）。★ 开关是"乐观置位 + 回执确认"：点击后立刻为 `true`，若机器人拒绝（且自动换 id 重试也没成功）会在约 2.5s 后**回滚**成 `false` —— 前端不需要自己处理，跟着轮询结果刷新即可 |
 | `params` | `maxLinSpeed / yawRate / speedScale / bodyHeight / footRaise / speedLevel / gaitType / mcf / privacy / hideUnsupported` |
 | `cmd` | 最近一次下发的 `{vx, vy, vz}` |
@@ -135,7 +135,8 @@ assets/web/
   已全部回退**。所以：改完跑 `python tools/web_preview.py` 打开
   `?page=actions` 看一眼，再决定留不留。
 - **`?page=actions|mode|dance` 可直接落到对应页面**（预览 / 截图时省一次点击）。
-- **网页界面不要显示 Gait 组**（group===1）：与 ImGui 端动作库口径一致（用户已裁掉）。
+- **group===1（原 Gait 组）已整组删除**（2026-10-11）：姿态角 / 机身高度等改由**快捷动作预设**提供，
+  摆放方式与 ImGui 端一致（都在原有分组网格里）。前端那句 `SKIP` 只是防呆。
 
 ## 5. 维护清单（每次改前端）
 

@@ -752,15 +752,9 @@ for (const auto& gd : kGroups) {
         ++col;
         // 机身高度那三条是纯一条 api_id(1013)，能按机型记回执 → 给它带上结果小点；
         // 其余是脚本（多个 api_id），不标点。
-        int qst = 0;
-        if (q.kind == QuickKind::BodyHeight) {
-            for (const SportAction& a : sportActions())
-                if (std::strcmp(a.key, "BodyHeight") == 0) {
-                    const int id = resolveId(a, nullptr);  // 尊重当前指令集
-                    if (id != 0) qst = apiState(id);
-                    break;
-                }
-        }
+        // 机身高度那三条是纯一条 api_id(1013)，能按机型记回执 → 带上结果小点。
+        // 1013 已不在动作表里（整组删除）→ 用 core/sport_library.hpp 的常量。
+        const int qst = (q.kind == QuickKind::BodyHeight) ? apiState(kApiBodyHeight) : 0;
         if (actionTile(q.key, q.label, false, qst, false, ImVec2(actW1, tileH))) {
             const auto sink = std::make_shared<ManagerSink>(mgr, ui);
             const int n = cmd::runQuickAction(sink, ui, q.key);

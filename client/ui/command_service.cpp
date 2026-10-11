@@ -135,10 +135,8 @@ const SportAction* actionByKey(const char* key) {
 }
 
 int poseAdjustSelected(CommandSink& sink, const UiState& ui, float x, float y, float z) {
-    const SportAction* euler = actionByKey("Euler");
-    if (!euler) return 0;
-    const int id = resolveApiId(ui, *euler);
-    if (id == 0) return 0;  // 当前指令集没有 Euler 这条 → 不发（不要退化成 Move）
+    // 姿态角已不在动作表里（2026-10-11 整组删除）→ 用常量，见 sport_library.hpp
+    const int id = kApiEuler;
 
     // 归一化成"摇杆行程比例"：除以上限就是满推时的比例。
     // 上限沿用 clampMotion 的取值口径（界面设置与硬上限取小），保证同一个杆位
@@ -279,17 +277,9 @@ int sendAction(CommandSink& sink, UiState& ui, const SportAction& a, bool flagVa
 }
 
 int resetEuler(CommandSink& sink, UiState& ui) {
-    // api_id 从指令表里查，不写死 1007 —— 表改了这里跟着改
-    const SportAction* euler = nullptr;
-    for (const SportAction& a : sportActions()) {
-        if (std::string(a.key) == "Euler") {
-            euler = &a;
-            break;
-        }
-    }
-    if (!euler) return 0;
-    const int id = resolveApiId(ui, *euler);
-    if (id == 0) return 0;
+    // 姿态角 2026-10-11 起不在动作表里了（整组删除）→ 用 core/sport_library.hpp 的常量。
+    // 它在 normal / MCF 两套指令集里是同一个 id（1007），所以不需要再走指令集解析。
+    const int id = kApiEuler;
     nlohmann::json p = nlohmann::json::object();
     p["x"] = 0.0;
     p["y"] = 0.0;
@@ -438,8 +428,8 @@ unsigned startEulerPreset(const std::shared_ptr<CommandSink>& sink, UiState& ui,
                           const QuickAction& q) {
     const std::string name = std::string(q.label);
     return startScript(sink, ui, name, [sink, &ui, q](const ScriptGuard& g) {
-        const int bal = apiKeyId(ui, "BalanceStand", 1002);
-        const int euler = apiKeyId(ui, "Euler", 1007);
+        const int bal = apiKeyId(ui, "BalanceStand", 1002);  // 平衡站立仍在表里（基础姿态）
+        const int euler = kApiEuler;                         // 已不在表里 → 常量
         sendToSelected(*sink, bal, nlohmann::json());
         if (!g.sleep(kQuickBalanceDelayMs)) return;  // 被急停/新脚本打断 → 不发姿态角
         nlohmann::json p = nlohmann::json::object();
@@ -471,7 +461,7 @@ unsigned startMoveBurst(const std::shared_ptr<CommandSink>& sink, UiState& ui, c
 /// 方向回正：开连续步态 → 平衡站立 → 按 yaw 闭环回转 → 停车 → 关连续步态
 unsigned startAdjustOrientation(const std::shared_ptr<CommandSink>& sink, UiState& ui) {
     return startScript(sink, ui, "方向回正", [sink, &ui](const ScriptGuard& g) {
-        const int gait = apiKeyId(ui, "ContinuousGait", 1019);
+        const int gait = kApiContinuousGait;  // 已不在表里 → 常量
         const int bal = apiKeyId(ui, "BalanceStand", 1002);
         nlohmann::json on = nlohmann::json::object();
         on["data"] = true;
@@ -539,7 +529,7 @@ unsigned startAdjustOrientation(const std::shared_ptr<CommandSink>& sink, UiStat
 /// 原地踏步：开连续步态 → 平衡站立 → 前后来回 Move 约 5 秒 → 停车 → 关连续步态
 unsigned startInPlaceStepping(const std::shared_ptr<CommandSink>& sink, UiState& ui) {
     return startScript(sink, ui, "原地踏步", [sink, &ui](const ScriptGuard& g) {
-        const int gait = apiKeyId(ui, "ContinuousGait", 1019);
+        const int gait = kApiContinuousGait;  // 已不在表里 → 常量
         const int bal = apiKeyId(ui, "BalanceStand", 1002);
         nlohmann::json on = nlohmann::json::object();
         on["data"] = true;
@@ -583,7 +573,7 @@ int runQuickAction(const std::shared_ptr<CommandSink>& sink, UiState& ui, const 
             // 表里没有这条了（「恢复移动」= 动作库的「停止移动」，已删）；保留分支防漏 switch
             return stopSelected(*sink);
         case QuickKind::BodyHeight: {
-            const int id = apiKeyId(ui, "BodyHeight", 1013);
+            const int id = kApiBodyHeight;  // 已不在表里 → 常量
             nlohmann::json p = nlohmann::json::object();
             p["data"] = q->data;
             return sendToSelected(*sink, id, p);

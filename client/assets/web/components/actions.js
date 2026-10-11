@@ -1,5 +1,6 @@
 // 动作执行页：常驻整屏页面（不是弹窗），**只有一个瓷砖网格**。
-// 组顺序与 C++ 端一致，且同样跳过 SportGroup::Gait（=1，步态/速度/身高那组，用户已要求撤下）。
+// 组顺序与 C++ 端一致。★ group=1（原「步态 / 速度 / 身高」那组）2026-10-11 起
+//   整组从动作表删除了，服务端不会再下发任何 group===1 的条目；这里的 SKIP 只是防呆。
 // 页眉：MCF 指令集开关 + 隐藏不支持的（与 ImGui 端 drawActionPageHeader 同一功能集）
 // 瓷砖带可用性标注：上次回执 ✓ / ✗（后端按当前指令集解析 api_id 后回传 ack code）
 //
@@ -11,7 +12,7 @@ import { store, cmd, post, param, setParam } from '../store.js'
 import { iconForAction } from '../icons.js'
 
 const GROUPS = ['基础姿态', '步态 / 参数', '表演动作', '跳跃特技', '状态查询', '其他 / 进阶']
-const SKIP = 1  // Gait
+const SKIP = 1  // 原 Gait 组（已整组删除；留着当防呆，防止哪天服务端又发回它）
 
 export default {
   name: 'ActionsPage',

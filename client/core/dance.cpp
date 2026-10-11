@@ -20,7 +20,8 @@ int defaultDanceDelayMs(const std::string& key) {
         key == "Bound" || key == "FreeJump")
         return 6000;
     if (key == "Handstand") return 4500;
-    if (key == "Euler" || key == "Move") return 2000;
+    // 注：姿态角(1007) / 移动(1008) 不在动作表里了（整组删除），编排也不会有这两步 ——
+    //     它们要么是"左扭"那种预设（自带时序），要么是摇杆的连续速度（不是点一下的动作）。
     return 3500;  // 默认 3.5 秒（与参考实现一致）
 }
 

@@ -38,6 +38,9 @@ namespace {
 /// float → double 的十进制展开不是人类写的那一串）
 nlohmann::json lastParam(const FakeSink& s) {
     std::lock_guard<std::mutex> lock(s.mtx);
+    // ★ 列表为空时返回 null 而不是崩：否则"前置条件不成立"（例如动作已被从指令表删除）
+    //   会表现为整进程 SEGFAULT，而不是一条看得懂的断言失败 —— 2026-10-11 踩过一次。
+    if (s.sent.empty()) return nullptr;
     return nlohmann::json::parse(s.sent.back().param);
 }
 
@@ -119,15 +122,16 @@ int main() {
         sink.ready = {"10.0.0.1"};
         sink.selected = {"10.0.0.1"};
 
-        CHECK(cmd::dispatchAction(sink, ui, "ContinuousGait") == 1);
+        // 用 Handstand（倒立，1301）而不是已随那组删掉的 ContinuousGait
+        CHECK(cmd::dispatchAction(sink, ui, "Handstand") == 1);
         CHECK(lastParam(sink)["data"].get<bool>() == true);
-        CHECK(ui.toggleState("ContinuousGait"));
-        CHECK(sink.countApi(1019) == 1);  // ContinuousGait 的 normalId
+        CHECK(ui.toggleState("Handstand"));
+        CHECK(sink.countApi(1301) == 1);  // Handstand 的 normalId（两套相同）
 
         // 再点一次 = 关闭（同一个 api_id 带 {"data": false} —— StopMove 停不掉它）
-        CHECK(cmd::dispatchAction(sink, ui, "ContinuousGait") == 1);
+        CHECK(cmd::dispatchAction(sink, ui, "Handstand") == 1);
         CHECK(lastParam(sink)["data"].get<bool>() == false);
-        CHECK(!ui.toggleState("ContinuousGait"));
+        CHECK(!ui.toggleState("Handstand"));
         CHECK(ui.activeToggleIdsSnapshot().empty());
     }
 
@@ -140,17 +144,24 @@ int main() {
         ui.mcfMode = false;
         ui.speedLevel = 2;
 
-        // StaticWalk 只有 MCF 有 → 非 MCF 下必须兜底到 1061，否则这条动作永远点不到
-        CHECK(cmd::dispatchAction(sink, ui, "StaticWalk") == 1);
+        // FreeJump 只有 MCF 有 → 非 MCF 下必须兜底到 2047，否则这条动作永远点不到
+        CHECK(cmd::dispatchAction(sink, ui, "FreeJump") == 1);
         {
             std::lock_guard<std::mutex> lock(sink.mtx);
-            CHECK(sink.sent.back().apiId == 1061);
+            CHECK(!sink.sent.empty());
+            if (!sink.sent.empty()) CHECK(sink.sent.back().apiId == 2047);
         }
 
-        // 参数必须取界面里的值 —— 改造前网页端固定传 0，等于"档位调了没用"
+        // 参数必须取界面里的值 —— 改造前网页端固定传 0，等于"参数调了没用"。
+        // ★ 2026-10-11 起动作表里只剩 Json 参数的动作（自定义 JSON），
+        //   Int/Real 两类随「步态/速度/身高」整组删除（表里已没有条目能用它们）。
         sink.reset();
-        CHECK(cmd::dispatchAction(sink, ui, "SpeedLevel") == 1);
-        CHECK(lastParam(sink)["data"].get<int>() == 2);
+        {
+            std::lock_guard<std::mutex> lock(ui.rawJsonMutex);
+            std::snprintf(ui.rawJson, sizeof(ui.rawJson), "{\"flag\":7}");
+        }
+        CHECK(cmd::dispatchAction(sink, ui, "TrajectoryFollow") == 1);
+        CHECK(lastParam(sink)["flag"].get<int>() == 7);
 
         // 未知 key
         CHECK(cmd::dispatchAction(sink, ui, "NoSuchAction") == -1);
@@ -197,14 +208,12 @@ int main() {
         sink.ready = {"10.0.0.1", "10.0.0.2"};
         sink.selected = {"10.0.0.1"};
 
-        // 发一条非零姿态
+        // 「姿态角」这条带滑条的动作 2026-10-11 随「步态/速度/身高」整组删除，
+        // 所以这里不再走 dispatchAction("Euler")；实际下发由「摆姿势时摇杆改发 Euler」
+        // 那条路径覆盖（见下面的「摆姿势：摇杆改成调姿态」块）。
         ui.eulerX = 0.3f;
         ui.eulerY = -0.2f;
         ui.eulerZ = 0.4f;
-        CHECK(cmd::dispatchAction(sink, ui, "Euler") == 1);
-        CHECK(sink.countApi(1007) == 1);
-        CHECK(near(lastParam(sink)["x"].get<double>(), 0.3));
-        CHECK(near(lastParam(sink)["z"].get<double>(), 0.4));
 
         // 到点归零：下发全零 + 界面三个轴清零 + 撤掉待归零任务（否则每帧都会重发）
         CHECK(cmd::resetEuler(sink, ui) == 1);
@@ -356,14 +365,12 @@ int main() {
     // 否则桌面 / 网页 / 安卓三个入口各判一次、迟早分叉。
     {
         const SportAction* pose = nullptr;
-        const SportAction* euler = nullptr;
-        for (const auto& a : sportActions()) {
+        for (const auto& a : sportActions())
             if (std::string(a.key) == "Pose") pose = &a;
-            if (std::string(a.key) == "Euler") euler = &a;
-        }
-        CHECK_MSG(pose != nullptr && euler != nullptr, "指令表里必须有 Pose 与 Euler");
+        CHECK_MSG(pose != nullptr, "指令表里必须有 Pose");
         CHECK_MSG(pose != nullptr && pose->toggle, "Pose 必须是持续模式开关（否则关不掉）");
-        const int eulerId = apiIdFor(*euler, false);   // 1007
+        // 姿态角 2026-10-11 起不在动作表里 → 直接用 core/sport_library.hpp 的常量
+        const int eulerId = kApiEuler;                 // 1007
         const int moveId = kApiMove;                   // 1008
         CHECK_MSG(eulerId != moveId, "Euler 与 Move 不能是同一个 api_id");
 

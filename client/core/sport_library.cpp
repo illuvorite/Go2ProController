@@ -16,18 +16,14 @@ const std::vector<SportAction>& sportActions() {
         {"Sit",            "坐下",         1009, 1009, SportParam::None, SportGroup::Basic, false},
         {"RiseSit",        "起立(坐姿)",   1010, 1010, SportParam::None, SportGroup::Basic, false},
 
-        // ---------------- 步态 / 速度 / 身高 ----------------
-        {"Euler",          "姿态角",       1007, 1007, SportParam::Euler, SportGroup::Gait, false},
-        {"SwitchGait",     "切换步态",     1011, 0,    SportParam::Int,   SportGroup::Gait, false},
-        {"BodyHeight",     "机身高度",     1013, 0,    SportParam::Real,  SportGroup::Gait, false},
-        {"FootRaiseHeight","抬腿高度",     1014, 0,    SportParam::Real,  SportGroup::Gait, false},
-        {"SpeedLevel",     "速度档位",     1015, 1015, SportParam::Int,   SportGroup::Gait, false},
-        {"ContinuousGait", "持续步态",     1019, 1019, SportParam::Flag,  SportGroup::Gait, false, true},
-        {"EconomicGait",   "经济步态",     1035, 1063, SportParam::Flag,  SportGroup::Gait, false, true},
-        {"StaticWalk",     "静态行走",     0,    1061, SportParam::Flag,  SportGroup::Gait, false, true},
-        {"TrotRun",        "小跑",         0,    1062, SportParam::Flag,  SportGroup::Gait, false, true},
-        {"SwitchJoystick", "手柄接管",     1027, 1027, SportParam::Flag,  SportGroup::Gait, false},
-        {"Trigger",        "扳机",         1012, 0,    SportParam::Json,  SportGroup::Gait, false},
+        // ★ 「步态 / 速度 / 身高」整组（11 条）2026-10-11 **删除**。
+        //   它 2026-09-28 就被要求从界面撤下（那批滑条最占地方），界面上一直够不到、
+        //   只剩 ui_actions.cpp 里一段渲染代码；预设（姿态角 / 机身高度）已经覆盖了实际用法。
+        //   原条目：Euler 1007 / SwitchGait 1011 / BodyHeight 1013 / FootRaiseHeight 1014 /
+        //          SpeedLevel 1015 / ContinuousGait 1019 / EconomicGait 1035,1063 /
+        //          StaticWalk 1061 / TrotRun 1062 / SwitchJoystick 1027 / Trigger 1012。
+        //   仍在用的三个 id（1007 / 1013 / 1019）以常量形式留在 sport_library.hpp：
+        //   kApiEuler / kApiBodyHeight / kApiContinuousGait。
 
         // ---------------- 表演动作 ----------------
         {"Hello",          "打招呼",       1016, 1016, SportParam::None, SportGroup::Show, false},
@@ -95,8 +91,15 @@ std::string labelForApiId(int apiId) {
     if (apiId == 0) return {};
     for (const auto& a : sportActions())
         if (a.normalId == apiId || a.mcfId == apiId) return a.label;
-    if (apiId == kApiMove) return "移动";
-    return {};
+    // 不在动作表里、但仍会下发的几条（见 sport_library.hpp 的常量说明）——
+    // 回执日志要靠它把 api_id 翻成中文名，否则会打出一串裸 id
+    switch (apiId) {
+        case kApiMove: return "移动";
+        case kApiEuler: return "姿态角";
+        case kApiBodyHeight: return "机身高度";
+        case kApiContinuousGait: return "持续步态";
+        default: return {};
+    }
 }
 
 std::vector<int> persistentModeIds() {

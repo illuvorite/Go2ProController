@@ -14,6 +14,19 @@ namespace go2 {
 /// （改造前它同时硬编码在 `RobotClient::move()` 与 `labelForApiId()` 两处）。
 constexpr int kApiMove = 1008;
 
+// ---- 不在动作表里、但代码仍会下发的其它协议常量 ----
+//
+// 这几条原先属于「步态 / 速度 / 身高」那一组。该组 2026-09-28 就被要求从界面撤下，
+// 2026-10-11 又整组**从动作表删除**（界面上够不到、只剩死代码）。
+// 但下面这些功能仍然要发它们的 api_id，所以常量留在这里、由 `labelForApiId` 给名字：
+//   · kApiEuler          —— 「摆姿势」时摇杆改发它（见 cmd::poseAdjustSelected）；
+//                            姿态预设（左扭 / 右倾 / 低头…）也发它
+//   · kApiBodyHeight     —— 机身最低 / 正常 / 最高 三个预设
+//   · kApiContinuousGait —— 方向回正 / 原地踏步 的"开连续步态"前置
+constexpr int kApiEuler = 1007;
+constexpr int kApiBodyHeight = 1013;
+constexpr int kApiContinuousGait = 1019;
+
 /// 参数类型（决定界面上给什么输入控件、以及 parameter 怎么打包）
 enum class SportParam {
     None,    ///< 无参数（Hello / Dance1 ...）
@@ -29,6 +42,9 @@ enum class SportParam {
 enum class SportGroup {
     Basic,     ///< 基础姿态
     Gait,      ///< 步态 / 速度 / 身高（带参数）
+               ///< ⚠ 2026-10-11 起**表里已经没有条目用这个组**（整组删除）。成员保留是为了
+               ///<   **编号稳定**：网页端 `/api/state` 的 `group` 就是它的整数序号，
+               ///<   删掉成员会让后面几组整体前移、把已发布的接口编号改掉。
     Show,      ///< 表演动作
     Stunt,     ///< 跳跃特技（危险）
     Query,     ///< 状态查询

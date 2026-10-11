@@ -40,6 +40,12 @@ int main() {
             CHECK_MSG(keys.insert(a.key).second, std::string("key 重复: ") + a.key);
         }
         CHECK(sportActions().size() > 30);  // 表被整体删空/截断时报警
+        // 2026-10-11：「步态 / 速度 / 身高」整组从表里删除（界面上 2026-09-28 就撤下了）。
+        // 这条断言是**防回潮**：有人把 Euler / BodyHeight / SpeedLevel 之类再加回表里的话，
+        // 界面上会多出一组谁也点不到的按钮 —— 要么连 UI 一起加回来，要么就别加。
+        for (const auto& a : sportActions())
+            CHECK_MSG(a.group != go2::SportGroup::Gait,
+                      std::string("该组已整组删除，不该再有条目: ") + a.key);
     }
     {
         // 两套指令集不能同时为空（否则这条动作永远发不出去，界面上却是可点的）
@@ -74,11 +80,11 @@ int main() {
             CHECK(go2::apiIdFor(*hello, true) == 1016);
             CHECK(!go2::differsInMcf(*hello));
         }
-        const SportAction* staticWalk = find("StaticWalk");  // 只有 MCF 有
-        CHECK(staticWalk != nullptr);
-        if (staticWalk) {
-            CHECK(go2::apiIdFor(*staticWalk, true) == 1061);
-            CHECK(go2::apiIdFor(*staticWalk, false) == 0);  // 非 MCF 下无此条 → 界面会兜底
+        const SportAction* mcfOnly = find("FreeJump");  // 只有 MCF 有（normalId=0）
+        CHECK(mcfOnly != nullptr);
+        if (mcfOnly) {
+            CHECK(go2::apiIdFor(*mcfOnly, true) == 2047);
+            CHECK(go2::apiIdFor(*mcfOnly, false) == 0);  // 非 MCF 下无此条 → 界面会兜底
         }
     }
 
@@ -116,36 +122,39 @@ int main() {
         CHECK(go2::labelForApiId(1001) == std::string("阻尼"));
         CHECK(go2::labelForApiId(2043) == std::string("后空翻"));
         CHECK(go2::labelForApiId(go2::kApiMove) == std::string("移动"));  // 1008 特例
+        // 这三条已从动作表删除（整组撤下），但代码仍会下发 → 回执日志必须还能翻出名字
+        CHECK(go2::labelForApiId(go2::kApiEuler) == std::string("姿态角"));
+        CHECK(go2::labelForApiId(go2::kApiBodyHeight) == std::string("机身高度"));
+        CHECK(go2::labelForApiId(go2::kApiContinuousGait) == std::string("持续步态"));
         CHECK(go2::labelForApiId(999999).empty());
         CHECK(go2::labelForApiId(0).empty());
     }
 
     // ---------------------------------------------------------- 参数打包
     {
-        const SportAction* flag = find("ContinuousGait");
-        CHECK(flag != nullptr);
-        if (flag) {
-            CHECK(go2::buildSportParam(*flag, 0, 0.0f, 0, 0, 0, "").dump() ==
-                  std::string("{\"data\":true}"));
-        }
-        const SportAction* lvl = find("SpeedLevel");
-        CHECK(lvl != nullptr);
-        if (lvl) {
-            CHECK(go2::buildSportParam(*lvl, 2, 0.0f, 0, 0, 0, "").dump() ==
-                  std::string("{\"data\":2}"));
-        }
-        const SportAction* bh = find("BodyHeight");
-        CHECK(bh != nullptr);
-        if (bh) {
+        // ★ Int / Real / Euler 三种参数：2026-10-11 那组删除后**表里已经没有条目用它们**，
+        //   但 buildSportParam 仍然支持（网页 `param` 指令 / 将来重新加滑条动作要用）。
+        //   所以这里用**本地构造的合成条目**保住覆盖，免得这几个分支悄悄烂掉。
+        const SportAction flag{nullptr, nullptr, 0, 0, SportParam::Flag, go2::SportGroup::Basic,
+                               false};
+        CHECK(go2::buildSportParam(flag, 0, 0.0f, 0, 0, 0, "").dump() ==
+              std::string("{\"data\":true}"));
+        const SportAction lvl{nullptr, nullptr, 0, 0, SportParam::Int, go2::SportGroup::Basic,
+                              false};
+        CHECK(go2::buildSportParam(lvl, 2, 0.0f, 0, 0, 0, "").dump() ==
+              std::string("{\"data\":2}"));
+        const SportAction bh{nullptr, nullptr, 0, 0, SportParam::Real, go2::SportGroup::Basic,
+                             false};
+        {
             // 浮点比较走数值：float → double 的十进制展开不是人类写的那一串
-            const auto p = go2::buildSportParam(*bh, 0, 0.31f, 0, 0, 0, "");
+            const auto p = go2::buildSportParam(bh, 0, 0.31f, 0, 0, 0, "");
             CHECK(p.contains("data"));
             CHECK(std::fabs(p["data"].get<double>() - 0.31) < 1e-6);
         }
-        const SportAction* euler = find("Euler");
-        CHECK(euler != nullptr);
-        if (euler) {
-            const auto p = go2::buildSportParam(*euler, 0, 0.0f, 0.1f, 0.2f, 0.3f, "");
+        const SportAction euler{nullptr, nullptr, 0, 0, SportParam::Euler, go2::SportGroup::Basic,
+                                false};
+        {
+            const auto p = go2::buildSportParam(euler, 0, 0.0f, 0.1f, 0.2f, 0.3f, "");
             CHECK(std::fabs(p["x"].get<double>() - 0.1) < 1e-6);
             CHECK(std::fabs(p["y"].get<double>() - 0.2) < 1e-6);
             CHECK(std::fabs(p["z"].get<double>() - 0.3) < 1e-6);
@@ -153,7 +162,7 @@ int main() {
         const SportAction* none = find("Hello");
         CHECK(none != nullptr);
         if (none) CHECK(go2::buildSportParam(*none, 0, 0.0f, 0, 0, 0, "").is_null());
-        const SportAction* json = find("Trigger");
+        const SportAction* json = find("TrajectoryFollow");  // Json 参数（Trigger 已随那组删除）
         CHECK(json != nullptr);
         if (json) {
             CHECK(go2::buildSportParam(*json, 0, 0.0f, 0, 0, 0, "{\"a\":1}").dump() ==

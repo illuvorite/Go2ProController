@@ -82,7 +82,7 @@ void webThread(UiState& ui, FakeSink& sink, std::atomic<bool>& go) {
         ui.localKeyCount = i % 7;
         ui.problemSeen = ui.problemCount.load();
 
-        cmd::dispatchAction(sink, ui, "ContinuousGait");
+        cmd::dispatchAction(sink, ui, "Handstand");  // ContinuousGait 已随整组删除
         cmd::moveSelected(sink, ui, 0.2f, 0.0f, 0.0f);
         cmd::quickMove(sink, ui, "fwd");
         cmd::stopSelected(sink);
