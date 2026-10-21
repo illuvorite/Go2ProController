@@ -111,6 +111,8 @@ add_library(go2_core STATIC
     core/protocol.cpp
     core/discovery.cpp
     core/local_keys.cpp
+    core/official_key_import.cpp  # 官方 App 钥匙导入（定位/解析/打分，只读）
+    core/cloud_store.cpp          # 云账号凭据的本地保存（一次输入，之后自动登录）
     core/webrtc_transport.cpp
     core/sport_library.cpp
     core/robot_model.cpp
@@ -271,6 +273,17 @@ target_include_directories(robot_model_test PRIVATE core)
 go2_add_warnings(robot_model_test)
 add_test(NAME robot_model_test COMMAND robot_model_test)
 
+# ---- 官方 App 钥匙导入（纯逻辑 + 临时目录）----
+# 关键回归：官方日志里的 requestId 也是 32hex，绝不能被当钥匙导入。
+add_executable(official_key_import_test
+    tests/official_key_import_test.cpp
+    core/official_key_import.cpp
+    core/local_keys.cpp)   # userDataDir()
+target_include_directories(official_key_import_test PRIVATE core platform)
+target_link_libraries(official_key_import_test PRIVATE nlohmann_json::nlohmann_json)
+go2_add_warnings(official_key_import_test)
+add_test(NAME official_key_import_test COMMAND official_key_import_test)
+
 # ---- 天树探界对齐部分（纯逻辑）：状态帧解析 / 快捷动作表 / 舞蹈编排数据模型 ----
 # 这三块错了都是"界面静默失效"（温度永远显示 —、方向回正空转、编排丢步），
 # 所以必须有离线回归。
@@ -327,6 +340,18 @@ target_include_directories(ui_state_thread_test PRIVATE ui)
 target_link_libraries(ui_state_thread_test PRIVATE go2_core)
 go2_add_warnings(ui_state_thread_test)
 add_test(NAME ui_state_thread_test COMMAND ui_state_thread_test)
+
+# ---- 设备身份 / 命名的自测 ----
+# 同一台狗换 WiFi 之后必须还是**同一台、同一个名字**（身份与命名都按 SN 走，
+# 而不是按会变的 IP）。纯逻辑，不联网。
+add_executable(device_identity_test
+    tests/device_identity_test.cpp
+    ui/ui_state.cpp
+)
+target_include_directories(device_identity_test PRIVATE ui)
+target_link_libraries(device_identity_test PRIVATE go2_core)
+go2_add_warnings(device_identity_test)
+add_test(NAME device_identity_test COMMAND device_identity_test)
 
 # ---- sanitizer 正对照探针 ----
 # 不带 GO2_PROBE 时是空操作（作为普通 ctest 用例安全）；带上则故意制造

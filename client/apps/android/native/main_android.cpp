@@ -11,9 +11,11 @@
 // ============================================================================
 
 #include "local_keys.hpp"
+#include "key_probe.hpp"   // startOfficialKeyImport（官方 App 钥匙自动导入）
 #include "robot_manager.hpp"
 #include "theme.hpp"
 #include "ui.hpp"
+#include "unitree_cloud.hpp"  // setCloudHttpTransport
 #include "web_bridge.hpp"
 #include "../../../platform/net.hpp"
 
@@ -39,6 +41,8 @@
 #include <string>
 #include <thread>
 #include <unistd.h>  // chdir：把工作目录切到应用可写目录
+#include <stdlib.h>  // realpath / setenv
+#include <limits.h>
 #include <sys/stat.h>  // mkdir：网页界面资源的子目录
 #include <vector>
 
@@ -258,6 +262,121 @@ void extractIconFont() {
     std::string bold = extractFont("fonts/Phosphor-Bold.ttf", "Phosphor-Bold.ttf");
     if (!bold.empty()) ::setenv("GO2_ICON_FONT_BOLD", bold.c_str(), 1);
 }
+
+/// 导出 CA bundle 并告诉核心层（OpenSSL 用）。
+///
+/// 为什么必须自带：Android 的 OpenSSL 没有编译期 CA 路径，读系统
+/// `/system/etc/security/cacerts` 的 hash 目录在 App 上下文里也不可靠 ——
+/// 实测表现为云接口报 "SSL server verification failed"。
+/// 随包带一份 curl 的 cacert.pem（121 个根证书）最稳，且跨机型一致。
+/// 路径用 realpath 转绝对：OpenSSL 的 fopen 吃相对路径，但换 cwd 后就失效了。
+void extractCaBundle() {
+    auto data = readAsset("cacert.pem");
+    if (data.empty()) {
+        LOGE("assets/cacert.pem 缺失 → 云账号拉钥匙会因证书校验失败");
+        return;
+    }
+    const char* dst = "cacert.pem";
+    long have = 0;
+    if (FILE* f = std::fopen(dst, "rb")) {
+        std::fseek(f, 0, SEEK_END);
+        have = std::ftell(f);
+        std::fclose(f);
+    }
+    if (have != static_cast<long>(data.size())) {
+        FILE* w = std::fopen(dst, "wb");
+        if (!w) {
+            LOGE("CA bundle 导出失败：%s 不可写", dst);
+            return;
+        }
+        std::fwrite(data.data(), 1, data.size(), w);
+        std::fclose(w);
+    }
+    char abs[4096] = {0};
+    if (::realpath(dst, abs))
+        ::setenv("GO2_CA_BUNDLE", abs, 1);
+    else
+        ::setenv("GO2_CA_BUNDLE", dst, 1);
+    LOGI("CA bundle: %s (%zu 字节)", abs, data.size());
+}
+
+#if defined(__ANDROID__)
+/// 请求头表 → JSON（值里可能有引号/反斜杠，必须转义）
+static std::string headersToJson(
+    const std::vector<std::pair<std::string, std::string>>& hs) {
+    const auto esc = [](const std::string& v) {
+        std::string o;
+        for (char c : v) {
+            if (c == '"' || c == '\\') o.push_back('\\');
+            o.push_back(c);
+        }
+        return o;
+    };
+    std::string j = "{";
+    for (size_t i = 0; i < hs.size(); ++i) {
+        if (i) j.push_back(',');
+        j += "\"" + esc(hs[i].first) + "\":\"" + esc(hs[i].second) + "\"";
+    }
+    j.push_back('}');
+    return j;
+}
+
+/// 云接口的安卓传输：交给 MainActivity.httpRequest（系统网络栈）。
+///
+/// 为什么不直接用 C++ 的 httplib：宇树云在腾讯 EdgeOne 后面，Android 静态
+/// OpenSSL 的 TLS 指纹会被判成非官方客户端、回 567 人机验证页；系统网络栈
+/// 与官方 App / 天树探界同源，能过同样的风控。
+static int androidHttpTransport(
+    const std::string& method, const std::string& url,
+    const std::vector<std::pair<std::string, std::string>>& headers,
+    const std::string& body, std::string& outBody) {
+    JNIEnv* env = reinterpret_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    jobject act = reinterpret_cast<jobject>(SDL_AndroidGetActivity());
+    if (!env || !act) return 0;
+
+    jclass cls = env->GetObjectClass(act);
+    if (!cls) return 0;
+    jmethodID mid = env->GetStaticMethodID(
+        cls, "httpRequest",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
+    if (!mid) {  // 方法不存在会挂 pending 异常，必须清掉
+        env->ExceptionClear();
+        env->DeleteLocalRef(cls);
+        return 0;
+    }
+
+    const std::string hj = headersToJson(headers);
+    jstring ju = env->NewStringUTF(url.c_str());
+    jstring jm = env->NewStringUTF(method.c_str());
+    jstring jh = env->NewStringUTF(hj.c_str());
+    jstring jb = env->NewStringUTF(body.c_str());
+    jstring jr = static_cast<jstring>(
+        env->CallStaticObjectMethod(cls, mid, ju, jm, jh, jb));
+
+    int status = 0;
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    } else if (jr) {
+        const char* cs = env->GetStringUTFChars(jr, nullptr);
+        if (cs) {
+            const std::string ret(cs);
+            const size_t nl = ret.find('\n');
+            if (nl != std::string::npos) {
+                status = std::atoi(ret.substr(0, nl).c_str());
+                outBody = ret.substr(nl + 1);
+            }
+            env->ReleaseStringUTFChars(jr, cs);
+        }
+        env->DeleteLocalRef(jr);
+    }
+    env->DeleteLocalRef(ju);
+    env->DeleteLocalRef(jm);
+    env->DeleteLocalRef(jh);
+    env->DeleteLocalRef(jb);
+    env->DeleteLocalRef(cls);
+    return status;
+}
+#endif  // __ANDROID__
 
 // ---------------------------------------------------------------- 网页界面（Vue3）资源
 /// 前端文件在 APK 的 assets/web 里，而 httplib 的静态目录只认**磁盘路径**
@@ -512,9 +631,9 @@ void managerWireUp(go2::RobotManager& mgr, go2::UiState& ui) {
         };
     };
 
-    // 每设备 AES 钥匙（data2=3 新固件）：与桌面同一套本地安全存储加载逻辑
-    // 规矩：只读本应用专属目录里的钥匙文件，**不碰官方宇树 App 的任何东西**
-    // （不读它的日志/私有数据，连路径都不再探测），也不扫描平板存储。
+    // 每设备 AES 钥匙（data2=3 新固件）：与桌面同一套本地安全存储加载逻辑。
+    // 本地库仍然只读本应用专属目录；官方 App 的钥匙由 startOfficialKeyImport
+    // 以**只读**方式扫描（未 root 的平板受 Android 沙箱限制读不到，会在设置页说明）。
     const auto lk = go2::loadLocalAesKeys();
     ui.setKeySnTable(lk.snByKey);  // key→SN 反查表：握手成功后据此定机型
     ui.localKeyCount = static_cast<int>(lk.keys.size());
@@ -529,6 +648,13 @@ void managerWireUp(go2::RobotManager& mgr, go2::UiState& ui) {
         ui.addLog("[钥匙] 已加载 " + std::to_string(lk.keys.size()) + " 把（来源: " +
                   lk.source + "）");
     }
+
+    // 官方 App 保存的钥匙：后台只读扫描（root 平板能直读私有目录；
+    // 未 root 时由 Android 沙箱拦住，设置页会给出替代路径）。
+    // ★ 顺序不能反：自动导入会立刻起线程，云登录必须在**注入传输之后**才走系统网络栈
+    //   （反过来会先走 C++ 的 httplib → EdgeOne 回 567）。
+    go2::setCloudHttpTransport(androidHttpTransport);
+    go2::startAutoKeyImport(mgr, ui, ui.autoImportOfficialKeys.load());
 }
 
 }  // namespace
@@ -601,7 +727,10 @@ int main(int argc, char** argv) {
     }
 
     go2::applyTheme();  // 建立样式基线（applyUiScale 每次都从基线重算，不会累乘）
-    if (!appDir.empty()) extractIconFont();  // 图标字体落盘 + GO2_ICON_FONT
+    if (!appDir.empty()) {
+        extractIconFont();   // 图标字体落盘 + GO2_ICON_FONT
+        extractCaBundle();   // CA bundle 落盘 + GO2_CA_BUNDLE（云接口 HTTPS 用）
+    }
     loadFontsFromAssets();                   // 内部会把图标字体并进中文字体
     // 字号与控件间距不再在启动时定死：drawUi 每帧按断点调
     // setUiFontSizes() + applyUiScale()（见 ui/layout.cpp / ui/theme.cpp）

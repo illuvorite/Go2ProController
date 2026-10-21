@@ -83,6 +83,18 @@ bool differsInMcf(const SportAction& a);
 /// 该 api_id 对应的动作中文名（未知返回空串）。用于把回执翻译成「哪个动作 + 结果」
 std::string labelForApiId(int apiId);
 
+/// 该 key 对应的动作是否为**高危动作**（跳跃 / 翻滚那一类）。
+///
+/// 舞蹈编排里**不允许**出现高危动作：编排是"按顺序连着播"的，
+/// 一套编排里塞一个空翻，狗就会连着翻 —— 场地不够就摔。
+/// 所以设了两道关：
+///   ① 动作面板不给选（ui_tianshu.cpp 的 danceChoices / web 的 dance.js）
+///   ② 播放时再拦一道（command_service.cpp 的 playDance）
+///      —— 防的是"这条规则加上之前就已经存好的编排"（robot_dances.json 是用户文件，
+///         不会因为改了规则就被清空）。
+/// 未知 key 一律按"不高危"处理（宁可多显示，也别把正常动作误伤）。
+bool isRiskyAction(const std::string& key);
+
 /// 同一动作在「另一套指令集」里的 api_id（没有则返回空表）。
 /// 用途：某条指令被机器人拒绝时，自动改用另一套 id 重试
 /// （normal 与 MCF 固件的运动服务只认自己那套 api_id，是"很多动作用不了"的主因）

@@ -167,14 +167,64 @@ int main() {
         const SportAction* none = find("Hello");
         CHECK(none != nullptr);
         if (none) CHECK(go2::buildSportParam(*none, 0, 0.0f, 0, 0, 0, "").is_null());
-        const SportAction* json = find("TrajectoryFollow");  // Json 参数（Trigger 已随那组删除）
-        CHECK(json != nullptr);
-        if (json) {
-            CHECK(go2::buildSportParam(*json, 0, 0.0f, 0, 0, 0, "{\"a\":1}").dump() ==
-                  std::string("{\"a\":1}"));
-            // 坏 JSON 不能抛异常（界面每帧都在调它）
-            CHECK(go2::buildSportParam(*json, 0, 0.0f, 0, 0, 0, "{坏").is_null());
+        // ★ Json 参数：2026-10-20「轨迹跟随 1018」删除后，**表里已没有条目用它**
+        //   （Trigger 早于 2026-10-11 随那组删除）→ 用**本地构造的合成条目**保住覆盖，
+        //   跟上面 Int / Real / Euler 同一个手法（免得这个分支悄悄烂掉）。
+        const SportAction jsonAct{nullptr, nullptr, 0, 0, SportParam::Json, go2::SportGroup::Basic,
+                                  false};
+        CHECK(go2::buildSportParam(jsonAct, 0, 0.0f, 0, 0, 0, "{\"a\":1}").dump() ==
+              std::string("{\"a\":1}"));
+        // 坏 JSON 不能抛异常（界面每帧都在调它）
+        CHECK(go2::buildSportParam(jsonAct, 0, 0.0f, 0, 0, 0, "{坏").is_null());
+    }
+
+    // ---------------------------------------------------------- 高危动作判定
+    {
+        // 舞蹈编排靠它挡掉空翻/跳跃/翻滚（面板不给选 + 播放时再拦一道）
+        CHECK(go2::isRiskyAction("FrontFlip"));
+        CHECK(go2::isRiskyAction("BackFlip"));
+        CHECK(go2::isRiskyAction("FrontJump"));
+        CHECK(go2::isRiskyAction("Handstand"));
+        CHECK(!go2::isRiskyAction("Hello"));
+        CHECK(!go2::isRiskyAction("Dance1"));
+        CHECK(!go2::isRiskyAction("StandUp"));
+        CHECK(!go2::isRiskyAction("wait"));  // 编排里的伪动作
+        CHECK(!go2::isRiskyAction(""));      // 空 key
+        CHECK(!go2::isRiskyAction("压根没这个动作"));
+        // ★ 「跳跃特技」组必须**整组**标成 risky ——
+        //   编排动作面板是按 risky 过滤的，组里漏标一个，
+        //   空翻类动作就会重新出现在编排面板里（用户就能把它编进一套里连着甩）。
+        for (const auto& a : sportActions())
+            if (a.group == go2::SportGroup::Stunt)
+                CHECK_MSG(a.risky, std::string("跳跃特技必须标成高危: ") + a.key);
+    }
+
+    // ---------------------------------------------------------- 「其他/进阶」组精简
+    {
+        // ★ 2026-10-20：这组精简到**只剩「避障」两条**。
+        //   删掉的 5 条：轨迹跟随 1018 / 横向行走 1051（**normal 专属**，MCF 固件实测 3203），
+        //   以及 经典步态 2049 / 后仰站立 2050 / 设自动恢复 2054。
+        //   这条断言是**防回潮**：谁把它们加回表里，界面上就会多出按不动的按钮。
+        for (const char* key : {"TrajectoryFollow", "CrossWalk", "ClassicWalk",
+                                "BackStand", "SetAutoRecovery"}) {
+            CHECK_MSG(find(key) == nullptr,
+                      std::string("已从动作表删除，不该再有条目: ") + key);
         }
+        int advanced = 0;
+        for (const auto& a : sportActions())
+            if (a.group == go2::SportGroup::Advanced) ++advanced;
+        CHECK_MSG(advanced == 2, "「其他 / 进阶」组现在只剩「避障」两条");
+        CHECK(find("FreeAvoid") != nullptr);
+        CHECK(find("SwitchAvoidMode") != nullptr);
+    }
+    {
+        // 删掉的 id 仍可能出现在回执里（老客户端 / 网页端缓存的编排还在发），
+        // → 回执日志必须还能翻出名字，否则只能打出一串裸 id。
+        CHECK(go2::labelForApiId(1018) == std::string("轨迹跟随"));
+        CHECK(go2::labelForApiId(1051) == std::string("横向行走"));
+        CHECK(go2::labelForApiId(2049) == std::string("经典步态"));
+        CHECK(go2::labelForApiId(2050) == std::string("后仰站立"));
+        CHECK(go2::labelForApiId(2054) == std::string("设自动恢复"));
     }
 
     return go2test::summary("sport_library_test");

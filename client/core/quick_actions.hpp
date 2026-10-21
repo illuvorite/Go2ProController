@@ -45,6 +45,8 @@ enum class QuickKind {
     EulerPreset,        ///< 先 BalanceStand，再 Euler(x,y,z)
     MoveBurst,          ///< 连发 Move(x,y,z)，结束后 StopMove
     BodyHeight,         ///< BodyHeight(1013)，data 见 data 字段
+                       ///< ⚠ 2026-10-20 表里已无条目（机身高度三档删掉了：1013 是
+                       ///<   normal 专属 id，MCF 固件实测 3203）。分支保留防漏 switch。
     AdjustOrientation,  ///< 方向回正（闭环）
     InPlaceStepping,    ///< 原地踏步
 };

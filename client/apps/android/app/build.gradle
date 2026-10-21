@@ -27,6 +27,18 @@ def syncWebAssets = tasks.register("syncWebAssets", Sync) {
 }
 
 // ---------------------------------------------------------------------------
+// CA bundle：Android 自带的 OpenSSL 读系统 CA hash 目录不可靠（表现为
+// "SSL server verification failed"），随包带一份 curl 的 cacert.pem，
+// 启动时导出并设 GO2_CA_BUNDLE（见 native/main_android.cpp）。
+// ---------------------------------------------------------------------------
+def caBundleSrc = file("${rootDir}/../../assets/cacert.pem")
+def caBundleGenDir = layout.buildDirectory.dir("generated/cabundle").get().asFile
+def syncCaBundle = tasks.register("syncCaBundle", Copy) {
+    from caBundleSrc
+    into caBundleGenDir
+}
+
+// ---------------------------------------------------------------------------
 // 图标字体：同样**构建期同步** client/assets/fonts/Phosphor*.ttf 与 TianshuGo2.ttf。
 //
 // 为什么也要同步：Phosphor 的 Regular 与 Bold **码点完全一致**，桌面端靠换一份
@@ -94,13 +106,15 @@ android {
     }
     applicationVariants.all { variant ->
         tasks["merge${variant.name.capitalize()}Assets"]
-            .dependsOn("externalNativeBuild${variant.name.capitalize()}", syncWebAssets, syncIconFonts)
+            .dependsOn("externalNativeBuild${variant.name.capitalize()}", syncWebAssets, syncIconFonts,
+                       syncCaBundle)
     }
     // 网页资源以"同步出来的目录"为源（内容来自 client/assets/web，见文件上方说明）
     // 图标字体同理来自 client/assets/fonts（见 syncIconFonts 的说明）
     sourceSets.main {
         assets.srcDirs += webAssetsGenDir
         assets.srcDirs += iconFontsGenDir
+        assets.srcDirs += caBundleGenDir
     }
     if (!project.hasProperty('EXCLUDE_NATIVE_LIBS')) {
         sourceSets.main {

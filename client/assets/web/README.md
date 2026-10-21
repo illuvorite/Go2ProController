@@ -68,7 +68,7 @@ assets/web/
 | `poseMode` | 「摆姿势」是否开启。**开时摇杆语义变成"调姿态"**（服务端下发 `Euler` 而非 `Move`），前端据此改摇杆标签与提示 |
 | `keyScan` | `{running, note, candidates[]}` —— 「从机器狗找钥匙」的结果 |
 | `motionMode` / `scriptRunning` / `scriptName` | 运动模式（`normal`/`ai`/`mcf`，空 = 未知）/ 是否有脚本在跑 / 脚本名（快捷动作或编排名） |
-| `quickActions[]` | `{key, label, group, hint, script}` —— **快捷动作**（复合指令：姿态预设 / 平移 / 机身高度 / 方向回正 / 原地踏步）。★ `group` 与 `actions[].group` 是**同一套编号**：前端把它们混排进同一个网格、同一个分组，不另起一条。`script=true` 表示它要发一串指令 |
+| `quickActions[]` | `{key, label, group, hint, script}` —— **快捷动作**（复合指令：姿态预设 / 平移 / 方向回正 / 原地踏步）。★ `group` 与 `actions[].group` 是**同一套编号**：前端把它们混排进同一个网格、同一个分组，不另起一条。`script=true` 表示它要发一串指令 |
 | `dances[]` | `{id, name, desc, steps:[{key, delay}], count}` —— **舞蹈编排**（存本机 `robot_dances.json`） |
 
 ### `POST /api/command`（body 为 JSON，返回 `{ok[, error]}`）

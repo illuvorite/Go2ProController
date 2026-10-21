@@ -427,6 +427,7 @@ void reloadKeysAndRetry(RobotManager& mgr, UiState& ui, const std::string& path)
             if (std::find(keys.begin(), keys.end(), k) == keys.end()) keys.push_back(k);
     }
     mgr.addAesKeys(keys);  // 与云账号钥匙合并
+    ui.localKeyCount = static_cast<int>(keys.size());  // 设置页/网页的"已加载 N 把"
     ui.addLog("[钥匙] 本地钥匙库已装载 " + std::to_string(keys.size()) + " 把（累计 " +
               std::to_string(mgr.aesKeys().size()) + " 把）");
     mgr.reconnectFailed();

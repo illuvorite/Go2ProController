@@ -572,12 +572,15 @@ int runQuickAction(const std::shared_ptr<CommandSink>& sink, UiState& ui, const 
         case QuickKind::StopMove:
             // 表里没有这条了（「恢复移动」= 动作库的「停止移动」，已删）；保留分支防漏 switch
             return stopSelected(*sink);
-        case QuickKind::BodyHeight: {
-            const int id = kApiBodyHeight;  // 已不在表里 → 常量
-            nlohmann::json p = nlohmann::json::object();
-            p["data"] = q->data;
-            return sendToSelected(*sink, id, p);
-        }
+        case QuickKind::BodyHeight:
+            // 表里已无条目（「机身最低/正常/最高」2026-10-20 删除：1013 是 normal 专属
+            // id，MCF 固件实测 3203）；保留分支防漏 switch。
+            {
+                const int id = kApiBodyHeight;  // 已不在表里 → 常量
+                nlohmann::json p = nlohmann::json::object();
+                p["data"] = q->data;
+                return sendToSelected(*sink, id, p);
+            }
         case QuickKind::EulerPreset:
             return startEulerPreset(sink, ui, *q) ? 1 : 0;
         case QuickKind::MoveBurst:
@@ -620,6 +623,15 @@ bool playDance(const std::shared_ptr<CommandSink>& sink, UiState& ui, int danceI
             if (!g.alive()) break;
             ++i;
             if (step.key == "wait") {
+                if (!g.sleep(step.delayMs)) break;
+                continue;
+            }
+            // ★ 高危动作不进编排 —— 动作面板已经不给选了，这里再拦一道：
+            //   防的是"这条规则加上之前就已经存好的编排"（robot_dances.json 是
+            //   用户文件，不会因为改了规则就被清空）。编排是连着播的，
+            //   一个空翻连着甩出去，场地不够就摔。
+            if (go2::isRiskyAction(step.key)) {
+                ui.addLog("[舞蹈] 第 " + std::to_string(i) + " 步已跳过高危动作：" + step.key);
                 if (!g.sleep(step.delayMs)) break;
                 continue;
             }

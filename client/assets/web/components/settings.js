@@ -1,5 +1,5 @@
-// 设置弹窗：指令集 / 隐私模式 / 钥匙库（数量只读）/ 从机器狗找钥匙（不连电脑）
-import { ref } from 'vue'
+// 设置弹窗：指令集 / 隐私模式 / 钥匙库（数量只读）/ 从官方 App 导入 / 从机器狗找钥匙
+import { ref, watch } from 'vue'
 import { store, cmd, post, param, setParam } from '../store.js'
 import { ICON } from '../icons.js'
 
@@ -16,14 +16,41 @@ export default {
     }
     function probe() { post({ cmd: 'keyprobe', ip: probeIp.value.trim() }) }
     function apply(k) {
+      // 手动/探测候选可以绑定到探测用的 IP；官方导入的不知道对应哪台 → 不绑
       cmd({ cmd: 'keyapply', key: k, ip: probeIp.value.trim() })
       if (k === manualKey.value) manualKey.value = ''
     }
+    function adopt(k) { cmd({ cmd: 'keyapply', key: k }) }
     function applyManual() { if (manualKey.value.trim()) apply(manualKey.value.trim()) }
+    function importKeys() { post({ cmd: 'keyimport' }) }
 
     const scan = () => store.st.keyScan || {}
+    const official = () => store.st.officialKeys || {}
+    const officialHits = () => official().hits || []
+    const cloud = () => store.st.cloud || {}
+
+    // 云账号：密码只在本次请求里发给本机后端（后端也不落盘）
+    const cloudAcc = ref('')
+    const cloudPwd = ref('')
+    const cnRegion = ref(true)
+    function cloudLogin() {
+      // 账号密码留空 = 用后端保存的那份（登录成功后自动保存）
+      post({ cmd: 'cloudimport', account: cloudAcc.value.trim(), password: cloudPwd.value,
+             regionCn: cnRegion.value })
+      cloudPwd.value = ''
+    }
+    function cloudClear() { post({ cmd: 'cloudclear' }) }
+
+    // 自动填入：后端扫描到钥匙后给一次 autoFill，只填一次（用户清空后不反复填）
+    let autoFilled = false
+    watch(() => official().autoFill, (v) => {
+      if (!autoFilled && v) { manualKey.value = v; autoFilled = true }
+    }, { immediate: true })
+
     return {
       ICON, store, param, toggle, probe, apply, applyManual, probeIp, manualKey, scan,
+      adopt, importKeys, official, officialHits,
+      cloud, cloudAcc, cloudPwd, cnRegion, cloudLogin, cloudClear,
       running: () => scan().running === true,
       note: () => scan().note || '',
       candidates: () => scan().candidates || [],
@@ -59,12 +86,66 @@ export default {
           </span>
         </div>
 
+        <!-- 云账号：一次登录拉全部钥匙（官方 App 的 key 本来就来自云端） -->
+        <div class="opt static">
+          <span class="opt-main">
+            <span class="nm"><span class="ic">{{ ICON.key }}</span>云账号拉钥匙</span>
+            <span class="ip">登录宇树账号，一次拿账号下所有设备的 AES key。登录成功后记住账号，
+              以后启动自动拉取，不用再填</span>
+          </span>
+        </div>
+        <div v-if="cloud().saved" class="keyscan-row">
+          <span class="mono" style="flex:1">已保存账号 {{ cloud().savedAccount }} · 启动自动登录</span>
+          <button class="ghost sm" @click="cloudClear()">清除</button>
+        </div>
+        <div class="keyscan-row">
+          <input v-model="cloudAcc" :placeholder="cloud().saved ? '换账号（可留空）' : '手机号 / 邮箱'"
+                 autocomplete="username" />
+        </div>
+        <div class="keyscan-row">
+          <input v-model="cloudPwd" type="password"
+                 :placeholder="cloud().saved ? '密码（留空 = 用已保存的）' : '密码'"
+                 autocomplete="current-password" @keyup.enter="cloudLogin()" />
+          <button class="sm" :disabled="cloud().busy || (!cloudAcc.trim() && !cloud().saved) || (!cloudPwd && !cloud().saved)"
+                  @click="cloudLogin()">
+            <span class="ic" :class="{spin: cloud().busy}">{{ ICON.refresh }}</span>
+            {{ cloud().busy ? '登录中…' : (cloud().saved ? '重新拉取' : '登录并拉取') }}
+          </button>
+        </div>
+        <label class="opt" @click="cnRegion = !cnRegion">
+          <span class="opt-main">
+            <span class="nm">国内账号</span>
+            <span class="ip">国内注册的账号走 robot-api；海外账号关掉（手机号账号一般开着）</span>
+          </span>
+          <span class="switch" :class="{on: cnRegion}"><i></i></span>
+        </label>
+        <div v-if="cloud().note" class="keyscan-note">{{ cloud().note }}</div>
+
+        <!-- 从官方 App 导入：官方 App 连过新狗后，钥匙就在本机 -->
+        <div class="opt static">
+          <span class="opt-main">
+            <span class="nm"><span class="ic">{{ ICON.key }}</span>从官方 App 导入</span>
+            <span class="ip">官方 App 连过新狗后，钥匙就保存在本机。找到后自动填入下面的输入框并保存</span>
+          </span>
+        </div>
+        <div class="keyscan-row">
+          <input :value="official().note || '尚未扫描'" disabled />
+          <button class="sm" :disabled="official().scanning" @click="importKeys()">
+            <span class="ic" :class="{spin: official().scanning}">{{ ICON.refresh }}</span>
+            {{ official().scanning ? '扫描中…' : '立即扫描' }}
+          </button>
+        </div>
+        <div v-for="h in officialHits()" :key="h.key" class="keyscan-cand">
+          <span class="mono">{{ h.masked }}<template v-if="h.sn"> · {{ h.sn }}</template></span>
+          <button class="ghost sm" @click="adopt(h.key)">采用</button>
+        </div>
+
         <!-- 从机器狗内网找钥匙（不连电脑）：扫端口 + Web 服务抓 32 位 hex -->
         <div class="opt static">
           <span class="opt-main">
             <span class="nm"><span class="ic">{{ ICON.search }}</span>从机器狗找钥匙</span>
-            <span class="ip">狗的固件 ≥1.1.15 时，钥匙明文就在狗的内网服务里 —— 扫端口抓出来。
-              注意：SSH / ADB / NFS 这几条路仍需要电脑（App 里没有那些工具）。</span>
+            <span class="ip">扫狗的 Web 端口找候选。多数固件只暴露加密握手、不含明文 key，
+              所以不一定扫得到。SSH / ADB / NFS 这几条路仍需要电脑（App 里没有那些工具）。</span>
           </span>
         </div>
         <div class="keyscan-row">

@@ -4,13 +4,42 @@
 
 #include <httplib.h>
 
+#include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <random>
 #include <stdexcept>
 
+#if defined(CPPHTTPLIB_OPENSSL_SUPPORT)
+#include <openssl/err.h>
+#endif
+
 namespace go2 {
 namespace {
+
+/// 安卓上必须显式指定系统 CA 目录。
+///
+/// 原因：Android 的 OpenSSL 没有编译期默认 CA 路径（OPENSSLDIR 指向不存在的位置），
+/// 不设置就会报 `SSL server verification failed`。系统证书目录里是
+/// `<subject_hash>.0` 格式，OpenSSL 的 load_ca_dir 直接认。
+/// （Android 14+ 把 CA 挪到了 APEX，先试新位置再退回老位置。）
+void applySystemCa(httplib::SSLClient& cli) {
+#if defined(__ANDROID__)
+    // 老位置在所有 Android 版本上都存在，且 SELinux 对所有 App 开放读；
+    // 不做 stat 预判（untrusted_app 下 stat 也可能被拦，反而导致一次都不设）。
+    const char* bundle = std::getenv("GO2_CA_BUNDLE");
+    if (bundle && *bundle) {
+        // 优先用随包分发的 CA bundle（见 client/assets/cacert.pem）：
+        // Android 的 OpenSSL 读系统 hash 目录不可靠，自带一份最稳。
+        cli.set_ca_cert_path(bundle);
+    } else {
+        cli.set_ca_cert_path("", "/system/etc/security/cacerts");  // 第一参数留空 → 走目录
+    }
+#else
+    (void)cli;  // 桌面 OpenSSL 有自己的默认路径，不动
+#endif
+}
 
 // 官方 App 的签名密钥（公开逆向成果，见参考实现 unitree_cloud.py）
 const char* kAppSignSecret = "XyvkwK45hp5PHfA8";
@@ -32,6 +61,28 @@ std::string nowMs() {
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch())
             .count());
+}
+
+/// 平台注入的传输；空 = 用内置 httplib（桌面）
+CloudHttpFn g_httpTransport;
+
+/// application/x-www-form-urlencoded 编码（与 httplib::Params 的行为对齐）
+std::string urlEncode(const std::string& s) {
+    static const char* kHex = "0123456789ABCDEF";
+    std::string o;
+    o.reserve(s.size() * 3);
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            o.push_back(static_cast<char>(c));
+        } else if (c == ' ') {
+            o.push_back('+');
+        } else {
+            o.push_back('%');
+            o.push_back(kHex[c >> 4]);
+            o.push_back(kHex[c & 0x0F]);
+        }
+    }
+    return o;
 }
 
 std::string hostOf(const std::string& region) {
@@ -66,16 +117,56 @@ httplib::Headers makeHeaders(const std::string& token) {
 
 }  // namespace
 
+void setCloudHttpTransport(CloudHttpFn fn) { g_httpTransport = std::move(fn); }
+
 UnitreeCloud::UnitreeCloud(std::string region) : baseUrl_(hostOf(region)) {}
 
 nlohmann::json UnitreeCloud::request(const std::string& method,
                                      const std::string& path,
                                      const nlohmann::json* formBody) {
-    httplib::Client cli("https://" + baseUrl_);
+    // ★ 必须直接用 SSLClient，不能用 httplib::Client("https://...")：
+    //   ClientImpl::set_ca_cert_path 与 SSLClient::set_ca_cert_path 是**同名非虚**
+    //   的两个成员，通过 Client 调用只会写基类成员，SSLClient::load_certs()
+    //   读的却是自己那份 → CA 目录永远设不上（安卓上表现为
+    //   "SSL server verification failed"）。
+    const httplib::Headers headers = makeHeaders(accessToken_);
+
+    // ---- 平台传输优先（安卓：系统网络栈，绕开 EdgeOne 对静态 OpenSSL 的 567）----
+    if (g_httpTransport) {
+        std::vector<std::pair<std::string, std::string>> hv;
+        hv.reserve(headers.size());
+        for (const auto& kv : headers) hv.emplace_back(kv.first, kv.second);
+
+        std::string body;
+        if (method != "GET" && formBody) {
+            bool first = true;
+            for (auto it = formBody->begin(); it != formBody->end(); ++it) {
+                if (!first) body.push_back('&');
+                first = false;
+                body += urlEncode(it.key()) + "=" +
+                        urlEncode(it.value().get<std::string>());
+            }
+        }
+
+        std::string respBody;
+        const int status =
+            g_httpTransport(method, "https://" + baseUrl_ + path, hv, body, respBody);
+        if (status == 0)
+            throw std::runtime_error("云 API 请求失败(" + path + "): " + respBody);
+        if (status != 200)
+            throw std::runtime_error("云 API HTTP " + std::to_string(status) + " (" +
+                                     path + ")");
+        try {
+            return nlohmann::json::parse(respBody);
+        } catch (...) {
+            throw std::runtime_error("云 API 响应不是 JSON (" + path + ")");
+        }
+    }
+
+    httplib::SSLClient cli(baseUrl_);
+    applySystemCa(cli);
     cli.set_connection_timeout(8, 0);
     cli.set_read_timeout(15, 0);
-
-    const httplib::Headers headers = makeHeaders(accessToken_);
 
     httplib::Result res = [&] {
         if (method == "GET") return cli.Get(path, headers);
@@ -86,9 +177,19 @@ nlohmann::json UnitreeCloud::request(const std::string& method,
         return cli.Post(path, headers, params);
     }();
 
-    if (!res)
+    if (!res) {
+        std::string detail;
+#if defined(CPPHTTPLIB_OPENSSL_SUPPORT)
+        const unsigned long e = ERR_peek_last_error();
+        if (e) {
+            char buf[256] = {0};
+            ERR_error_string_n(e, buf, sizeof(buf));
+            detail = std::string(" [") + buf + "]";
+        }
+#endif
         throw std::runtime_error("云 API 请求失败(" + path + "): " +
-                                 httplib::to_string(res.error()));
+                                 httplib::to_string(res.error()) + detail);
+    }
     if (res->status != 200)
         throw std::runtime_error("云 API HTTP " + std::to_string(res->status) + " (" +
                                  path + ")");
@@ -139,7 +240,13 @@ std::vector<CloudDevice> UnitreeCloud::listDevices() {
 }
 
 void UnitreeCloud::ping() const {
-    httplib::Client cli("https://" + baseUrl_);
+    // ★ 必须直接用 SSLClient，不能用 httplib::Client("https://...")：
+    //   ClientImpl::set_ca_cert_path 与 SSLClient::set_ca_cert_path 是**同名非虚**
+    //   的两个成员，通过 Client 调用只会写基类成员，SSLClient::load_certs()
+    //   读的却是自己那份 → CA 目录永远设不上（安卓上表现为
+    //   "SSL server verification failed"）。
+    httplib::SSLClient cli(baseUrl_);
+    applySystemCa(cli);
     cli.set_connection_timeout(8, 0);
     cli.set_read_timeout(15, 0);
     auto res = cli.Get("/system/pubKey");

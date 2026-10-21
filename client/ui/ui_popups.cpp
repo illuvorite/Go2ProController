@@ -1,5 +1,6 @@
 #include "ui_internal.hpp"
 
+#include "cloud_store.hpp"   // 已保存的云账号（启动自动登录）
 #include "command_service.hpp"
 #include "icons.hpp"
 #include "layout.hpp"
@@ -327,10 +328,142 @@ if (ImGui::Button("存入")) {
                         ui.localKeyCount.load());  // atomic：可变参数必须显式取值
 }
 
+// ---- 云账号（一次登录拉全部钥匙；无 root 平板上真正"自动"的那条路）----
+ImGui::Spacing();
+ImGui::Separator();
+sectionTitle("云账号（拉取每设备钥匙）");
+{
+    // 已保存的账号：只显示脱敏后的账号，**密码不回显、也不预填输入框**
+    bool saved = ui.cloudSaved.load();
+    std::string acc;
+    {
+        std::lock_guard<std::mutex> lock(ui.cloudMutex);
+        acc = ui.cloudSavedAccount;
+    }
+    if (saved && !acc.empty()) {
+        const std::string masked = acc.size() > 7
+                                       ? acc.substr(0, 3) + "****" + acc.substr(acc.size() - 4)
+                                       : acc;
+        ImGui::TextColored(col::kOk, "已保存账号 %s —— 启动时自动登录", masked.c_str());
+        ImGui::SameLine(0, 12);
+        if (ImGui::SmallButton("清除")) {
+            clearCloudCredential();
+            ui.cloudSaved = false;
+            {
+                std::lock_guard<std::mutex> lock(ui.cloudMutex);
+                ui.cloudSavedAccount.clear();
+                ui.cloudNote = "已清除保存的账号（下次启动不再自动登录）";
+            }
+        }
+    } else {
+        FontScope fs = fontSmall();
+        ImGui::TextDisabled("填一次即可：登录成功后自动保存，以后启动自动登录；密码不会回显");
+    }
+}
+ImGui::SetNextItemWidth(std::min(280.0f, L.popupW - 150.0f));
+ImGui::InputTextWithHint("##cloudacc", "手机号 / 邮箱（已保存可留空）", ui.cloudAccount,
+                         sizeof(ui.cloudAccount));
+ImGui::SetNextItemWidth(std::min(280.0f, L.popupW - 150.0f));
+ImGui::InputTextWithHint("##cloudpwd", "密码（只存内存，不落盘）", ui.cloudPassword,
+                         sizeof(ui.cloudPassword), ImGuiInputTextFlags_Password);
+{
+    bool cn = ui.cloudRegionCn.load();
+    if (ImGui::Checkbox("国内账号", &cn)) ui.cloudRegionCn = cn;
+    ImGui::SameLine();
+    if (ui.cloudBusy.load()) {
+        ImGui::TextColored(col::kWarn, "登录中…");
+    } else if (ImGui::Button("登录并拉取")) {
+        std::string acc = ui.cloudAccount;
+        std::string pwd = ui.cloudPassword;
+        bool cnRegion = ui.cloudRegionCn.load();
+        if (acc.empty() || pwd.empty()) {
+            // 输入框留空 = 用已保存的账号重新拉一次
+            CloudCredential c;
+            if (loadCloudCredential(c)) {
+                acc = c.account;
+                pwd = c.password;
+                cnRegion = c.regionCn;
+            }
+        }
+        if (acc.empty() || pwd.empty()) {
+            ui.addLog("[云] 账号或密码为空");
+        } else {
+            // 账号密码按值拷进线程；界面这里不持有引用
+            startCloudKeyImport(mgr, ui, acc, pwd, cnRegion);
+        }
+    }
+}
+{
+    std::lock_guard<std::mutex> lock(ui.cloudMutex);
+    if (!ui.cloudNote.empty()) {
+        FontScope fs = fontSmall();
+        ImGui::TextWrapped("%s", ui.cloudNote.c_str());
+    }
+}
+
+// ---- 从官方 App 导入（平板：读官方 App 已保存的钥匙，自动填入 + 自动落盘）----
+ImGui::Spacing();
+ImGui::Separator();
+sectionTitle("从官方 App 导入");
+{
+    FontScope fs = fontSmall();
+    ImGui::TextDisabled("官方 App 连过新狗后，每设备钥匙就存在本机。找到后自动填入并保存");
+}
+{
+    bool autoImp = ui.autoImportOfficialKeys.load();
+    if (ImGui::Checkbox("启动时自动导入", &autoImp)) ui.autoImportOfficialKeys = autoImp;
+    ImGui::SameLine();
+    if (ui.officialKeyScanning.load()) {
+        ImGui::TextColored(col::kWarn, "扫描中…");
+    } else if (ImGui::Button("立即扫描")) {
+        startOfficialKeyImport(mgr, ui, autoImp);
+    }
+}
+{
+    // 后台线程只写 officialKeyAutoFill；输入框必须由界面线程写 → 在这里"消费"。
+    // 已经有内容时不覆盖（用户正在手输 / 已经填过）；pending 只消费一次，
+    // 否则用户手动清空后会被每帧重新填回去。
+    if (ui.officialKeyFillPending.load()) {
+        std::lock_guard<std::mutex> lock(ui.officialKeyMutex);
+        if (ui.manualKey[0] == '\0' && !ui.officialKeyAutoFill.empty()) {
+            std::snprintf(ui.manualKey, sizeof(ui.manualKey), "%s",
+                          ui.officialKeyAutoFill.c_str());
+        }
+        ui.officialKeyFillPending = false;
+    }
+}
+{
+    // 先拷出来再渲染：不在持锁期间调 applyKeyCandidate / reloadKeysAndRetry
+    std::string note;
+    std::vector<OfficialKeyHit> hits;
+    {
+        std::lock_guard<std::mutex> lock(ui.officialKeyMutex);
+        note = ui.officialKeyNote;
+        hits = ui.officialKeyHits;
+    }
+    if (!note.empty()) {
+        FontScope fs = fontSmall();
+        ImGui::TextWrapped("%s", note.c_str());
+    }
+    for (const auto& h : hits) {
+        ImGui::PushID(h.key.c_str());
+        ImGui::TextDisabled("%s  (%s%s%s，置信度 %d)", maskKey(h.key).c_str(),
+                            h.format.c_str(), h.sn.empty() ? "" : "，SN ",
+                            h.sn.c_str(), h.score);
+        ImGui::SameLine(0, 10);
+        if (ImGui::SmallButton("采用")) {
+            applyKeyCandidate(mgr, ui, h.key, "");
+            reloadKeysAndRetry(mgr, ui);
+        }
+        if (ImGui::IsItemHovered()) helpTip(h.source.c_str());
+        ImGui::PopID();
+    }
+}
+
 // ---- 从机器狗找钥匙（与网页端对齐）：不连电脑，扫狗的内网服务抓 32 位 hex ----
 {
     FontScope fs = fontSmall();
-    ImGui::TextDisabled("狗本地持有明文钥匙 —— 扫它的内网端口，从 Web 服务里抓取候选");
+    ImGui::TextDisabled("扫狗的 Web 端口找候选。多数固件只暴露加密握手，不保证能扫到");
 }
 if (ui.keyScanning) {
     ImGui::TextColored(col::kWarn, "探测中…（几秒钟）");

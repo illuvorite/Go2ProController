@@ -407,11 +407,6 @@ ACTION_ICON = [
     ("FreeJump",         "ts_squatUp",     "自由跳跃：蹲身起跳"),
     # ---- 状态查询：整组已于 2026-10-11 从动作表删除（只发不读）----
     # ---- 其他 / 进阶（混合）----
-    ("TrajectoryFollow", "ts_path",        "轨迹跟随：路径"),
-    ("CrossWalk",        "ts_climbStairs", "横向行走：阶梯式横移"),
-    ("ClassicWalk",      "ts_walk",        "经典步态：行走"),
-    ("BackStand",        "ts_preparation", "后仰站立：准备姿势"),
-    ("SetAutoRecovery",  "ts_wrench",      "设自动恢复：扳手"),
     ("FreeAvoid",        "ts_shield",      "自由避障：盾牌"),
     ("SwitchAvoidMode",  "ts_warning",     "避障模式：注意"),
     # ---- 快捷动作（core/quick_actions.cpp 的复合按钮）----
@@ -426,9 +421,6 @@ ACTION_ICON = [
     ("TiltUp",           "ArrowUp",                  "抬头：向上"),
     ("ShiftLeft",        "ArrowLeft",                "左移：向左平移"),
     ("ShiftRight",       "ArrowRight",               "右移：向右平移"),
-    ("BodyLowest",       "ArrowsIn",                 "机身最低：向内收"),
-    ("BodyNormal",       "Ruler",                    "机身正常：标准高度"),
-    ("BodyHighest",      "ArrowsOutLineV",           "机身最高：向外撑"),
     ("AdjustYaw",        "Compass",                  "方向回正：罗盘（对准朝向）"),
     ("StepInPlace",      "ts_step",                  "原地踏步：踏步剪影"),
     ("ResumeMove",       "Walk",                      "恢复移动：继续行走"),

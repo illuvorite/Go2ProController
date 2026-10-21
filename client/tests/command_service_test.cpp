@@ -153,15 +153,18 @@ int main() {
         }
 
         // 参数必须取界面里的值 —— 改造前网页端固定传 0，等于"参数调了没用"。
-        // ★ 2026-10-11 起动作表里只剩 Json 参数的动作（自定义 JSON），
-        //   Int/Real 两类随「步态/速度/身高」整组删除（表里已没有条目能用它们）。
+        // ★ 2026-10-20「轨迹跟随 1018」删除后，**表里已没有任何 Json 参数的动作**
+        //   （Int/Real 早于 2026-10-11 随「步态/速度/身高」整组删除）。
+        //   Json 分支的覆盖改到 sport_library_test —— 用**本地构造的合成条目**直接测
+        //   buildSportParam（跟 Int/Real/Euler 一样的保覆盖手法）。
         sink.reset();
         {
             std::lock_guard<std::mutex> lock(ui.rawJsonMutex);
             std::snprintf(ui.rawJson, sizeof(ui.rawJson), "{\"flag\":7}");
         }
-        CHECK(cmd::dispatchAction(sink, ui, "TrajectoryFollow") == 1);
-        CHECK(lastParam(sink)["flag"].get<int>() == 7);
+        CHECK_MSG(cmd::dispatchAction(sink, ui, "TrajectoryFollow") == -1,
+                  "轨迹跟随已从动作表删除（1018 是 normal 专属 id，MCF 固件回 3203）");
+        CHECK_MSG(sink.sentCount() == 0, "动作不在表里就不该下发任何指令");
 
         // 未知 key
         CHECK(cmd::dispatchAction(sink, ui, "NoSuchAction") == -1);
@@ -555,22 +558,31 @@ int main() {
         // 「恢复移动」已删除：它就是动作库里的「停止移动」，不该有第二个入口
         CHECK(cmd::runQuickAction(borrow(sink), ui, "ResumeMove") == -1);
 
-        // 「机身最低」= BodyHeight(1013) 带 data=-0.18（对齐参考实现的取值）
-        CHECK(cmd::runQuickAction(borrow(sink), ui, "BodyLowest") == 2);
-        CHECK(sink.countApi(1013) == 2);
-        CHECK(near(lastParam(sink)["data"].get<double>(), -0.18));
+        // ★ 2026-10-20「机身最低/正常/最高」也删了 —— 它们发 BodyHeight(1013)，
+        //   而 1013 是 **normal 专属 id**，固件 ≥1.1.7 的 MCF 模式实测回 3203。
+        //   表里没有 → 跟未知 key 一样是 -1（界面据此提示"没有这条快捷动作"）。
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "BodyLowest") == -1);
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "BodyNormal") == -1);
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "BodyHighest") == -1);
+
+        // 「左移」= MoveBurst 脚本：连发 1 秒 Move 后自动停车（后台线程跑）
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "ShiftLeft") == 1);
+        for (int i = 0; i < 400 && ui.scriptRunning.load(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        CHECK_MSG(!ui.scriptRunning.load(), "平移脚本应已结束");
+        CHECK_MSG(sink.countApi(1008) > 0, "左移应连发 Move(1008)");
 
         // 没有受控设备 → 0，且什么都不发
         sink.reset();
         sink.selected.clear();
-        CHECK(cmd::runQuickAction(borrow(sink), ui, "BodyHighest") == 0);
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "ShiftLeft") == 0);
         CHECK(sink.sentCount() == 0);
 
         // 急停锁定：一律不下发
         ui.estop = true;
         sink.selected = {"10.0.0.1", "10.0.0.2"};
         sink.reset();
-        CHECK(cmd::runQuickAction(borrow(sink), ui, "BodyLowest") == 0);
+        CHECK(cmd::runQuickAction(borrow(sink), ui, "ShiftLeft") == 0);
         CHECK(sink.sentCount() == 0);
         ui.estop = false;
     }
@@ -652,6 +664,34 @@ int main() {
         ui.removeDance(id);
         Dance tmp;
         CHECK(!ui.danceById(id, &tmp));
+    }
+
+    // 高危动作不进编排：面板不给选，播放时还要再拦一道
+    // （防的是"规则加上之前就存好的编排" —— robot_dances.json 是用户文件）
+    {
+        UiState ui;
+        FakeSink sink;
+        sink.ready = {"10.0.0.1"};
+        sink.selected = {"10.0.0.1"};
+
+        Dance d;
+        d.name = "含高危动作的编排";
+        d.steps.push_back({"StandUp", 0});
+        d.steps.push_back({"FrontFlip", 0});   // 高危：normal 1030 / MCF 1030
+        d.steps.push_back({"BackFlip", 0});    // 高危：normal 1044 / MCF 2043
+        d.steps.push_back({"Hello", 0});
+        const int id = ui.upsertDance(d);
+
+        CHECK(cmd::playDance(borrow(sink), ui, id));
+        for (int i = 0; i < 200 && ui.scriptRunning.load(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        CHECK_MSG(!ui.scriptRunning.load(), "编排播放应已结束");
+        CHECK_MSG(sink.countApi(1004) == 1, "StandUp(1004) 应下发");
+        CHECK_MSG(sink.countApi(1016) == 1, "Hello(1016) 应下发");
+        CHECK_MSG(sink.countApi(1030) == 0, "高危 FrontFlip(1030) 不应下发");
+        CHECK_MSG(sink.countApi(1044) == 0, "高危 BackFlip(normal 1044) 不应下发");
+        CHECK_MSG(sink.countApi(2043) == 0, "高危 BackFlip(MCF 2043) 不应下发");
+        ui.removeDance(id);
     }
 
     return go2test::summary("command_service_test");

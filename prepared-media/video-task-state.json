@@ -1,0 +1,30 @@
+{
+  "workflow": "park-path-h2-3-first-frame",
+  "state": "unverified_submission_state",
+  "submitted_model": "MiniMax-Hailuo-2.3",
+  "provider_task_id": null,
+  "polling_cron_task_id": null,
+  "polling_cron_name": null,
+  "output_file_path": null,
+  "submitted_at_ms": null,
+  "last_query_at_ms": null,
+  "next_query_due_at_ms": null,
+  "terminal_status": "submit_failed_ambiguous",
+  "request_fingerprint": {
+    "mode": "first_frame",
+    "reference_type": "first_frame",
+    "duration": 6,
+    "resolution": "1080P",
+    "ratio": "omitted_h2_3_ratio_follows_reference_image",
+    "source_image": "prepared-media/park-path-first-frame-video-creater-ready.png",
+    "source_image_dimensions": "1104x621",
+    "args_file": "prepared-media/submit-args.json"
+  },
+  "submit_error": "connector_tool_error: Connector tool execution failed (latency_ms=0), exit code 1, no task_id returned",
+  "transport_diagnostic": {
+    "command": "connector call connector__matrix__query_video_generation with bogus task_id via --args-file",
+    "result": "{\"code\":404,\"message\":\"video task was not found or does not belong to the current caller\"}",
+    "conclusion": "CLI args-file transport and connector channel are healthy; the failure is specific to the submit call"
+  },
+  "retry_policy": "Do not resubmit inside this workflow. Resubmission requires a distinct user-requested generation and may duplicate an unknown first paid task."
+}

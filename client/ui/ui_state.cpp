@@ -23,6 +23,24 @@
 
 namespace go2 {
 
+namespace {
+
+// 设备键 / 名称表键的前缀。详见 ui.hpp「机器狗名称」一节的说明。
+//   `sn:<SN>` —— 跨网络稳定的身份（同一台狗换 WiFi，键不变）
+//   `ip:<IP>` —— 拿不到 SN 时的退路（手动填 IP 添加的设备）
+constexpr const char* kKeySnPrefix = "sn:";
+constexpr const char* kKeyIpPrefix = "ip:";
+
+std::string keyForIp(const std::string& ip) {
+    return ip.empty() ? std::string() : std::string(kKeyIpPrefix) + ip;
+}
+
+std::string keyForSn(const std::string& sn) {
+    return sn.empty() ? std::string() : std::string(kKeySnPrefix) + sn;
+}
+
+}  // namespace
+
 /// 模式名的中文显示（界面与日志共用）
 std::string modeLabel(const std::string& m) {
     if (m == "normal") return "普通模式";
@@ -54,26 +72,80 @@ void UiState::addLog(const std::string& line) {
 
 bool UiState::addOrUpdate(const std::string& ip, bool manual, const std::string& sn) {
     const std::string model = sn.empty() ? std::string() : std::string(modelName(modelFromSn(sn)));
-    std::lock_guard<std::mutex> lock(robotsMutex);
-    for (auto& r : robots) {
-        if (r.ip != ip) continue;
-        // 已存在：补一次机型。典型场景 —— 先手动填 IP 加进来（没有 SN），
-        // 后一轮扫描/多播又拿到了 SN → 这里把机型补上，不用重加一台。
-        if (r.sn.empty() && !sn.empty()) {
-            r.sn = sn;
-            r.model = model;
-            saveDevicesLocked();
+    bool needConnect = false;          // 这台需要连接（新增了一行，或已有行的 IP 变了）
+    std::string migrateFromIp;         // "按这个 IP 记的名字"要迁到 SN 键上
+    std::vector<std::string> merged;   // 被并掉的同 SN 条目（名字也要迁过去）
+    {
+        std::lock_guard<std::mutex> lock(robotsMutex);
+        int sameIp = -1, sameSn = -1;
+        for (size_t i = 0; i < robots.size(); ++i) {
+            if (sameIp < 0 && robots[i].ip == ip) sameIp = static_cast<int>(i);
+            if (sameSn < 0 && !sn.empty() && robots[i].sn == sn) sameSn = static_cast<int>(i);
         }
-        return false;
+        if (sameIp >= 0) {
+            // 已经有这台 IP 的行
+            RobotEntry& r = robots[static_cast<size_t>(sameIp)];
+            if (r.sn.empty() && !sn.empty()) {
+                // 典型场景：先手动填 IP 加进来（没有 SN），后一轮扫描/握手拿到了 SN
+                migrateFromIp = r.ip;
+                r.sn = sn;
+                r.model = model;
+            }
+        } else if (sameSn >= 0) {
+            // ★ 同一台狗换了网络（IP 变了、SN 没变）→ 把它的条目**搬到新 IP**，
+            //   而不是新增一行。列表里同一台狗因此**始终只有一条**。
+            //   返回 true → 调用方会去连这个新 IP。
+            RobotEntry& r = robots[static_cast<size_t>(sameSn)];
+            r.ip = ip;
+            r.manual = r.manual || manual;
+            needConnect = true;
+        } else {
+            RobotEntry e;
+            e.ip = ip;
+            e.manual = manual;
+            e.sn = sn;
+            e.model = model;
+            robots.push_back(std::move(e));
+            needConnect = true;
+            // ★ 这一行是**带着 SN 新建的** → 老文件里可能已经有"按这个 IP 记"的名字
+            //   （上一轮扫描时它就是这个 IP，只是当时没拿到 SN）→ 迁到 SN 键上。
+            if (!sn.empty()) migrateFromIp = ip;
+        }
+        // ★ 同一个 SN 在列表里只留一条（另一条通常是旧网络里的残留条目）
+        if (!sn.empty()) merged = dedupeBySnLocked(ip, sn);
+        saveDevicesLocked();  // 列表要落盘，否则原生侧重启后"扫描到的狗就没了"
     }
-    RobotEntry e;
-    e.ip = ip;
-    e.manual = manual;
-    e.sn = sn;
-    e.model = model;
-    robots.push_back(std::move(e));
-    saveDevicesLocked();  // 列表要落盘，否则原生侧重启后"扫描到的狗就没了"
-    return true;
+    // 名字迁移（在 robotsMutex 之外做 → 不与 namesMutex 嵌套）
+    if (!migrateFromIp.empty()) migrateNameToSn(migrateFromIp, sn);
+    for (const std::string& m : merged) migrateNameToSn(m, sn);
+    if (!merged.empty()) {
+        // 让用户看得见"为什么列表里少了一台" —— 静默合并会让人以为设备掉线了
+        std::string old;
+        for (const std::string& m : merged) {
+            if (!old.empty()) old += "、";
+            old += m;
+        }
+        addLog("[设备] 同一台狗换了网络（按 SN 认定）：" + old + " → " + ip + "（合并成一条）");
+    }
+    return needConnect;
+}
+
+std::vector<std::string> UiState::dedupeBySnLocked(const std::string& keepIp, const std::string& sn) {
+    std::vector<std::string> removed;
+    if (sn.empty()) return removed;
+    size_t keep = robots.size();
+    for (size_t i = 0; i < robots.size(); ++i)
+        if (robots[i].ip == keepIp) { keep = i; break; }
+    if (keep == robots.size()) return removed;  // 找不到要保留的那条 → 什么都不动
+    for (size_t i = robots.size(); i-- > 0;) {
+        if (i == keep) continue;
+        if (robots[i].sn != sn) continue;  // 不同的狗 → 不动
+        if (robots[i].selected) robots[keep].selected = true;  // 受控勾选状态转移过去
+        removed.push_back(robots[i].ip);
+        robots.erase(robots.begin() + static_cast<long>(i));
+        if (i < keep) --keep;
+    }
+    return removed;
 }
 
 bool UiState::remove(const std::string& ip) {
@@ -115,6 +187,15 @@ void UiState::loadDevices() {
             // 免得升级后所有历史设备都退化成"机型未知"
             if (re.model.empty() && !re.sn.empty())
                 re.model = std::string(modelName(modelFromSn(re.sn)));
+            // ★ 同一台狗（同一 SN）在文件里出现两次 = 换网络前后的残留 →
+            //   只留一条（文件里先出现的那条），别让"同一台狗"开机就占两行。
+            //   IP 随后续扫描会被更新成当前的。
+            if (!re.sn.empty()) {
+                bool sameSn = false;
+                for (const auto& r : robots)
+                    if (r.sn == re.sn) { sameSn = true; break; }
+                if (sameSn) continue;
+            }
             robots.push_back(std::move(re));
         }
     } catch (...) {
@@ -425,10 +506,23 @@ int UiState::selectedCount() {
 // ---------------------------------------------------------------- 机器狗名称
 // 规矩与钥匙一致：只读写**本应用目录**下的文件（安卓启动时已 chdir 到应用专属目录）。
 //
+// ★★ 2026-10-20：**主键从 IP 改成「设备键」** ——
+//   IP 会随 WiFi / DHCP 变，同一台狗换个网络就是另一个 IP。用 IP 当主键的三个后果：
+//     1. 换网络后 `names[新IP]` 查不到 → 界面显示裸 IP → **同一台狗显示成两个名字**；
+//     2. 设备列表按 IP 去重 → 换网络后多出一条 → 列表里同一台狗出现两次；
+//     3. 改名绑死在 IP 上 → 两边各起各的名，永远对不上。
+//   设备键 = **SN**（16 位序列号，跨网络稳定），拿不到 SN 才退回 IP。
+//   键格式 `sn:<SN>` / `ip:<IP>`；老版本 robot_names.json 是**裸 IP 键**，
+//   载入时归一成 `ip:<IP>` → **老文件直接能用，不需要手工迁移**。
+//
 // ★ names 必须加锁：Web 端的 `rename` 指令在 **HTTP 线程**调用 setName，
 //   而界面线程同时在读（drawDeviceList / labelOf）。原实现注释说"只在界面线程读写、
 //   不需要加锁"是错的 —— 并发读一个正在重哈希的 std::map 会直接崩。
 //   所以：公开方法自己加锁，内部互相调用走 *Locked 版本（避免递归加锁死锁）。
+//
+// ★ 锁顺序：namesMutex 与 robotsMutex **不嵌套** ——
+//   任何需要 SN 的地方都先单独取（snOf：只拿 robotsMutex，出来就放），
+//   再去拿 namesMutex。全代码库不存在 namesMutex → robotsMutex 的路径。
 void UiState::loadNames() {
     std::lock_guard<std::mutex> lock(namesMutex);
     std::ifstream f("robot_names.json");
@@ -437,9 +531,14 @@ void UiState::loadNames() {
         nlohmann::json j;
         f >> j;
         if (!j.is_object()) return;
-        for (auto it = j.begin(); it != j.end(); ++it)
-            if (it.value().is_string() && !it.value().get<std::string>().empty())
-                names[it.key()] = it.value().get<std::string>();
+        for (auto it = j.begin(); it != j.end(); ++it) {
+            if (!it.value().is_string() || it.value().get<std::string>().empty()) continue;
+            // 老版本是**裸 IP 键**（{"192.168.2.107": "gopro2"}）→ 归一成 "ip:<ip>"
+            std::string key = it.key();
+            if (key.rfind(kKeySnPrefix, 0) != 0 && key.rfind(kKeyIpPrefix, 0) != 0)
+                key = keyForIp(key);
+            names[key] = it.value().get<std::string>();
+        }
     } catch (...) {
         // 文件损坏就当没起过名 —— 绝不能因为一个名字文件让界面起不来
     }
@@ -459,34 +558,87 @@ void UiState::saveNames() {
     saveNamesLocked();
 }
 
+std::string UiState::snOf(const std::string& ip) const {
+    if (ip.empty()) return {};
+    std::lock_guard<std::mutex> lock(robotsMutex);
+    for (const auto& r : robots)
+        if (r.ip == ip) return r.sn;
+    return {};
+}
+
+std::string UiState::deviceKeyFor(const std::string& ip) const {
+    if (ip.empty()) return {};
+    const std::string sn = snOf(ip);  // 只拿 robotsMutex，出来就放（不与 namesMutex 嵌套）
+    if (!sn.empty()) return keyForSn(sn);
+    return keyForIp(ip);
+}
+
 void UiState::setName(const std::string& ip, const std::string& name) {
+    if (ip.empty()) return;
+    // ★ 名字挂到**设备键**上（SN 优先）→ 换 WiFi、DHCP 换了 IP，名字还认得出是同一台。
+    const std::string key = deviceKeyFor(ip);
+    if (key.empty()) return;
     std::lock_guard<std::mutex> lock(namesMutex);
     // 去掉首尾空白：只有空白的名字等于"没起名"（恢复显示 IP）
     std::string clean = name;
     while (!clean.empty() && (clean.back() == ' ' || clean.back() == '\t')) clean.pop_back();
     const size_t b = clean.find_first_not_of(" \t");
     clean = (b == std::string::npos) ? std::string() : clean.substr(b);
-    if (clean.empty())
-        names.erase(ip);
-    else
-        names[ip] = clean;
+    if (clean.empty()) {
+        // 清除：SN 键与 IP 键都清掉（老文件里的裸 IP 键也算）
+        names.erase(key);
+        names.erase(keyForIp(ip));
+    } else {
+        names[key] = clean;
+        // 同一台狗只留**一份**名字：清掉"按这个 IP 记的"旧条目，
+        // 否则"清除名字"会被那条旧记录挡住（它仍会被查到）。
+        // ★ 注意 key 本身就可能是 IP 键（还没拿到 SN 时）→ 别把刚写的这条也删了
+        const std::string ipKey = keyForIp(ip);
+        if (ipKey != key) names.erase(ipKey);
+    }
     saveNamesLocked();
 }
 
-std::string UiState::nameOfLocked(const std::string& ip) const {
-    auto it = names.find(ip);
+std::string UiState::nameOfLocked(const std::string& key) const {
+    auto it = names.find(key);
     return it == names.end() ? std::string() : it->second;
 }
 
 std::string UiState::nameOf(const std::string& ip) const {
+    if (ip.empty()) return {};
+    // ① 先按 SN 查（跨网络稳定的那份）② 再退回 IP（还没拿到 SN 时的老名字）
+    const std::string sn = snOf(ip);
     std::lock_guard<std::mutex> lock(namesMutex);
-    return nameOfLocked(ip);
+    if (!sn.empty()) {
+        const std::string n = nameOfLocked(keyForSn(sn));
+        if (!n.empty()) return n;
+    }
+    return nameOfLocked(keyForIp(ip));
 }
 
 std::string UiState::labelOf(const std::string& ip) const {
-    std::lock_guard<std::mutex> lock(namesMutex);
-    const std::string n = nameOfLocked(ip);  // 不能调 nameOf（会二次加锁 → 死锁）
+    const std::string n = nameOf(ip);
     return n.empty() ? ip : n;
+}
+
+void UiState::migrateNameToSn(const std::string& ip, const std::string& sn) {
+    if (ip.empty() || sn.empty()) return;
+    const std::string snKey = keyForSn(sn);
+    const std::string ipKey = keyForIp(ip);
+    std::lock_guard<std::mutex> lock(namesMutex);
+    const std::string onSn = nameOfLocked(snKey);
+    if (!onSn.empty()) {
+        // SN 键上已经有名字 → 它才是权威的；IP 键那条删掉，免得以后"改回 IP"时又冒出来
+        names.erase(ipKey);
+    } else {
+        const std::string onIp = nameOfLocked(ipKey);
+        if (!onIp.empty()) {
+            // 名字搬到 SN 键 → 这台以后换 IP 也认得出是同一台
+            names[snKey] = onIp;
+            names.erase(ipKey);
+        }
+    }
+    saveNamesLocked();
 }
 
 // ---------------------------------------------------------------- 持续模式开关
@@ -645,17 +797,25 @@ std::string UiState::noteHandshakeKey(const std::string& ip, const std::string& 
     if (sn.empty()) return {};
     const std::string model = modelName(modelFromSn(sn));
     if (model.empty()) return {};  // SN 认不出机型（不是 Go2 三款）→ 不写、不猜
+    bool gainedSn = false;
+    std::vector<std::string> merged;
     {
         std::lock_guard<std::mutex> lock(robotsMutex);
         for (auto& r : robots) {
             if (r.ip != ip) continue;
             if (r.sn == sn && r.model == model) return model;
+            if (r.sn.empty()) gainedSn = true;
             r.sn = sn;
             r.model = model;
+            // ★ 这一台刚拿到 SN → 列表里可能还留着**旧网络**里的同一条（IP 不同）→ 并掉
+            merged = dedupeBySnLocked(ip, sn);
             saveDevicesLocked();
             break;
         }
     }
+    // 名字跟着 SN 走：换网络后仍认得出是同一台
+    if (gainedSn) migrateNameToSn(ip, sn);
+    for (const std::string& m : merged) migrateNameToSn(m, sn);
     return model;
 }
 
@@ -918,7 +1078,7 @@ void runScan(RobotManager& mgr, UiState& ui) {
         ui.addLog("[扫描] 错峰连接 " + std::to_string(toConnect.size()) + " 台 ...");
         mgr.connectAll(toConnect, 600);
     }
-    ui.addLog("[扫描] 完成，新增 " + std::to_string(added) + " 台");
+    ui.addLog("[扫描] 完成，发现/更新 " + std::to_string(added) + " 台");
     ui.scanning = false;
 }
 

@@ -25,9 +25,14 @@ export default {
     const playing = computed(() => !!store.st.scriptRunning)
     const canPlay = computed(() => store.st.selectedCount > 0 && !store.st.estop)
 
-    // 可选择的标准动作（跳过 Gait 组；那组是参数/步态，不适合编排）
+    // 可选择的标准动作（跳过 Gait 组；那组是参数/步态，不适合编排；
+    //                    再跳过高危动作 —— 编排是"按顺序连着播"的，
+    //                    塞一个空翻进去 = 让狗连着翻，场地不够就摔）
+    // ★ risky 由服务端 actions[] 一并给（web_bridge.cpp 里 o["risky"] = a.risky）
     const actionChoices = computed(() =>
-      (store.st.actions || []).filter((a) => a.group !== 1).sort((a, b) => a.group - b.group)
+      (store.st.actions || [])
+        .filter((a) => a.group !== 1 && !a.risky)
+        .sort((a, b) => a.group - b.group)
     )
     const groupedChoices = computed(() => {
       const out = []

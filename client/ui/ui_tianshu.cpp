@@ -44,11 +44,13 @@ struct DanceEditor {
 };
 DanceEditor g_danceEdit;
 
-/// 可编排的动作（跳过 Gait 组：那组是步态/参数，不适合编排）
+/// 可编排的动作（跳过 Gait 组：那组是步态/参数，不适合编排；
+///                  再跳过高危动作：编排是"按顺序连着播"的，
+///                  塞一个空翻进去 = 让狗连着翻，场地不够就摔）
 std::vector<const SportAction*> danceChoices() {
     std::vector<const SportAction*> out;
     for (const SportAction& a : sportActions())
-        if (a.group != SportGroup::Gait) out.push_back(&a);
+        if (a.group != SportGroup::Gait && !a.risky) out.push_back(&a);
     return out;
 }
 

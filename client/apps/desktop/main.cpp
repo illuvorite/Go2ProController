@@ -1,4 +1,5 @@
 #include "local_keys.hpp"
+#include "key_probe.hpp"   // startOfficialKeyImport
 #include "robot_manager.hpp"
 #include "sport_library.hpp"
 #include "theme.hpp"
@@ -622,6 +623,9 @@ int runGui(const Options& opt) {
                 printLine("[钥匙] 来源: " + lk.source);
         }
     }
+    // 官方 App 保存的钥匙：后台只读扫描（本机目录 / root 安卓的私有目录），
+    // 命中就自动落盘 + 重连。异步，不阻塞启动。
+    go2::startAutoKeyImport(manager, ui, ui.autoImportOfficialKeys.load());
 
     // 命令行传入 IP：作为初始设备加入并错峰连接
     if (!opt.ips.empty()) {

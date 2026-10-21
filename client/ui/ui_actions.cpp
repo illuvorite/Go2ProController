@@ -91,11 +91,6 @@ const char* iconGlyph(const char* key, const std::string& label) {
         {"Handstand", ts::m_hand_stand}, // 倒立：手倒立
         {"Bound", ts::m_runSideBySide},  // 跳跃奔跑：并腿跑
         {"FreeJump", ts::m_squatUp},     // 自由跳跃：蹲身起跳
-        {"TrajectoryFollow", Path},  // 轨迹跟随：路径
-        {"CrossWalk", ts::m_climbingStairs}, // 横向行走：阶梯式横移
-        {"ClassicWalk", ts::m_walk},     // 经典步态：行走
-        {"BackStand", ts::m_preparation}, // 后仰站立：准备姿势
-        {"SetAutoRecovery", Wrench}, // 设自动恢复：扳手
         {"FreeAvoid", Shield},  // 自由避障：盾牌
         {"SwitchAvoidMode", Warning}, // 避障模式：注意
         // ---- 快捷动作（core/quick_actions.cpp 的复合按钮）----
@@ -109,9 +104,6 @@ const char* iconGlyph(const char* key, const std::string& label) {
         {"TiltUp", ArrowUp},                  // 抬头
         {"ShiftLeft", ArrowLeft},             // 左移
         {"ShiftRight", ArrowRight},           // 右移
-        {"BodyLowest", ArrowsIn},             // 机身最低
-        {"BodyNormal", Ruler},                // 机身正常
-        {"BodyHighest", ArrowsOutLineV},      // 机身最高
         {"AdjustYaw", Compass},               // 方向回正
         {"StepInPlace", ts::m_step},          // 原地踏步
         {"ResumeMove", Walk},                 // 恢复移动
@@ -744,11 +736,10 @@ for (const auto& gd : kGroups) {
         ImGui::PushID(q.key);
         if (L.actCols > 1 && (col % L.actCols) != 0) ImGui::SameLine();
         ++col;
-        // 机身高度那三条是纯一条 api_id(1013)，能按机型记回执 → 给它带上结果小点；
-        // 其余是脚本（多个 api_id），不标点。
-        // 机身高度那三条是纯一条 api_id(1013)，能按机型记回执 → 带上结果小点。
-        // 1013 已不在动作表里（整组删除）→ 用 core/sport_library.hpp 的常量。
-        const int qst = (q.kind == QuickKind::BodyHeight) ? apiState(kApiBodyHeight) : 0;
+        // ★ 表里剩下的快捷动作全是**脚本**（多个 api_id 串起来），没法按单个 id 记回执
+        //   → 一律不标结果小点。机身高度那三条曾经是纯 api_id(1013) 能标点，
+        //   但 2026-10-20 已删（1013 是 normal 专属 id，MCF 固件实测 3203）。
+        const int qst = 0;
         if (actionTile(q.key, q.label, false, qst, false, ImVec2(actW1, tileH))) {
             const auto sink = std::make_shared<ManagerSink>(mgr, ui);
             const int n = cmd::runQuickAction(sink, ui, q.key);

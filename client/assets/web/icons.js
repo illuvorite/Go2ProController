@@ -155,11 +155,6 @@ export const ACTION_ICON = {
   Handstand: '\uE129',  // 倒立：手倒立
   Bound: '\uE132',  // 跳跃奔跑：并腿跑
   FreeJump: '\uE136',  // 自由跳跃：蹲身起跳
-  TrajectoryFollow: '\uE39C',  // 轨迹跟随：路径（Phosphor 兜底：path）
-  CrossWalk: '\uE121',  // 横向行走：阶梯式横移
-  ClassicWalk: '\uE13B',  // 经典步态：行走
-  BackStand: '\uE130',  // 后仰站立：准备姿势
-  SetAutoRecovery: '\uE5D4',  // 设自动恢复：扳手（Phosphor 兜底：wrench）
   FreeAvoid: '\uE40C',  // 自由避障：盾牌（Phosphor 兜底：shield-check）
   SwitchAvoidMode: '\uE4E2',  // 避障模式：注意（Phosphor 兜底：warning-circle）
   TwistLeft: '\uE036',  // 左扭：逆时针转（Phosphor 兜底：arrow-clockwise）
@@ -170,9 +165,6 @@ export const ACTION_ICON = {
   TiltUp: '\uE08E',  // 抬头：向上（Phosphor 兜底：arrow-up）
   ShiftLeft: '\uE058',  // 左移：向左平移（Phosphor 兜底：arrow-left）
   ShiftRight: '\uE06C',  // 右移：向右平移（Phosphor 兜底：arrow-right）
-  BodyLowest: '\uE532',  // 机身最低：向内收（Phosphor 兜底：arrows-in-line-vertical）
-  BodyNormal: '\uE6B8',  // 机身正常：标准高度（Phosphor 兜底：ruler）
-  BodyHighest: '\uE536',  // 机身最高：向外撑（Phosphor 兜底：arrows-out-line-vertical）
   AdjustYaw: '\uE1C8',  // 方向回正：罗盘（对准朝向）（Phosphor 兜底：compass）
   StepInPlace: '\uE139',  // 原地踏步：踏步剪影
   ResumeMove: '\uE73A',  // 恢复移动：继续行走（Phosphor 兜底：person-simple-walk）

@@ -69,20 +69,19 @@ const std::vector<SportAction>& sportActions() {
         //   → 届时连同 sport_library.hpp 的 kApiGet* 常量一起加回来。
 
         // ---------------- 其他 / 进阶 ----------------
-        {"TrajectoryFollow",  "轨迹跟随",   1018, 0,    SportParam::Json, SportGroup::Advanced, false},
-        // ★ 「起立(兼容)」1050 2026-10-11 删除：与「站立」1004 语义完全重复。
-        {"CrossWalk",         "横向行走",   1051, 0,    SportParam::None, SportGroup::Advanced, false},
-        // ⚠ 下面 5 条在本表里标成 MCF 专属（normalId = 0）。★ 但这只是**未经验证的分类**：
-        //   · 参考实现「天树探界遥控」的指令表是**一张平表**（1001~1062 和 2041~2058 混在
-        //     一起），它根本没有 normal / MCF 之分；"MCF 专属"是我们自己加的推断。
-        //   · 反例就在今天：BodyHeight **1013 在 normal 集里**，实测这台 Air 照样拒
-        //     （code=3203）。可见"属于哪套指令集"并不能预测某台狗收不收。
-        //   → 某台狗到底支不支持，**以回执为准**：被拒会按机型记进 robot_model_caps.json，
-        //     勾上「隐藏机型不支持的」就会自动隐藏。
-        //   这里保留它们，是因为 Pro 上确实是真功能（避障 / 自动恢复 / 经典步态）。
-        {"ClassicWalk",       "经典步态",   0,    2049, SportParam::Flag, SportGroup::Advanced, false, true},
-        {"BackStand",         "后仰站立",   0,    2050, SportParam::Flag, SportGroup::Advanced, false, true},
-        {"SetAutoRecovery",   "设自动恢复", 0,    2054, SportParam::Flag, SportGroup::Advanced, false, true},
+        // ★ 2026-10-20 精简：这组原来有 7 条，现在**只剩「避障」两条**。
+        //   删掉的 5 条，理由各不相同（不是笼统的"没用"）：
+        //     · 轨迹跟随 1018 / 横向行走 1051 —— **normal 专属**。
+        //       固件 ≥1.1.7 的 MCF 模式只受理 MCF 那套 id，实测这类 id 一律 3203
+        //       （1011 / 1013 / 1014 / 1024 / 1025 都实测过）。轨迹跟随还得手填
+        //       JSON 轨迹，本来就是最难用的一个。
+        //     · 经典步态 2049 / 后仰站立 2050 —— 能受理，但它们是**步态/姿态开关**，
+        //       放在「模式设置」页更合适，混在动作库里是分类错位。
+        //     · 设自动恢复 2054 —— 能受理，但它是**安全功能的开关**（狗摔了自己站起来）。
+        //       删按钮 ≠ 关功能（固件里默认是开的，2055 查得到）；而且它不该出现在
+        //       动作库里 —— 急停也不该去关它（关掉 = 摔了起不来，更危险）。
+        //   ★ 保留「避障」两条：避障是**真功能**（实测 2048 / 2058 都受理），
+        //     而且安全相关，必须留在一个显眼、能一键关的位置。
         {"FreeAvoid",         "自由避障",   0,    2048, SportParam::Flag, SportGroup::Advanced, false, true},
         {"SwitchAvoidMode",   "避障模式",   0,    2058, SportParam::Flag, SportGroup::Advanced, false, true},
     };
@@ -109,8 +108,22 @@ std::string labelForApiId(int apiId) {
         case kApiEuler: return "姿态角";
         case kApiBodyHeight: return "机身高度";
         case kApiContinuousGait: return "持续步态";
+        // ★ 2026-10-20 从动作表里删掉、但**回执里仍可能出现**的 id（老客户端 / 网页端
+        //   缓存的编排 / 别的 App 发的）：名字要留着，否则回执日志只能打出一串裸 id。
+        case 1018: return "轨迹跟随";
+        case 1051: return "横向行走";
+        case 2049: return "经典步态";
+        case 2050: return "后仰站立";
+        case 2054: return "设自动恢复";
         default: return {};
     }
+}
+
+bool isRiskyAction(const std::string& key) {
+    if (key.empty()) return false;
+    for (const auto& a : sportActions())
+        if (key == a.key) return a.risky;
+    return false;  // 未知 key：不拦（快捷动作 / "wait" 之类的伪动作都走这条路）
 }
 
 std::vector<int> persistentModeIds() {

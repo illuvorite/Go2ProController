@@ -3,6 +3,7 @@
 #include "dance.hpp"      // core/dance.hpp：舞蹈编排数据模型
 #include "layout.hpp"
 #include "motion.hpp"
+#include "official_key_import.hpp"  // core：官方 App 钥匙导入的候选结构
 #include "telemetry.hpp"  // core/telemetry.hpp：状态帧解析结果（更新设备电量/温度/姿态）
 
 #include <atomic>
@@ -159,6 +160,16 @@ struct UiState {
     UiPage page = UiPage::Remote;  ///< 遥控 / 动作库（动作库是常驻整屏页面）
 
     // ---- 机器狗名称（用户可改，持久化到 robot_names.json）----
+    //
+    // ★★ 2026-10-20：**主键从 IP 改成「设备键」** ——
+    //   IP 会随 WiFi / DHCP 变，同一台狗换个网络就是另一个 IP。用 IP 当主键会：
+    //     1. 换网络后 `names[新IP]` 查不到 → 界面显示裸 IP → **同一台狗显示成两个名字**；
+    //     2. 设备列表按 IP 去重 → 换网络后**多出一条**，列表里同一台狗出现两次；
+    //     3. 改名绑死在 IP 上 → 两边各起各的名，永远对不上。
+    //   设备键 = **SN**（16 位序列号，跨网络稳定；多播发现或握手 key 反查都能拿到），
+    //   拿不到 SN 时才退回 IP（手动填 IP 添加的设备就是这种情况）。
+    //   键格式：`sn:<SN>` / `ip:<IP>`；老文件里的裸 IP 键载入时自动归一，老文件直接能用。
+    //
     // 用 ip → 名称 的独立映射：改名不依赖设备是否在线，设备被移除/重新添加也不丢。
     // ★ names 由 namesMutex 保护：Web 端的 `rename` 指令在 HTTP 线程调用 setName，
     //   而界面线程同时在读 —— 原注释写"不需要加锁"是错的（并发重哈希会崩）。
@@ -172,6 +183,12 @@ struct UiState {
     void setName(const std::string& ip, const std::string& name);
     std::string nameOf(const std::string& ip) const;   ///< 自定义名称（空 = 没起名）
     std::string labelOf(const std::string& ip) const;  ///< 显示名：有名称用名称，否则 IP
+    /// 设备键（身份）：有 SN 用 SN（跨网络稳定），没有才用 IP。空 IP → 空串
+    std::string deviceKeyFor(const std::string& ip) const;
+    /// 某个 ip 当前对应的 SN（空 = 还没拿到）。
+    /// ★ **不持 namesMutex**：它要读 robots（robotsMutex），而全代码库里
+    ///   不存在 namesMutex → robotsMutex 这个加锁顺序（避免锁顺序反转）。
+    std::string snOf(const std::string& ip) const;
     /// 群控：勾选列表内**全部**设备，返回台数（未就绪的勾上也无害，指令只发给就绪的）
     int selectAll();
     /// 单控：只勾选这一台（其余全部取消）
@@ -377,6 +394,32 @@ struct UiState {
     std::string keyScanNote;                 // 最近一次探测的说明（开放端口 / 提示）
     std::vector<std::string> keyCandidates;  // 探测到的 32 位 hex 候选（未验证）
 
+    // ---- 官方 App 钥匙导入（data2=3 新固件）----
+    // 只读扫描官方 App 的本地存储（以及 root 平板上的私有目录），把候选钥匙
+    // 自动填进输入框 / 写进 keys.txt。结果由设置页与网页端共用。
+    std::atomic<bool> autoImportOfficialKeys{true};  // 启动时自动导入（设置页可关）
+    std::atomic<bool> officialKeyScanning{false};
+    std::mutex officialKeyMutex;
+    std::string officialKeyNote;                 // 上一次扫描的结论（为什么没找到 / 找到几把）
+    std::vector<OfficialKeyHit> officialKeyHits; // 候选（按置信度降序，界面只显示掩码）
+    std::string officialKeyAutoFill;             // 待回填输入框的钥匙（两端各自幂等消费）
+    std::atomic<bool> officialKeyFillPending{false};  // 有新值待回填（ImGui 消费后清）
+    std::atomic<bool> officialKeyImported{false};  // 是否已经自动写入 keys.txt
+
+    // ---- 云账号（宇树云：登录后拉账号下每设备的 AES key）----
+    // ★ 密码只存在内存（char 数组），不落盘、不进日志、不进 /api/state。
+    //   官方 App 也是登录一次就缓存 token；这里刻意不缓存 token（减少落盘面）。
+    char cloudAccount[80] = "";
+    char cloudPassword[80] = "";
+    std::atomic<bool> cloudRegionCn{true};  // true=国内（robot-api），false=海外（global-robot-api）
+    std::atomic<bool> cloudBusy{false};
+    std::mutex cloudMutex;
+    std::string cloudNote;  // 最近一次登录/拉取的结果（成功几台 / 失败原因）
+    // 已保存的凭据（cloud_account.json）：登录成功后自动保存，启动时自动登录。
+    // 账号只用于界面显示（脱敏），密码不再回传界面。
+    std::atomic<bool> cloudSaved{false};
+    std::string cloudSavedAccount;
+
     // ---- 日志 ----
     std::vector<std::string> logs;
     std::mutex logMutex;
@@ -391,9 +434,17 @@ struct UiState {
     void addLog(const std::string& line);
 
     // ---- 设备列表辅助（内部已加锁）----
+    /// 新增/更新一台设备。**返回 true = 这台需要连接**（新增了一行，或已有行的 IP 变了）。
+    /// ★ 2026-10-20 语义微调：同一台狗（同一 SN）换网络后 IP 变了 → 走"改 IP"而不是
+    ///   "新增一行"，这样列表里同一台狗**始终只有一条**，而且返回 true 让调用方去连新 IP。
     bool addOrUpdate(const std::string& ip, bool manual,
-                     const std::string& sn = {});  // 新增返回 true；sn 非空则顺带定机型
+                     const std::string& sn = {});  // sn 非空则顺带定机型
     bool remove(const std::string& ip);
+    /// 把"按 IP 记的名字"迁到"按 SN 记"（这台刚拿到 SN）→ 换网络后名字仍认得出是同一台。
+    void migrateNameToSn(const std::string& ip, const std::string& sn);
+    /// 同一 SN 在设备列表里只留一条（保留 keepIp 那条），返回被并掉的那些 IP。
+    /// **调用方必须已持有 robotsMutex**；名字的迁移要在释放锁之后做。
+    std::vector<std::string> dedupeBySnLocked(const std::string& keepIp, const std::string& sn);
     /// 设备列表的一致快照（内部持 robotsMutex 拷贝一份）。
     ///
     /// ★ **不要直接读 `robots` 成员**：扫描线程在 push_back（ui_state.cpp 的

@@ -143,4 +143,59 @@ public class MainActivity extends SDLActivity {
                 ins.getSystemWindowInsetRight(),
                 ins.getSystemWindowInsetBottom()};
     }
+
+    /**
+     * 原生侧发 HTTPS 请求（云账号拉每设备钥匙用）。
+     *
+     * 为什么不让 C++ 直接用 OpenSSL：宇树云挂在腾讯 EdgeOne 后面，它对
+     * Android 静态 OpenSSL 的 TLS 指纹会回 HTTP 567 人机验证页（桌面 OpenSSL
+     * 却能正常通过）。系统网络栈（HttpURLConnection / Conscrypt）与官方 App、
+     * 天树探界走的是同一套 TLS 实现，能通过同样的风控。
+     *
+     * @param headersJson 形如 {"DeviceId":"...","AppSign":"..."} 的 JSON 对象
+     * @param body        POST 表单体（已 urlencode）；GET 传空串
+     * @return "<HTTP 状态码>
+<响应体>"；异常时状态码为 0，第二段是异常信息
+     */
+    public static String httpRequest(String url, String method, String headersJson, String body) {
+        java.net.HttpURLConnection c = null;
+        try {
+            c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            c.setRequestMethod(method);
+            c.setConnectTimeout(15000);
+            c.setReadTimeout(20000);
+            c.setInstanceFollowRedirects(true);
+            if (headersJson != null && !headersJson.isEmpty()) {
+                org.json.JSONObject h = new org.json.JSONObject(headersJson);
+                java.util.Iterator<String> it = h.keys();
+                while (it.hasNext()) {
+                    String k = it.next();
+                    c.setRequestProperty(k, h.optString(k, ""));
+                }
+            }
+            if (!"GET".equals(method) && body != null && !body.isEmpty()) {
+                byte[] data = body.getBytes("UTF-8");
+                c.setDoOutput(true);
+                c.setFixedLengthStreamingMode(data.length);
+                java.io.OutputStream os = c.getOutputStream();
+                os.write(data);
+                os.close();
+            }
+            int code = c.getResponseCode();
+            java.io.InputStream is = (code >= 200 && code < 300)
+                    ? c.getInputStream() : c.getErrorStream();
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            if (is != null) {
+                byte[] buf = new byte[4096];
+                int n;
+                while ((n = is.read(buf)) > 0) bo.write(buf, 0, n);
+                is.close();
+            }
+            return code + "\n" + new String(bo.toByteArray(), "UTF-8");
+        } catch (Exception e) {
+            return "0\n" + e;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
 }

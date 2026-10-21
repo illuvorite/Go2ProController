@@ -120,6 +120,8 @@ add_library(go2_core STATIC
     "${CLIENT_DIR}/core/robot_manager.cpp"
     "${CLIENT_DIR}/core/discovery.cpp"
     "${CLIENT_DIR}/core/local_keys.cpp"
+    "${CLIENT_DIR}/core/official_key_import.cpp"  # 官方 App 钥匙导入（只读扫描 + 解析）
+    "${CLIENT_DIR}/core/cloud_store.cpp"          # 云账号凭据本地保存
     "${CLIENT_DIR}/core/webrtc_transport.cpp"  # ITransport 的 WebRTC 实现（M5 接缝）
     "${CLIENT_DIR}/core/sport_library.cpp"
     "${CLIENT_DIR}/core/robot_model.cpp"       # 机型识别：SN 第 5 位 → Air/Pro/Edu

@@ -8,6 +8,7 @@
 #include "sport_library.hpp"
 #include "ui.hpp"
 
+#include "cloud_store.hpp"
 #include "key_probe.hpp"
 
 #include <httplib.h>
@@ -142,6 +143,38 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
     }
     j["keyCount"] = ui.localKeyCount.load();
     j["scanning"] = ui.scanning.load();
+    // 官方 App 钥匙导入：候选只给掩码，另附一次性的 autoFill 供设置页预填
+    {
+        std::lock_guard<std::mutex> lock(ui.officialKeyMutex);
+        nlohmann::json of = nlohmann::json::object();
+        of["scanning"] = ui.officialKeyScanning.load();
+        of["note"] = ui.officialKeyNote;
+        of["imported"] = ui.officialKeyImported.load();
+        of["autoFill"] = ui.officialKeyAutoFill;
+        of["fillPending"] = ui.officialKeyFillPending.load();
+        nlohmann::json hs = nlohmann::json::array();
+        for (const auto& h : ui.officialKeyHits) {
+            hs.push_back({{"masked", maskKey(h.key)}, {"key", h.key}, {"sn", h.sn},
+                          {"format", h.format},       {"score", h.score},
+                          {"source", h.source}});
+        }
+        of["hits"] = hs;
+        j["officialKeys"] = of;
+    }
+    // 云账号：只回状态与说明，**绝不回传密码**
+    {
+        std::lock_guard<std::mutex> lock(ui.cloudMutex);
+        std::string masked;
+        if (!ui.cloudSavedAccount.empty()) {
+            const std::string& a = ui.cloudSavedAccount;
+            masked = a.size() > 7 ? a.substr(0, 3) + "****" + a.substr(a.size() - 4) : a;
+        }
+        j["cloud"] = {{"busy", ui.cloudBusy.load()},
+                      {"note", ui.cloudNote},
+                      {"regionCn", ui.cloudRegionCn.load()},
+                      {"saved", ui.cloudSaved.load()},
+                      {"savedAccount", masked}};
+    }
     // 温度胶囊：取受控设备里最低的那台（与电量同一口径）
     j["temperatureMin"] = ui.temperatureMin();
     // 运动模式（普通 / AI / MCF）与当前脚本（快捷动作 / 舞蹈播放）
@@ -190,7 +223,7 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
     }
     j["actions"] = acts;
 
-    // 快捷动作（复合指令：姿态预设 / 平移 / 机身高度 / 方向回正 / 原地踏步）。
+    // 快捷动作（复合指令：姿态预设 / 平移 / 方向回正 / 原地踏步）。
     // ★ `group` 与 `actions[]` 是**同一套分组编号** —— 前端把它们混排进同一个网格里，
     //   不另起一条（参考实现「天树探界遥控」本身就只有一块网格）。
     nlohmann::json quicks = nlohmann::json::array();
@@ -519,6 +552,48 @@ bool startWebUi(RobotManager& mgr, UiState& ui, int port) {
                 // 采用一把候选钥匙：存进本地 keys.txt + 加入候选 + 绑定到该 IP（握手成功即为正确）
                 out["ok"] = applyKeyCandidate(mgr, ui, in.value("key", ""), in.value("ip", ""));
                 if (!out["ok"]) out["error"] = "不是合法的 32 位 hex";
+            } else if (cmd == "keyimport") {
+                // 官方 App 钥匙导入（与设置页「立即扫描」同一入口）
+                if (ui.officialKeyScanning.load()) {
+                    out["ok"] = false;
+                    out["error"] = "上一次扫描还在进行";
+                } else {
+                    startOfficialKeyImport(mgr, ui, true);
+                    out["ok"] = true;
+                }
+            } else if (cmd == "cloudimport") {
+                // 云账号拉钥匙。账号密码为空 = 用设置页保存的那份（登录成功即自动保存）
+                std::string acc = in.value("account", "");
+                std::string pwd = in.value("password", "");
+                bool cnRegion = in.value("regionCn", true);
+                if (acc.empty() || pwd.empty()) {
+                    CloudCredential c;
+                    if (loadCloudCredential(c)) {
+                        acc = c.account;
+                        pwd = c.password;
+                        cnRegion = c.regionCn;
+                    }
+                }
+                if (acc.empty() || pwd.empty()) {
+                    out["ok"] = false;
+                    out["error"] = "还没有保存过账号 —— 先填一次账号密码";
+                } else if (ui.cloudBusy.load()) {
+                    out["ok"] = false;
+                    out["error"] = "正在登录，请稍候";
+                } else {
+                    startCloudKeyImport(mgr, ui, acc, pwd, cnRegion);
+                    out["ok"] = true;
+                }
+            } else if (cmd == "cloudclear") {
+                // 清除保存的账号密码（下次启动不再自动登录）
+                clearCloudCredential();
+                ui.cloudSaved = false;
+                {
+                    std::lock_guard<std::mutex> lock(ui.cloudMutex);
+                    ui.cloudSavedAccount.clear();
+                    ui.cloudNote = "已清除保存的账号（下次启动不再自动登录）";
+                }
+                out["ok"] = true;
             } else if (cmd == "connectall") {
                 // 与 ImGui 设备弹窗的「全部连接」同一语义：列表内全部错峰连接
                 std::vector<std::string> ips;

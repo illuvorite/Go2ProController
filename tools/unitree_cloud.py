@@ -53,13 +53,13 @@ def make_headers(token=""):
         "DevicePlatform": "Android",
         "DeviceModel": "SM-S931B",
         "SystemVersion": "34",
-        "AppVersion": "1.11.4",
+        "AppVersion": "1.12.10",
         "AppLocale": "en_US",
         "Channel": "UMENG_CHANNEL",
         "User-Agent": ("Mozilla/5.0 (Linux; Android 14; SM-S931B Build/AP3A.240905.015.A2; wv) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/127.0.6533.103 "
                        "Mobile Safari/537.36"),
-        "AppTimezone": "UTC",
+        "AppTimezone": "Asia/Shanghai",
         "AppTimestamp": ts,
         "AppNonce": nonce,
         "AppSign": md5hex(APP_SIGN_SECRET + ts + nonce),

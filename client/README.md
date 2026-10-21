@@ -196,16 +196,55 @@ bash scripts/screenshot.sh capture   # 确认是预期改动后，用当前结�
 固件 ≥ 1.1.15 的 Go2 在 `con_notify` 里返回 `data2=3`：握手公钥改用**每设备 AES-128 key**
 （32 位 hex）加密，不再用静态 key。该 key 绑定机器狗 SN，获取途径：
 
-1. **云账号**（正路）：`core/unitree_cloud.{hpp,cpp}` 是完整实现（`login/email` +
-   `device/bind/list`，与官方 App 同款 API），配套自测 `tests/cloud_test.cpp`；
-   命令行版见 [`../tools/unitree_cloud.py`](../tools/unitree_cloud.py)。
-   ⚠ 会访问宇树官方服务器，且第三方客户端可能被 TLS 指纹风控（HTTP 567），请自行评估。
-   界面里的登录表单**未实现** —— 拿到钥匙后粘进设置页或写进 `keys.json` 即可。
+1. **云账号**（正路，已接进界面）：设置页「云账号（拉取每设备钥匙）」——输入手机号/邮箱 +
+   密码（可切国内/海外），后台调 `core/unitree_cloud.{hpp,cpp}` 的 `login/email` +
+   `device/bind/list`，把账号下所有 `dev.key` **自动写入 keys.txt 并触发失败设备重连**。
+   网页端同一入口（`cloudimport` 命令）。
+   - **一次输入，之后自动**：登录成功后凭据写入 `<应用数据目录>/cloud_account.json`
+     （POSIX 权限 0600，只有本应用可读），三个入口启动时自动用它登录并拉钥匙。
+     设置页只显示脱敏账号（`177****7508`），**不预填、不回显密码**；点「清除」即删除。
+     密码不进日志、不进 `/api/state`。
+   - ⚠ 会访问宇树官方服务器，按项目纪律由使用者本人触发。
+   - 命令行版：[`../tools/unitree_cloud.py`](../tools/unitree_cloud.py)。
+   - **安卓的 HTTPS：两个坑都已处理**
+     ① 证书：Android 的 OpenSSL 没有编译期 CA 路径，读系统 hash 目录也不可靠
+        （实测 `SSL server verification failed`）。随包带一份 `assets/cacert.pem`
+        （curl 的 121 个根证书），启动时导出并设 `GO2_CA_BUNDLE`（见 `extractCaBundle()`）。
+     ② 风控：宇树云挂在腾讯 EdgeOne 后面，**Android 静态 OpenSSL 的 TLS 指纹会被
+        判成非官方客户端、返回 HTTP 567 人机验证页**（桌面 OpenSSL 却能过）。
+        所以安卓上云接口改走系统网络栈：`MainActivity.httpRequest`（HttpURLConnection）
+        由 JNI 注入 `setCloudHttpTransport()`，与官方 App / 天树探界同源，能过风控。
 2. **从狗的内网提取**（不连电脑）：设置页「从机器狗找钥匙」（网页界面）扫狗的端口抓取候选。
 3. **电脑 adb / 狗侧脚本**：见 [`../docs/multi_go2_pro_solution.md`](../docs/multi_go2_pro_solution.md)。
 
 对失败的新固件机器狗点「连」（或等自动重试）——连接时逐个尝试候选 key，
 GCM 校验通过的那个即为这台机器的钥匙，并按 IP 记入 `go2_keys_cache.json`。
+
+### 从官方 App 自动导入（`core/official_key_import.*`）
+
+官方 App 绑定机器狗时会把 `dev.key` 缓存到本机。应用启动时会在后台**只读**扫描
+这些位置，命中后自动填入设置页输入框、写入 `keys.txt`，并触发失败设备重连：
+
+| 位置 | 谁能读 |
+|---|---|
+| `<应用数据目录>/import/`（平板即 `/sdcard/Android/data/com.go2.remote/files/import/`） | 本应用；目录由 App 启动时创建并放开权限，**adb push 即可** |
+| `GO2_OFFICIAL_APP_DIR` 指定的目录（`\|` 分隔多个） | 本应用 |
+| `/data/data/com.unitree.doggo2`（官方 Go2 App 私有目录） | **仅 root**（走 `su`） |
+| `/sdcard/Android/data/com.unitree.doggo2` | 仅 adb shell；普通 App 被 FUSE 隐藏 |
+
+⚠️ **平板未 root 时读不到官方 App 的私有目录** —— 这是 Android 沙箱的硬限制
+（实测 `ls /data/data/com.unitree.doggo2` 连 adb shell 都 Permission denied，
+`run-as` 对非 debuggable 包无效）。设置页会如实显示这条原因，不会假装"扫描成功"。
+此时可行的路径：
+
+- **从机器狗找钥匙**（平板内一键，推荐）：狗本地持有明文 key，设置页「从机器狗找钥匙」；
+- 电脑 `adb push` 官方 App 的数据副本到上面的 `import/` 目录（一次即可，之后 App 自动接管）；
+- root 平板：`su` 直读，全自动。
+
+解析器容忍 JSON / SharedPreferences XML / SQLite / LevelDB / 纯文本，并**按上下文打分**。
+特别地：官方日志里每条 HTTP 请求都带 `"requestId":"<32hex>"`，这类字段会被显式丢弃
+（`tests/official_key_import_test.cpp` 有回归），不会把请求 ID 当钥匙导进来。
+命中只是"候选"，最终仍由握手 GCM 校验决定（错误候选的代价只是多试一把）。
 
 ## 界面功能（ImGui 原生界面）
 
@@ -231,7 +270,11 @@ GCM 校验通过的那个即为这台机器的钥匙，并按 IP 记入 `go2_key
   - 姿态预设（排进「基础姿态」）：左扭 / 右扭 / 左倾 / 右倾 / 低头 / 抬头
     （先 `BalanceStand`，等 500ms，再发 `Euler`）
   - 平移（「基础姿态」）：左移 / 右移（按 150ms 节奏连发 1 秒 `Move`，随即补一条 `StopMove`）
-  - 机身高度（「其他 / 进阶」）：最低 / 正常 / 最高（`BodyHeight(1013)` 带 `data = -0.18 / 0 / +0.03`）
+  - 机身高度（「其他 / 进阶」）：~~最低 / 正常 / 最高~~ —— **2026-10-20 删除**。
+    它们发 `BodyHeight(1013)`，而 **1013 是 normal 专属 id**：固件 ≥1.1.7 的 MCF 模式
+    只受理 MCF 那套 id，实测这类 id 一律回 `code=3203`（1011/1013/1014/1024/1025 都验过），
+    按下去只会报错。`QuickKind::BodyHeight` 分支保留（防漏 switch），`kApiBodyHeight` 常量也还在
+    （回执日志仍要能翻出名字），但**表里没有条目 → 界面上没有按钮**。
   - 高级技能（「其他 / 进阶」）：**方向回正**（开连续步态 → 平衡站立 → 按偏航角闭环回转 →
     停车 → 关连续步态，最多 30s）、**原地踏步**（连续步态下来回踏步约 5 秒）
   - ⚠ **没有「恢复移动」**：它就是 `StopMove(1003)`，动作库「基础姿态」里已经有「停止移动」
@@ -244,6 +287,11 @@ GCM 校验通过的那个即为这台机器的钥匙，并按 IP 记入 `go2_key
   实际反例：`机身高度 1013` 明明在 normal 集里，实测这台 Air 照样拒（`code=3203`）。
   → 所以「Air 能不能用避障」不是靠表能回答的，只能**点一次看回执**：
   被拒会按机型记进 `robot_model_caps.json`，勾上「隐藏机型不支持的」就会自动隐藏该条。
+  ★ **2026-10-20 实机复核后的精简**：「其他 / 进阶」组只剩**「避障」两条**
+  （`自由避障 2048` / `避障模式 2058`，两者实测都受理）。
+  删掉的 5 条 —— `轨迹跟随 1018` / `横向行走 1051`（**normal 专属**，MCF 固件一律 3203）、
+  `经典步态 2049` / `后仰站立 2050`（步态/姿态开关，归「模式设置」页更合适）、
+  `设自动恢复 2054`（安全功能开关，删按钮≠关功能，且急停不该去关它）。
 - **模式设置页**：普通 / AI / MCF 三选一 → `cmd::setMotionMode`，走
   `rt/api/motion_switcher/request`（api_id 1002）。★ 这与运动指令是**两套服务**，
   不能拿 `sendSport` 凑。**回执与确认机制**（2026-10-11 实机补齐）：
@@ -265,7 +313,8 @@ GCM 校验通过的那个即为这台机器的钥匙，并按 IP 记入 `go2_key
   静态行走 / 小跑 / 手柄接管 / 扳机）2026-09-28 就被要求从界面撤下，界面上一直够不到、
   只剩一段没人走的渲染代码，现在连表里也删干净了。
   仍在用的三个 id 以**常量**形式留在 `core/sport_library.hpp`：
-  `kApiEuler`(1007，摆姿势时摇杆 + 姿态预设) / `kApiBodyHeight`(1013，机身高度预设) /
+  `kApiEuler`(1007，摆姿势时摇杆 + 姿态预设) / `kApiBodyHeight`(1013，机身高度预设；
+  ★ 2026-10-20 那三条快捷动作删了，**当前无人下发**，但常量留着 —— 回执日志仍要能翻出名字) /
   `kApiContinuousGait`(1019，方向回正 / 原地踏步的前置)，并由 `labelForApiId` 给出中文名，
   所以回执日志仍会写「持续步态 (api 1019) —— 成功」而不是一串裸 id。
   `SportGroup::Gait` 枚举成员**保留**：它是 `/api/state` 里 `group` 的编号，
@@ -297,6 +346,12 @@ GCM 校验通过的那个即为这台机器的钥匙，并按 IP 记入 `go2_key
 - **日志弹窗**：自动滚动 / 只看异常 / 清空；每条日志带 `[机器狗IP]` 前缀，多机并发时易分辨
 - **改名**：设备卡片「改名」按钮，名字持久化在 `robot_names.json`（应用运行目录），
   显示在设备卡片与摇杆带面板上；留空 = 恢复显示 IP
+  ★ **2026-10-20 起名字与「设备身份」都按 SN 走，不再按 IP**（IP 会随 WiFi/DHCP 变）：
+  同一台狗在 WiFi A 是 `192.168.2.107`、在 WiFi B 是 `192.168.2.161`，
+  用 IP 当主键会「换网络后名字查不到（显示裸 IP）＋ 设备列表多出一条」→ 同一台狗两个名字。
+  现在：名字表键为 `sn:<SN>`（拿不到 SN 才退回 `ip:<IP>`），设备列表按 SN 去重合并，
+  扫描到同一 SN 的新 IP 时**把原条目的 IP 改掉**而不是新增一条。
+  老版本 `robot_names.json`（裸 IP 键）载入时自动归一，**不需要手工迁移**。
 - **触摸**：按住任意位置拖动即可滚动（不用去抓右边滚动条）；滑条/按钮按断点放大到 ≥44dp
 
 > 网页界面（Vue3）的功能与此对应但交互不同（狗卡片勾选受控等），见 [`assets/web/README.md`](assets/web/README.md)。
@@ -357,7 +412,7 @@ client/
 │   ├── sport_library.{hpp,cpp}  # 宇树动作指令表（normal / MCF 双指令集）+ kApiMove
 │   ├── robot_model.{hpp,cpp}    # 机型识别：SN 第 5 位 → Air / Pro / Edu（动作按机型过滤的依据）
 │   ├── telemetry.{hpp,cpp}      # 状态帧解析（电量 / 温度 / 姿态角 / 模式），三个入口共用
-│   ├── quick_actions.{hpp,cpp}  # 快捷动作表（复合指令：姿态预设 / 平移 / 机身高度 / 脚本）
+│   ├── quick_actions.{hpp,cpp}  # 快捷动作表（复合指令：姿态预设 / 平移 / 方向回正 / 原地踏步）
 │   │                            #   分组复用 SportGroup → 并进动作库网格，不另起一条
 │   ├── dance.{hpp,cpp}          # 舞蹈编排数据模型（本地 robot_dances.json）
 │   ├── motion.hpp               # 双摇杆 + 急停决策（纯函数）

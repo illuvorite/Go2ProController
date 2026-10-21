@@ -125,9 +125,11 @@ void testQuickTable() {
     CHECK(q != nullptr && q->x == -0.75f);  // 左倾为负（与参考实现一致，符号错了会往右倒）
     q = findQuickAction("ShiftRight");
     CHECK(q != nullptr && q->y == -0.4f);
-    q = findQuickAction("BodyLowest");
-    CHECK(q != nullptr && q->kind == QuickKind::BodyHeight && q->data == -0.18f);
-    CHECK(q != nullptr && q->group == SportGroup::Advanced);
+    // ★ 2026-10-20「机身最低/正常/最高」删除：1013 是 normal 专属 id，
+    //   固件 ≥1.1.7 的 MCF 模式实测回 3203 → 表里不该再有这三条。
+    CHECK_MSG(findQuickAction("BodyLowest") == nullptr, "机身高度三档已删（1013 在 MCF 固件上 3203）");
+    CHECK(findQuickAction("BodyNormal") == nullptr);
+    CHECK(findQuickAction("BodyHighest") == nullptr);
     q = findQuickAction("AdjustYaw");
     CHECK(q != nullptr && q->kind == QuickKind::AdjustOrientation);
 

@@ -20,6 +20,7 @@
 // ============================================================================
 
 #include "local_keys.hpp"
+#include "key_probe.hpp"   // startOfficialKeyImport
 #include "robot_client.hpp"
 #include "robot_manager.hpp"
 #include "ui.hpp"
@@ -220,6 +221,8 @@ int main(int argc, char** argv) {
             printLine("[钥匙] 提示：新固件机器狗需要 AES key —— 写进 ~/.go2/keys.json，"
                       "或用 --keys 传入");
     }
+    // 官方 App 保存的钥匙：后台只读扫描（异步；命中自动落盘 + 重连）
+    go2::startAutoKeyImport(manager, ui, ui.autoImportOfficialKeys.load());
 
     // ---- 命令行传入的初始设备 ----
     if (!opt.ips.empty()) {

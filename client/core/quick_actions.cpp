@@ -26,15 +26,12 @@ const std::vector<QuickAction>& quickActions() {
         {"ShiftRight",  "右移",     QuickKind::MoveBurst,   SportGroup::Basic,  0.0f,  -0.4f,  0.0f, 0.0f,
          "按遥控节奏连发 1 秒移动指令，向右平移一小步后自动停下"},
 
-        // ---------------- 机身高度（参考实现放在「高级技能」）----------------
-        {"BodyLowest",  "机身最低", QuickKind::BodyHeight,  SportGroup::Advanced, 0, 0, 0, -0.18f,
-         "机身降到最低（机身高度 1013, data=-0.18）"},
-        {"BodyNormal",  "机身正常", QuickKind::BodyHeight,  SportGroup::Advanced, 0, 0, 0,  0.0f,
-         "机身回到正常高度（机身高度 1013, data=0）"},
-        {"BodyHighest", "机身最高", QuickKind::BodyHeight,  SportGroup::Advanced, 0, 0, 0,  0.03f,
-         "机身升到最高（机身高度 1013, data=+0.03）"},
-
         // ---------------- 高级技能 ----------------
+        // ★ 2026-10-20 删除「机身最低 / 机身正常 / 机身最高」三条：
+        //   它们发的是 BodyHeight(1013)，而 **1013 是 normal 专属 id** ——
+        //   固件 ≥1.1.7 的 MCF 模式不受理（实测 code=3203），按下去只会报错。
+        //   机身高度在固件里由 `kApiBodyHeight` 常量保留（回执日志仍要能翻出名字），
+        //   但**不再有按钮**；要改机身高度得走别的途径。
         {"AdjustYaw",   "方向回正", QuickKind::AdjustOrientation, SportGroup::Advanced, 0, 0, 0, 0,
          "开连续步态 → 平衡站立 → 按姿态角的偏航闭环回转 → 停车 → 关连续步态（最多 30 秒）"},
         {"StepInPlace", "原地踏步", QuickKind::InPlaceStepping,   SportGroup::Advanced, 0, 0, 0, 0,
