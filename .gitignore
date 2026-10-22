@@ -44,6 +44,12 @@ tab_dogs_keys.txt
 robot_names.json
 robot_devices.json
 
+# 表演编排（用户自己写的节目单，存在运行目录，属于本机状态，不入库）
+#   内容里带着本机的设备键（sn:/ip:），提交上去只会互相覆盖。
+#   robot_dances.json（舞蹈编排）与 robot_shows.json（多机编队演出）是同一类文件。
+robot_dances.json
+robot_shows.json
+
 # AI 助手工作目录（本地项目数据：记忆/团队记录，不入库）——与上面的 .codebuddy/ 同理
 .workbuddy/
 

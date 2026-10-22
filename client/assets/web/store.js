@@ -17,7 +17,8 @@ const DEFAULT_PARAMS = {
 
 export const store = reactive({
   st: {
-    robots: [], actions: [], quickActions: [], dances: [], log: [],
+    robots: [], actions: [], quickActions: [], dances: [], shows: [], log: [],
+    showState: {},          // 演出引擎的实时状态（同步度量 / 迟到条数）
     estop: false, selectedCount: 0, target: '未选择受控',
     params: { ...DEFAULT_PARAMS },
     cmd: { vx: 0, vy: 0, vz: 0 },
@@ -29,10 +30,10 @@ export const store = reactive({
     problemCount: 0,
     keyCount: 0,
   },
-  // 起始页可用 ?page=actions|mode|dance 指定（截图 / 预览时省一次点击）
+  // 起始页可用 ?page=actions|mode|dance|show 指定（截图 / 预览时省一次点击）
   page: (() => {
     const p = new URLSearchParams(location.search).get('page')
-    return ['remote', 'actions', 'mode', 'dance'].includes(p) ? p : 'remote'
+    return ['remote', 'actions', 'mode', 'dance', 'show'].includes(p) ? p : 'remote'
   })(),
   modal: '',        // '' | devices | settings | log
   menu: false,      // 顶栏「⋯更多」菜单

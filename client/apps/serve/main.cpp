@@ -159,6 +159,7 @@ int main(int argc, char** argv) {
     ui.loadDevices();  // 设备列表（robot_devices.json）—— 同上，服务端没有绘制这一步
     ui.loadModelCaps();  // 按机型学到的指令支持情况（robot_model_caps.json）—— 同上
     ui.loadDances();     // 舞蹈编排（robot_dances.json）—— 同上
+    ui.loadShows();      // 多机编队演出（robot_shows.json）—— 同上
 
     std::mutex printMutex;
     auto printLine = [&ui, &opt, &printMutex](const std::string& line) {

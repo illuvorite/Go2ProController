@@ -5,6 +5,8 @@
 #include "quick_actions.hpp"
 #include "robot_client.hpp"
 #include "robot_manager.hpp"
+#include "show.hpp"
+#include "show_engine.hpp"
 #include "sport_library.hpp"
 #include "ui.hpp"
 
@@ -93,6 +95,10 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
         r["mode"] = e.modeName;
         r["sn"] = e.sn;        // 16 位序列号（多播发现才有；手动加 IP 的为空）
         r["model"] = e.model;  // "Air" / "Pro" / "Edu"（空 = 未知）
+        // 设备键（sn: / ip: 前缀）—— 跨网络稳定的身份。
+        // 编队的"哪台狗站哪个位"、cue 的"参与角色"都用它，不用 IP
+        // （IP 会随 WiFi/DHCP 变，换个网络整场编队就散架）。
+        r["deviceKey"] = ui.deviceKeyFor(e.ip);
         // 温度：-1000 = 这台还没上报过（网页端显示成 "—"）
         r["temperature"] = e.temperature;
         if (e.hasYaw) r["yaw"] = e.yaw;  // 姿态角（rad）—— 有的固件不上报就不给这个字段
@@ -248,6 +254,38 @@ nlohmann::json stateJson(RobotManager& mgr, UiState& ui) {
     }
     j["dances"] = dances;
 
+    // 演出（多机编队；本地 robot_shows.json）
+    //
+    // ★ `problems` 是**开演前的静态校验结果**（core/show.hpp 的 validateShow）：
+    //   编导在网页上把时间轴排错了（动作不存在 / 高危动作 / 位移与舞台位对不上），
+    //   这里会直接列出来 —— 不用等到现场才发现"这条指令狗不认"。
+    nlohmann::json shows = nlohmann::json::array();
+    for (const Show& s : ui.showsSnapshot()) {
+        nlohmann::json o = showToJson(s);
+        o["count"] = static_cast<int>(s.cues.size());
+        o["problems"] = validateShow(s);
+        shows.push_back(o);
+    }
+    j["shows"] = shows;
+
+    // 演出引擎的实时状态（同步度量 —— "同步"必须可测，否则只是宣传语）
+    {
+        const auto eng = globalShowEngine(mgr, ui);
+        const ShowSyncMetrics met = eng->metrics();
+        nlohmann::json sh = nlohmann::json::object();
+        sh["running"] = eng->running();
+        sh["name"] = eng->currentShowName();
+        sh["cuesTotal"] = met.cuesTotal;
+        sh["cuesFired"] = met.cuesFired;
+        sh["robots"] = met.robots;
+        sh["maxSkewMs"] = met.maxSkewMs;
+        sh["avgSkewMs"] = met.avgSkewMs;
+        sh["lateCues"] = met.lateCues;
+        sh["maxLatenessMs"] = met.maxLatenessMs;
+        sh["error"] = eng->lastError();
+        j["showState"] = sh;
+    }
+
     nlohmann::json log = nlohmann::json::array();
     {
         std::lock_guard<std::mutex> lock(ui.logMutex);
@@ -370,6 +408,60 @@ bool startWebUi(RobotManager& mgr, UiState& ui, int port) {
                 const int n = cmd::stopSelected(sink);
                 out["ok"] = true;
                 ui.addLog("[WebUI] 停止编排播放，停车 " + std::to_string(n) + " 台");
+            } else if (cmd == "show_save") {
+                // 新增/更新一场演出（网页端把整份 show 发上来，落盘 robot_shows.json）
+                Show s = showFromJson(in.value("show", nlohmann::json::object()));
+                if (s.name.empty()) {
+                    out["ok"] = false;
+                    out["error"] = "演出必须有名字";
+                } else {
+                    const int id = ui.upsertShow(s);
+                    out["ok"] = true;
+                    out["id"] = id;
+                    // 保存时就把静态校验结果回给前端 —— 编导当场就知道哪条 cue 有问题，
+                    // 不用等开演才发现。
+                    out["problems"] = validateShow(s);
+                    ui.addLog("[WebUI] 保存演出「" + s.name + "」(" + std::to_string(s.cues.size()) +
+                              " 条 cue)");
+                }
+            } else if (cmd == "show_del") {
+                const int id = in.value("id", 0);
+                ui.removeShow(id);
+                out["ok"] = true;
+                ui.addLog("[WebUI] 删除演出 #" + std::to_string(id));
+            } else if (cmd == "show_play") {
+                // 开演。ips 为空 = 用当前「受控且就绪」的集合。
+                const int id = in.value("id", 0);
+                Show s;
+                if (!ui.showById(id, &s)) {
+                    out["ok"] = false;
+                    out["error"] = "找不到该演出";
+                } else {
+                    std::vector<std::string> ips;
+                    if (in.contains("ips") && in["ips"].is_array()) {
+                        for (const auto& x : in["ips"]) {
+                            if (x.is_string()) ips.push_back(x.get<std::string>());
+                        }
+                    }
+                    const auto eng = globalShowEngine(mgr, ui);
+                    out["ok"] = eng->start(s, ips);
+                    if (!out["ok"].get<bool>()) {
+                        out["error"] = eng->lastError();
+                        ui.addLog("[WebUI] 开演失败：" + eng->lastError());
+                    } else {
+                        ui.addLog("[WebUI] 开演「" + s.name + "」");
+                    }
+                }
+            } else if (cmd == "show_stop") {
+                // 停演：中止 + 给参与的车停车（速度是保持型的）。
+                // ★ 与舞蹈编排的停止同一套安全语义：只停不清"开关状态"，
+                //   持续模式开关由 cmd::estop 负责关。
+                const auto eng = globalShowEngine(mgr, ui);
+                eng->stop();
+                ManagerSink sink(mgr, ui);
+                const int n = cmd::stopSelected(sink);
+                out["ok"] = true;
+                ui.addLog("[WebUI] 停止演出，停车 " + std::to_string(n) + " 台");
             } else if (cmd == "select") {
                 const std::string mode = in.value("mode", "");
                 // ★ 改受控集合之前先抓一份"现在受控的是谁"：Go2 的速度是保持型的，

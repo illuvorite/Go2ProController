@@ -4,6 +4,7 @@
 #include "layout.hpp"
 #include "motion.hpp"
 #include "official_key_import.hpp"  // core：官方 App 钥匙导入的候选结构
+#include "show.hpp"       // core/show.hpp：多机编队演出数据模型
 #include "telemetry.hpp"  // core/telemetry.hpp：状态帧解析结果（更新设备电量/温度/姿态）
 
 #include <atomic>
@@ -497,6 +498,22 @@ struct UiState {
     /// 按 id 取（找不到返回 false）
     bool danceById(int id, Dance* out) const;
 
+    // ---- 演出（多机编队表演；本地 robot_shows.json，见 core/show.hpp）----
+    //
+    // ★ 与「舞蹈编排」是**两套并存**的东西，不是替代关系：
+    //     · 舞蹈编排 = 单机动作串，复刻参考实现「天树探界遥控」的编排页；
+    //     · 演出     = 多机编队（绝对时间轴 + 队形 + 灯光），对标 SomaFlow。
+    //   两者的数据模型、存储文件、播放路径都分开 —— 动一个不会砸另一个。
+    void loadShows();
+    /// 一致快照（HTTP 线程与界面线程都会读 → 走快照，别直接遍历 shows）
+    std::vector<Show> showsSnapshot() const;
+    /// 新增/更新一场演出，返回它的 id（id<=0 时自动分配）
+    int upsertShow(const Show& s);
+    /// 删除一场演出
+    void removeShow(int id);
+    /// 按 id 取（找不到返回 false）
+    bool showById(int id, Show* out) const;
+
     /// 从 robot_devices.json 恢复设备列表（IP + 手动标记）。
     ///
     /// 设备列表原来**只在内存**里：原生侧一旦被重建/重启（换界面、进程被回收、
@@ -534,6 +551,13 @@ private:
     int nextDanceId_ = 1;
     void saveDancesLocked() const;  // 调用方必须已持有 dancesMutex
     void loadDancesLocked();
+
+    // ---- 受 showsMutex 保护的演出（多机编队）----
+    mutable std::mutex showsMutex;
+    std::vector<Show> shows;
+    int nextShowId_ = 1;
+    void saveShowsLocked() const;  // 调用方必须已持有 showsMutex
+    void loadShowsLocked();
 };
 
 /// 绘制整个界面

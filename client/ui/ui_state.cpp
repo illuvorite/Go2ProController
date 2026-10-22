@@ -491,6 +491,85 @@ bool UiState::danceById(int id, Dance* out) const {
     return false;
 }
 
+// ---------------------------------------------------------------- 演出（多机编队）
+// 存本应用目录下的 robot_shows.json（与舞蹈编排同一套"只碰自己目录"的规矩）。
+//
+// ★ 与 robot_dances.json **分开存**：两个是并存的功能（单机动作串 / 多机编队），
+//   格式与生命周期都不同。混在一个文件里，改一个格式就会砸掉另一个的历史。
+void UiState::loadShowsLocked() {
+    std::ifstream f("robot_shows.json");
+    if (!f) return;
+    try {
+        nlohmann::json j;
+        f >> j;
+        if (!j.is_array()) return;
+        for (const auto& e : j) {
+            Show s = showFromJson(e);
+            if (s.name.empty() && s.cues.empty()) continue;
+            if (s.id <= 0) s.id = nextShowId_++;
+            nextShowId_ = std::max(nextShowId_, s.id + 1);
+            shows.push_back(std::move(s));
+        }
+    } catch (...) {
+        // 文件坏了就当没存过 —— 绝不能因为一个演出文件让界面起不来
+    }
+}
+
+void UiState::saveShowsLocked() const {
+    nlohmann::json j = nlohmann::json::array();
+    for (const auto& s : shows) j.push_back(showToJson(s));
+    std::ofstream f("robot_shows.json", std::ios::trunc);
+    if (f) f << j.dump(2) << "\n";
+}
+
+void UiState::loadShows() {
+    std::lock_guard<std::mutex> lock(showsMutex);
+    if (!shows.empty()) return;  // 已经加载过
+    loadShowsLocked();
+}
+
+std::vector<Show> UiState::showsSnapshot() const {
+    std::lock_guard<std::mutex> lock(showsMutex);
+    return shows;
+}
+
+int UiState::upsertShow(const Show& s) {
+    std::lock_guard<std::mutex> lock(showsMutex);
+    if (s.id > 0) {
+        for (auto& e : shows)
+            if (e.id == s.id) {
+                e = s;
+                saveShowsLocked();
+                return e.id;
+            }
+    }
+    Show n = s;
+    n.id = nextShowId_++;
+    shows.push_back(std::move(n));
+    saveShowsLocked();
+    return shows.back().id;
+}
+
+void UiState::removeShow(int id) {
+    std::lock_guard<std::mutex> lock(showsMutex);
+    for (auto it = shows.begin(); it != shows.end(); ++it)
+        if (it->id == id) {
+            shows.erase(it);
+            saveShowsLocked();
+            return;
+        }
+}
+
+bool UiState::showById(int id, Show* out) const {
+    std::lock_guard<std::mutex> lock(showsMutex);
+    for (const auto& e : shows)
+        if (e.id == id) {
+            if (out) *out = e;
+            return true;
+        }
+    return false;
+}
+
 std::vector<std::string> UiState::selectedIps() {
     std::lock_guard<std::mutex> lock(robotsMutex);
     std::vector<std::string> out;

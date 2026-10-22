@@ -119,6 +119,7 @@ add_library(go2_core STATIC
     core/telemetry.cpp
     core/quick_actions.cpp
     core/dance.cpp
+    core/show.cpp           # 演出数据模型（编队 / 舞台位 / 时间轴 cue）
     core/unitree_cloud.cpp
 )
 target_include_directories(go2_core PUBLIC core platform)
@@ -151,6 +152,7 @@ add_executable(go2_remote
     ui/ui_tianshu.cpp    # 快捷动作 / 模式设置 / 舞蹈编排（对齐参考实现）
     ui/ui_state.cpp
     ui/command_service.cpp
+    ui/show_engine.cpp     # 演出引擎（绝对时间轴 + 并行群发 + 同步度量）
     ui/web_bridge.cpp
     ui/key_probe.cpp
     ui/textures.cpp
@@ -192,6 +194,7 @@ add_executable(go2_serve
     apps/serve/main.cpp
     ui/ui_state.cpp
     ui/command_service.cpp
+    ui/show_engine.cpp     # 演出引擎（网页端的编导台靠它开演）
     ui/web_bridge.cpp
     ui/key_probe.cpp
 )
@@ -298,6 +301,20 @@ target_include_directories(tianshu_parity_test PRIVATE core)
 target_link_libraries(tianshu_parity_test PRIVATE nlohmann_json::nlohmann_json)
 go2_add_warnings(tianshu_parity_test)
 add_test(NAME tianshu_parity_test COMMAND tianshu_parity_test)
+
+# ---- 演出数据模型（编队 / 时间轴 / 开环位移）的离线自测 ----
+# 这块错了不会崩，只会"演出看着不对"：拍点算错、位移算错方向、高危动作混进演出。
+# 所以必须钉死 —— 且不能连机器狗，纯逻辑。
+add_executable(show_test
+    tests/show_test.cpp
+    core/show.cpp
+    core/dance.cpp          # defaultDanceDelayMs：cue 时长与舞蹈编排同一口径
+    core/sport_library.cpp  # isRiskyAction：高危动作拦截
+)
+target_include_directories(show_test PRIVATE core)
+target_link_libraries(show_test PRIVATE nlohmann_json::nlohmann_json)
+go2_add_warnings(show_test)
+add_test(NAME show_test COMMAND show_test)
 
 # ---- 协议回放测试（M2-6）----
 # 把固化报文喂给纯解析函数。fixture 目录用编译期常量传进去（绝对路径），

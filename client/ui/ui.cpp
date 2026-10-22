@@ -475,6 +475,7 @@ void ensureNamesLoaded(UiState& ui) {
     ui.loadDevices();   // robot_devices.json —— 设备列表（否则重启/重建后列表清空）
     ui.loadModelCaps(); // robot_model_caps.json —— 按机型学到的"哪些指令这台不支持"
     ui.loadDances();    // robot_dances.json —— 舞蹈编排（本地存，取代参考实现的云端存储）
+    ui.loadShows();     // robot_shows.json  —— 多机编队演出（编队 / 时间轴 / 灯光）
 }
 
 /// 群控：全选（指令只发给已就绪的）

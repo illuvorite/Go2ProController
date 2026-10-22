@@ -67,6 +67,7 @@ export default {
       <button @click="toPage('actions')" :class="{sel: store.page === 'actions'}"><span class="ic">{{ ICON.list }}</span>动作执行</button>
       <button @click="toPage('mode')" :class="{sel: store.page === 'mode'}"><span class="ic">{{ ICON.gear }}</span>模式设置</button>
       <button @click="toPage('dance')" :class="{sel: store.page === 'dance'}"><span class="ic">{{ ICON.musicNote }}</span>舞蹈编排</button>
+      <button @click="toPage('show')" :class="{sel: store.page === 'show'}"><span class="ic">{{ ICON.users }}</span>多机编队</button>
       <div class="menu-sep"></div>
       <button @click="open('settings')"><span class="ic">{{ ICON.gear }}</span>设置</button>
       <button @click="open('log')">
